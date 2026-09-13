@@ -2,6 +2,36 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.2 (2026-09-13) — §TVANNOUNCE2026-VOICEFIX — Admin phản hồi sau khi thử TV Announcer thật:
+  "giọng đọc gì ko hiểu gì hết, có giọng người việt đọc ko". NGUYÊN NHÂN GỐC: hàm `pickVietnameseVoice()`
+  gọi `speechSynthesis.getVoices()` một cách ĐỒNG BỘ ngay tại thời điểm Staff bấm "BẬT ÂM THANH..." lần
+  đầu — nhưng trên Chrome/Edge, danh sách giọng đọc của trình duyệt được nạp BẤT ĐỒNG BỘ (chỉ đầy đủ sau
+  sự kiện `voiceschanged`, đôi khi mất vài trăm ms đến vài giây sau khi mở trang). Kết quả: lần gọi đầu
+  tiên thường trả về mảng rỗng → không tìm được giọng Tiếng Việt → trình duyệt tự chọn một giọng mặc định
+  (thường là tiếng Anh hoặc ngôn ngữ khác) để đọc văn bản tiếng Việt có dấu, phát ra âm thanh sai hoàn
+  toàn về ngữ điệu, nghe như "không hiểu gì". Sửa:
+  1) Thêm `loadTtsVoices(cb)` — hàm nạp danh sách giọng có xử lý bất đồng bộ đúng cách: nếu
+  `getVoices()` đã có sẵn thì dùng ngay, nếu chưa thì lắng nghe sự kiện `voiceschanged` VÀ đồng thời
+  polling dự phòng mỗi 300ms tối đa 10 lần (phòng trường hợp trình duyệt như Safari không bắn sự kiện
+  này đáng tin cậy).
+  2) Gọi `loadTtsVoices()` NGAY khi Staff bấm bật âm thanh TV (`enableTvAudioAndEnterMode()`), để danh
+  sách giọng kịp nạp xong trước khi có announcement đầu tiên cần đọc.
+  3) Mở rộng cách nhận diện giọng Tiếng Việt: từ chỉ so khớp lỏng lẻo `/vi([-_]VN)?/i` trên `lang`, nay
+  thành `findVietnameseVoices()` so khớp `lang` theo chuẩn `/^vi(-|_|$)/i` CỘNG THÊM so khớp tên giọng
+  chứa "vietnam" (một số trình duyệt/OS đặt tên giọng không chuẩn hoá `lang` đúng chuẩn).
+  4) Thêm CHỌN GIỌNG THỦ CÔNG: Cài đặt → Vận hành → "Gọi VĐV trên TV" nay có ô chọn giọng đọc cụ thể
+  (`state.settings.tvAnnouncer.voiceURI`), kèm nút "🔄 Tải lại danh sách" (`refreshTvVoiceOptions()`) vì
+  danh sách giọng phụ thuộc vào chính máy/trình duyệt đang mở Cài đặt — Admin nên mở Cài đặt TRỰC TIẾP
+  trên máy/tab đang chạy màn hình TV để chọn đúng giọng máy đó có. Nếu để trống (mặc định), hệ thống tự
+  ưu tiên giọng Tiếng Việt đầu tiên tìm thấy.
+  5) Nút "🔊 THỬ GIỌNG" nay gọi `loadTtsVoices()` trước khi phát (tránh lặp lại đúng lỗi gốc khi test),
+  và hiện toast cho biết RÕ đang dùng giọng nào, hoặc cảnh báo nếu máy không có giọng Tiếng Việt.
+  6) Thêm cảnh báo một lần (`warnIfNoVietnameseVoiceOnce()`) ngay khi bật âm thanh TV nếu máy hoàn toàn
+  không có giọng Tiếng Việt cài sẵn, hướng Admin vào đúng màn Cài đặt để xử lý (cài thêm giọng cho hệ
+  điều hành/trình duyệt, hoặc chọn tạm giọng gần đúng nhất).
+  LƯU Ý: giọng đọc là tài nguyên CỦA TỪNG THIẾT BỊ/TRÌNH DUYỆT (không đồng bộ qua Firebase) — nếu đổi
+  máy/trình duyệt chạy TV thì cần vào lại Cài đặt trên máy đó để chọn giọng phù hợp lần nữa.
+
   v1.41.1 (2026-09-13) — §PROFILE2026-V2 — Admin phản hồi sau khi xem bản v1.41.0 thật: 3 chỗ trong
   Hồ sơ Player đang hiện TRÙNG LẶP nội dung ("HOẠT ĐỘNG GẦN ĐÂY" ở header, tab "LỊCH SỬ CHƠI", tab
   "THANH TOÁN" đều lặp lại thông tin gần giống nhau). Sửa:
@@ -6280,6 +6310,13 @@
         <input type="hidden" id="tvAnnouncerNameSourceInput" value="nickname">
         <label>Khoảng nghỉ giữa 2 lượt đọc (giây)</label>
         <input type="number" id="tvAnnouncerGapInput" min="1" max="10" step="1" oninput="markSettingsDirty('tvAnnouncer')">
+        <!-- §TVANNOUNCE2026-VOICEFIX — chon giong doc THU CONG: danh sach giong phu thuoc TUNG may/
+             trinh duyet dang mo Cai dat nay (Web Speech API), CHUA CHAC giong voi may chay TV that su
+             — ghi chu ro trong small-note. "Tự động" = de app tu do tim giong co lang bat dau bang
+             "vi" (mac dinh cu). */ -->
+        <label>Giọng đọc <button type="button" class="small secondary" style="padding:1px 8px; margin-left:6px;" onclick="refreshTvVoiceOptions()">🔄 Tải lại danh sách</button></label>
+        <select id="tvAnnouncerVoiceSelect" onchange="markSettingsDirty('tvAnnouncer')"><option value="">— Tự động (ưu tiên giọng Tiếng Việt nếu có) —</option></select>
+        <div class="small-note" id="tvAnnouncerVoiceNote">Danh sách giọng phụ thuộc máy/trình duyệt đang mở Cài đặt này — nên chọn giọng trực tiếp trên máy đang chạy TV (mở Cài đặt trên chính máy/tab đó).</div>
         <div class="settings-save-row" data-require-permission="SETTINGS_EDIT">
           <button onclick="saveTvAnnouncerSettings()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>LƯU THAY ĐỔI</button>
           <span class="settings-dirty-note" id="tvAnnouncerDirtyNote">Có thay đổi chưa lưu</span>
@@ -7281,7 +7318,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.1'; // §PROFILE2026-V2 — Gop LICH SU CHOI/THANH TOAN/HOAT DONG GAN DAY (header) lam 1 tab duy nhat, bo trung lap — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.2'; // §TVANNOUNCE2026-VOICEFIX — Sua giong doc TV khong ro/sai tieng Viet, them bo chon giong thu cong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -10206,7 +10243,8 @@ function defaultState(){
         onCallToCourt: true,
         onPrepareNext: true,
         nameSource: 'nickname', // 'nickname' | 'fullname'
-        gapSeconds: 3
+        gapSeconds: 3,
+        voiceURI: '' // §TVANNOUNCE2026-VOICEFIX — rong = tu dong tim giong co lang bat dau "vi"; neu Admin chon thu cong, luu voiceURI (dinh danh on dinh cua SpeechSynthesisVoice) — CHI co y nghia tren DUNG may/trinh duyet da chon (Web Speech API khong dong bo duoc danh sach giong qua thiet bi khac)
       }
     },
     players: [],
@@ -11764,6 +11802,38 @@ function populateTvAnnouncerSettingsForm(){
     b.classList.toggle('active', active);
     b.disabled = !canEdit;
   });
+  refreshTvVoiceOptions();
+}
+/* §TVANNOUNCE2026-VOICEFIX — nap danh sach giong doc cua may/trinh duyet hien tai vao <select>,
+   danh dau san giong dang luu trong cai dat (cfg.voiceURI) neu con ton tai. Goi loadTtsVoices()
+   vi getVoices() co the tra ve mang rong ngay sau khi mo trang (nap bat dong bo). */
+function refreshTvVoiceOptions(){
+  const sel = document.getElementById('tvAnnouncerVoiceSelect');
+  if(!sel) return;
+  const canEdit = (typeof can === 'function') ? can(PERMISSION.SETTINGS_EDIT) : true;
+  sel.disabled = !canEdit;
+  loadTtsVoices((voices)=>{
+    const cfg = getTvAnnouncerSettings();
+    const current = sel.value || cfg.voiceURI || '';
+    sel.innerHTML = '<option value="">— Tự động (ưu tiên giọng Tiếng Việt nếu có) —</option>';
+    voices.forEach(v=>{
+      const opt = document.createElement('option');
+      opt.value = v.voiceURI;
+      const tag = /^vi(-|_|$)/i.test(v.lang) || /vietnam/i.test(v.name||'') ? ' 🇻🇳' : '';
+      opt.textContent = v.name + ' (' + v.lang + ')' + tag;
+      sel.appendChild(opt);
+    });
+    if(current && voices.some(v=>v.voiceURI === current)) sel.value = current;
+    const note = document.getElementById('tvAnnouncerVoiceNote');
+    if(note){
+      const hasVi = findVietnameseVoices().length > 0;
+      note.textContent = voices.length === 0
+        ? 'Chưa nạp được danh sách giọng — bấm "Tải lại danh sách" hoặc thử lại sau vài giây.'
+        : (hasVi
+            ? 'Máy này có giọng Tiếng Việt — nên để "Tự động" hoặc chọn thẳng giọng có cờ 🇻🇳.'
+            : 'Máy này KHÔNG có giọng Tiếng Việt cài sẵn — TV sẽ đọc bằng giọng mặc định (có thể không rõ). Cân nhắc cài thêm giọng Tiếng Việt cho trình duyệt/thiết bị đang chạy TV.');
+    }
+  });
 }
 function pickTvAnnouncerNameSource(src, btn){
   const hidden = document.getElementById('tvAnnouncerNameSourceInput');
@@ -11777,12 +11847,14 @@ function saveTvAnnouncerSettings(){
   const gapRaw = parseInt(document.getElementById('tvAnnouncerGapInput').value, 10);
   const gap = (!isNaN(gapRaw) && gapRaw >= 1 && gapRaw <= 10) ? gapRaw : 3;
   const nameSourceEl = document.getElementById('tvAnnouncerNameSourceInput');
+  const voiceSelEl = document.getElementById('tvAnnouncerVoiceSelect');
   state.settings.tvAnnouncer = {
     enabled: chk('tvAnnouncerEnabledInput'),
     onCallToCourt: chk('tvAnnouncerOnCallInput'),
     onPrepareNext: chk('tvAnnouncerOnPrepareInput'),
     nameSource: (nameSourceEl && nameSourceEl.value === 'fullname') ? 'fullname' : 'nickname',
-    gapSeconds: gap
+    gapSeconds: gap,
+    voiceURI: voiceSelEl ? voiceSelEl.value : ''
   };
   saveState();
   settingsDirtyFlags.tvAnnouncer = false;
@@ -11790,15 +11862,24 @@ function saveTvAnnouncerSettings(){
   showToast('Đã lưu cài đặt Gọi VĐV trên TV');
 }
 /* §37 — nut THỬ GIỌNG: phat 1 cau mau NGAY (khong can luu cai dat truoc, khong can dang o TV mode) de
-   Staff nghe thu giong/toc do truoc khi ap dung that su tren TV. */
+   Staff nghe thu giong/toc do truoc khi ap dung that su tren TV.
+   §TVANNOUNCE2026-VOICEFIX — nap danh sach giong TRUOC khi phat (tranh getVoices() tra ve rong o
+   lan doc dau tien), va bao ro cho Staff biet co tim thay giong Tieng Viet hay khong. */
 function testTvAnnouncerVoice(){
   try{
     if(!window.speechSynthesis){ showToast('Trình duyệt này không hỗ trợ đọc giọng nói'); return; }
-    const utter = new SpeechSynthesisUtterance('Mời cặp Nguyễn Minh Anh và cặp Lê Hoàng Nam vào sân số một.');
-    utter.lang = 'vi-VN';
-    const voice = (typeof pickVietnameseVoice === 'function') ? pickVietnameseVoice() : null;
-    if(voice) utter.voice = voice;
-    window.speechSynthesis.speak(utter);
+    loadTtsVoices(()=>{
+      const utter = new SpeechSynthesisUtterance('Mời cặp Nguyễn Minh Anh và cặp Lê Hoàng Nam vào sân số một.');
+      utter.lang = 'vi-VN';
+      const voice = (typeof pickVietnameseVoice === 'function') ? pickVietnameseVoice() : null;
+      if(voice) utter.voice = voice;
+      window.speechSynthesis.speak(utter);
+      if(voice){
+        showToast('Đang thử giọng: ' + voice.name);
+      }else{
+        showToast('⚠️ Không tìm thấy giọng Tiếng Việt trên máy này — đang đọc bằng giọng mặc định của trình duyệt.');
+      }
+    });
   }catch(e){ console.error('[tv-tts] test error', e); showToast('Không phát được thử giọng'); }
 }
 function populatePicpocCreditsSettingsForm(){
@@ -17504,7 +17585,8 @@ function getTvAnnouncerSettings(){
     onCallToCourt: s.onCallToCourt !== false,
     onPrepareNext: s.onPrepareNext !== false,
     nameSource: s.nameSource === 'fullname' ? 'fullname' : 'nickname',
-    gapSeconds: (typeof s.gapSeconds === 'number' && s.gapSeconds >= 1) ? s.gapSeconds : 3
+    gapSeconds: (typeof s.gapSeconds === 'number' && s.gapSeconds >= 1) ? s.gapSeconds : 3,
+    voiceURI: s.voiceURI || ''
   };
 }
 /* §56 — bo emoji/ky tu phan cach truoc khi dua vao TTS (KHONG doi text hien thi UI, chi doi ban rieng
@@ -17726,6 +17808,10 @@ function enableTvAudioAndEnterMode(){
   try{
     if(window.speechSynthesis){ const warm = new SpeechSynthesisUtterance(' '); warm.volume = 0; window.speechSynthesis.speak(warm); }
   }catch(e){ /* §40 — TTS loi khong duoc lam crash TV */ }
+  // §TVANNOUNCE2026-VOICEFIX — nap truoc danh sach giong NGAY khi bat am thanh (thay vi doi den luc
+  // can phat announcement dau tien, luc do getVoices() rat hay con rong — xem giai thich chi tiet o
+  // pickVietnameseVoice()/loadTtsVoices()).
+  loadTtsVoices(()=> warnIfNoVietnameseVoiceOnce());
   claimOrHeartbeatAudioLeader();
   if(__tvLeaderHeartbeatTimer) clearInterval(__tvLeaderHeartbeatTimer);
   __tvLeaderHeartbeatTimer = setInterval(claimOrHeartbeatAudioLeader, 5000);
@@ -17834,11 +17920,59 @@ function processTvAnnouncementQueue(){
    hard-code ten giong theo 1 trinh duyet cu the). Loi KHONG duoc lam crash TV — visual (the tren man
    hinh) da duoc renderTvAnnouncerBoard() ve doc lap voi TTS, nen du TTS loi TV van "nhin duoc". Retry
    toi da 1 lan neu hop ly (§55), khong loop vo han. */
+/* §TVANNOUNCE2026-VOICEFIX — Admin bao "giọng đọc không hiểu gì hết". Nguyên nhân THẬT SỰ: Chrome/Edge
+   trả ve MẢNG RỖNG cho speechSynthesis.getVoices() ngay sau khi trang vừa tải (danh sách giọng nạp
+   BẤT ĐỒNG BỘ, chỉ có đầy đủ sau sự kiện 'voiceschanged') — lần đọc ĐẦU TIÊN (đúng lúc Staff vừa bấm
+   "BẬT ÂM THANH...") rất hay rơi vào lúc getVoices() còn rỗng, nên pickVietnameseVoice() cũ trả về
+   null, utter.voice không được set, và trình duyệt tự chọn 1 giọng MẶC ĐỊNH (thường là tiếng Anh) đọc
+   thẳng chữ Tiếng Việt theo phát âm tiếng Anh -> ra tiếng vô nghĩa. Fix: (1) chủ động NẠP TRƯỚC danh
+   sách giọng ngay khi bật âm thanh (loadTtsVoices, có retry + lắng nghe voiceschanged), (2) cho phép
+   Admin CHỌN THỦ CÔNG 1 giọng cụ thể trong Cài đặt nếu máy có nhiều giọng hoặc tự nhận diện sai, (3)
+   cảnh báo rõ (1 lần/phiên) nếu máy hoàn toàn KHÔNG có giọng Tiếng Việt nào. */
+function getAllTtsVoicesSafe(){
+  try{ return window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }catch(e){ return []; }
+}
+function findVietnameseVoices(){
+  return getAllTtsVoicesSafe().filter(v=> /^vi(-|_|$)/i.test(v.lang) || /vietnam/i.test(v.name||''));
+}
+/* Nap truoc danh sach giong (bat dong bo) — goi 1 lan luc bat am thanh TV va luc mo Cai dat, retry qua
+   'voiceschanged' + poll ngan (mot so trinh duyet nhu Safari khong ban su kien nay). cb nhan (voices). */
+function loadTtsVoices(cb){
+  if(!window.speechSynthesis){ if(cb) cb([]); return; }
+  const existing = getAllTtsVoicesSafe();
+  if(existing.length){ if(cb) cb(existing); return; }
+  let done = false;
+  const finish = (voices)=>{ if(done) return; done = true; if(cb) cb(voices||[]); };
+  try{ window.speechSynthesis.onvoiceschanged = ()=> finish(getAllTtsVoicesSafe()); }catch(e){ /* ignore */ }
+  let tries = 0;
+  const poll = setInterval(()=>{
+    tries++;
+    const v = getAllTtsVoicesSafe();
+    if(v.length || tries >= 10){ clearInterval(poll); finish(v); }
+  }, 300);
+}
 function pickVietnameseVoice(){
-  try{
-    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
-    return voices.find(v=> /vi([-_]VN)?/i.test(v.lang)) || null;
-  }catch(e){ return null; }
+  const voices = getAllTtsVoicesSafe();
+  if(!voices.length) return null;
+  const cfg = getTvAnnouncerSettings();
+  if(cfg.voiceURI){
+    const chosen = voices.find(v=>v.voiceURI === cfg.voiceURI);
+    if(chosen) return chosen;
+  }
+  const viVoices = findVietnameseVoices();
+  return viVoices[0] || null;
+}
+let __tvNoVoiceWarned = false;
+/* Canh bao 1 LAN/phien neu may nay hoan toan khong co giong Tieng Viet — KHONG chan TTS (van doc
+   bang giong mac dinh, con hon im lang), chi bao de Admin biet ma cai them giong/doi may. */
+function warnIfNoVietnameseVoiceOnce(){
+  if(__tvNoVoiceWarned) return;
+  const voices = getAllTtsVoicesSafe();
+  if(!voices.length) return; // chua nap xong, doi lan sau
+  __tvNoVoiceWarned = true;
+  if(!findVietnameseVoices().length && typeof showToast === 'function'){
+    showToast('⚠️ Máy này không có giọng đọc Tiếng Việt — TV sẽ đọc bằng giọng mặc định (có thể không rõ). Vào Cài đặt → Vận hành → Gọi VĐV trên TV để xem/chọn giọng.');
+  }
 }
 function speakTvAnnouncement(record){
   __tvSpeaking = true;
