@@ -2,6 +2,23 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.1 (2026-09-13) — §PROFILE2026-V2 — Admin phản hồi sau khi xem bản v1.41.0 thật: 3 chỗ trong
+  Hồ sơ Player đang hiện TRÙNG LẶP nội dung ("HOẠT ĐỘNG GẦN ĐÂY" ở header, tab "LỊCH SỬ CHƠI", tab
+  "THANH TOÁN" đều lặp lại thông tin gần giống nhau). Sửa:
+  1) Bỏ hẳn khối "HOẠT ĐỘNG GẦN ĐÂY" luôn hiện sẵn trên đầu Hồ sơ (panel `buildPlayerActivityOverview()`
+  thêm ở v1.41.0) — theo đúng yêu cầu "bỏ phần hoạt động gần đây luôn, khi bấm vào tab thì mới hiển
+  thị ra".
+  2) Gộp 3 tab con "LỊCH SỬ CHƠI" (từng trận) + "THANH TOÁN" (bill/công nợ/độ nước) + nội dung "hoạt
+  động gần đây" vừa bỏ ở header, thành 1 TAB DUY NHẤT tên "HOẠT ĐỘNG GẦN ĐÂY", đặt ngay cạnh tab
+  "TỔNG QUAN" (thứ tự tab giờ là: TỔNG QUAN, HOẠT ĐỘNG GẦN ĐÂY, CREDITS, GIẢI ĐẤU). Nội dung tab mới
+  (`renderPlayerActivitySubtab()`) xếp theo thứ tự: Từng trận → Từng lượt ghé sân → Bill & công nợ
+  (đã có sẵn mục Độ nước 30 ngày trong phần Bill từ trước, không cần thêm chỗ khác). CHỈ render khi
+  Staff bấm vào tab này (lazy — dùng đúng cơ chế dispatch theo subtab đang có sẵn, không render sẵn
+  lúc mở hồ sơ).
+  3) Tab "TỔNG QUAN" bỏ luôn 2 mục con "HOẠT ĐỘNG GẦN ĐÂY"/"BILL HIỆN TẠI" (cũng là bản trùng lặp cũ,
+  dùng `getPlayerRecentActivity()` ít dữ liệu hơn bản mới) — chỉ giữ lại 1 dòng nhắc gọn "⚠ BILL ĐANG
+  MỞ" nếu có, để Staff không cần đổi tab mới biết đang có bill mở dở.
+
   v1.41.0 (2026-09-13) — §PROFILE2026/§TVANNOUNCE2026 — NÂNG CẤP PLAYER PROFILE + TV ANNOUNCER +
   STAFF CONTROL (theo yêu cầu chi tiết 97 mục của Admin). Tóm tắt các phần đã triển khai đầy đủ trong
   source (không dừng ở audit):
@@ -7264,7 +7281,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.0'; // §PROFILE2026/§TVANNOUNCE2026 — Redesign Ho so Player + TV Announcer Engine (Social/Giai dau) + audio leader lock — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.1'; // §PROFILE2026-V2 — Gop LICH SU CHOI/THANH TOAN/HOAT DONG GAN DAY (header) lam 1 tab duy nhat, bo trung lap — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -35484,7 +35501,6 @@ function renderPlayerDetail(){
   const creditBalance = creditsOn ? getAvailableCredits(p.id) : 0;
   const expiringSoon = creditsOn ? getExpiringSoonCreditLots(p.id, 7) : [];
   const expiringTotal = expiringSoon.reduce((s,l)=>s+(l.remainingAmount||0), 0);
-  const activityItems = buildPlayerActivityOverview(p, 5);
 
   box.innerHTML = `
     <div class="pp-header">
@@ -35514,7 +35530,7 @@ function renderPlayerDetail(){
           <div class="pp-metric-row"><span>Tổng số trận</span><span class="pp-metric-val">${matchCount}</span></div>
           <div class="pp-metric-row"><span>Công nợ</span><span class="pp-metric-val ${playerDebt>0?'pp-debt':''}">${fmtVnd(playerDebt)}</span></div>
         </div>
-        ${playerDebt>0 ? `<div style="margin-top:8px;"><button class="small secondary" onclick="setPlayerDetailSubtab('finance')">XEM CHI TIẾT</button></div>` : ''}
+        ${playerDebt>0 ? `<div style="margin-top:8px;"><button class="small secondary" onclick="setPlayerDetailSubtab('activity')">XEM CHI TIẾT</button></div>` : ''}
       </div>
       <div class="pp-panel">
         <div class="pp-panel-title">PICPOC CREDITS</div>
@@ -35526,23 +35542,11 @@ function renderPlayerDetail(){
       </div>
     </div>
 
-    <div class="pp-panel" style="margin-top:10px;">
-      <div class="pp-panel-title">HOẠT ĐỘNG GẦN ĐÂY</div>
-      ${activityItems.length ? activityItems.map(a=>`
-        <div class="pp-activity-row">
-          <span class="pp-activity-date">${a.dateStr}</span>
-          <span class="pp-activity-label">${escapeHtml(a.label)}</span>
-          ${a.amount!=null ? `<span class="pp-activity-amount">${fmtVnd(a.amount)}</span>` : ''}
-          <span class="muted" style="font-size:.78rem; margin-left:8px;">${a.status||''}</span>
-        </div>`).join('') : '<p class="muted" style="font-size:.85rem; margin:0;">Chưa có hoạt động nào.</p>'}
-    </div>
-
     <div id="playerTagsBox" style="margin-top:10px;">${renderPlayerTagsHtml(p)}</div>
 
     <div class="player-detail-subtabs">
       <button class="tab-pill ${subtab==='overview'?'active':''}" aria-pressed="${subtab==='overview'}" onclick="setPlayerDetailSubtab('overview')">TỔNG QUAN</button>
-      <button class="tab-pill ${subtab==='history'?'active':''}" aria-pressed="${subtab==='history'}" onclick="setPlayerDetailSubtab('history')">LỊCH SỬ CHƠI</button>
-      <button class="tab-pill ${subtab==='finance'?'active':''}" aria-pressed="${subtab==='finance'}" onclick="setPlayerDetailSubtab('finance')">THANH TOÁN</button>
+      <button class="tab-pill ${subtab==='activity'?'active':''}" aria-pressed="${subtab==='activity'}" onclick="setPlayerDetailSubtab('activity')">HOẠT ĐỘNG GẦN ĐÂY</button>
       <button class="tab-pill ${subtab==='credits'?'active':''}" aria-pressed="${subtab==='credits'}" onclick="setPlayerDetailSubtab('credits')">🎫 CREDITS</button>
       <button class="tab-pill ${subtab==='tournament'?'active':''}" aria-pressed="${subtab==='tournament'}" onclick="setPlayerDetailSubtab('tournament')">GIẢI ĐẤU</button>
     </div>
@@ -35550,10 +35554,11 @@ function renderPlayerDetail(){
   `;
 
   const body = document.getElementById('playerDetailSubtabBody');
-  // §PROFILE2026/§8 — gop "LƯỢT CHƠI" (tung lan ghe san) + "LỊCH SỬ CHƠI" (tung tran) lam 1 tab
-  // duy nhat de giam so subtab (tranh "qua nhieu tab khong can thiet" — §8), van giu du lieu cu.
-  if(subtab === 'history') body.innerHTML = renderPlayerHistorySubtab(p) + '<h3 style="margin:16px 0 6px;">TỪNG LƯỢT GHÉ SÂN</h3>' + renderPlayerVisitsSubtab(p);
-  else if(subtab === 'finance') body.innerHTML = renderPlayerFinanceSubtab(p);
+  // §PROFILE2026-V2 — theo yeu cau Admin: bo han khoi "HOAT DONG GAN DAY" luon hien tren dau (trung
+  // lap voi noi dung ben trong "LỊCH SỬ CHƠI"/"THANH TOÁN" cu) — gop CA 3 (tung tran + tung luot ghe
+  // san + bill/cong no/do nuoc) lam 1 tab DUY NHAT "HOẠT ĐỘNG GẦN ĐÂY", CHI render khi Staff bam vao
+  // tab nay (lazy, dung pattern dispatch co san — khong render san luc mo ho so).
+  if(subtab === 'activity') body.innerHTML = renderPlayerActivitySubtab(p);
   else if(subtab === 'credits') body.innerHTML = renderPlayerCreditsSubtab(p);
   else if(subtab === 'tournament') body.innerHTML = renderPlayerTournamentSubtab(p);
   else body.innerHTML = renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday);
@@ -35815,22 +35820,22 @@ function renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday){
     html += opponents.map(x=>`<div class="player-partner-row"><span>${x.name}</span><span>${x.count!=null ? x.count+' trận' : ''}</span></div>`).join('');
   }
 
-  html += '<h3 style="margin:14px 0 6px;">HOẠT ĐỘNG GẦN ĐÂY</h3>';
-  const activity = getPlayerRecentActivity(p, 8);
-  if(!activity.length){
-    html += '<p class="muted small-note">Chưa có hoạt động nào.</p>';
-  } else {
-    html += activity.map(a=>`<div class="player-partner-row"><span>${new Date(a.time).toLocaleDateString('vi-VN')}</span><span>${a.label}</span></div>`).join('');
-  }
-
-  html += '<h3 style="margin:14px 0 6px;">BILL HIỆN TẠI</h3>';
+  // §PROFILE2026-V2 — bo "HOẠT ĐỘNG GẦN ĐÂY"/"BILL HIỆN TẠI" khỏi TỔNG QUAN (trùng lặp với nội dung
+  // đầy đủ hơn ở tab "HOẠT ĐỘNG GẦN ĐÂY" mới — xem renderPlayerActivitySubtab()). Nếu đang có bill mở,
+  // vẫn nhắc 1 dòng gọn (không lặp lại toàn bộ khối) để Staff không phải đổi tab mới biết.
   if(openBill){
-    const total = billTotal(openBill);
-    html += `<div class="player-bill-row open-bill"><span>⚠ BILL ĐANG MỞ — ${fmtVnd(total)}</span><button class="small" onclick="openBillModal('${p.id}')">XEM BILL</button></div>`;
-  } else {
-    html += '<p class="muted small-note">Không có bill đang mở.</p>';
+    html += `<div class="player-bill-row open-bill" style="margin-top:10px;"><span>⚠ BILL ĐANG MỞ — ${fmtVnd(billTotal(openBill))}</span><button class="small" onclick="openBillModal('${p.id}')">XEM BILL</button></div>`;
   }
   return html;
+}
+/* §PROFILE2026-V2 — theo yeu cau Admin: "LỊCH SỬ CHƠI"/"THANH TOÁN"/"HOẠT ĐỘNG GẦN ĐÂY" (header cu)
+   noi dung trung lap nhau -> gop lam 1 TAB DUY NHAT, CHI render khi Staff bam vao (lazy). Thu tu: tung
+   TRAN (renderPlayerHistorySubtab) -> tung LUOT GHE SAN (renderPlayerVisitsSubtab) -> BILL/CONG NO/
+   ĐỘ NƯỚC (renderPlayerFinanceSubtab, da co san ca 3 thu nay trong 1 ham). */
+function renderPlayerActivitySubtab(p){
+  return '<h3 style="margin:0 0 6px;">TỪNG TRẬN</h3>' + renderPlayerHistorySubtab(p) +
+    '<h3 style="margin:16px 0 6px;">TỪNG LƯỢT GHÉ SÂN</h3>' + renderPlayerVisitsSubtab(p) +
+    '<h3 style="margin:16px 0 6px;">BILL &amp; CÔNG NỢ</h3>' + renderPlayerFinanceSubtab(p);
 }
 
 function renderPlayerHistorySubtab(p){
