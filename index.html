@@ -2,6 +2,83 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.5 (2026-09-13) — §FIX-TVMODE-URLSTICK — Admin phản hồi TIẾP sau bản v1.41.3: "f5 lại vẫn bị
+  nhảy vô chế độ tivi" — dù đã bấm "✕ Thoát chế độ TV" thủ công trước đó. Đây là 1 NGUYÊN NHÂN KHÁC,
+  chưa được xử lý ở bản trước (bản trước chỉ sửa lỗi "ăn theo" GIỮA CÁC TAB qua localStorage — đã xác
+  nhận hết qua ảnh Console, KHÔNG còn liên quan ở đây).
+  NGUYÊN NHÂN GỐC: tab Admin đang dùng để làm việc Staff hằng ngày lại chính là tab đã được mở ra từ
+  nút "MỞ TV" trước đó (URL còn giữ nguyên đuôi `?tv=1` — nhìn thấy rõ trên thanh địa chỉ trong ảnh
+  Console Admin gửi). App có 1 đoạn tự-động-vào-TV chạy MỖI LẦN tải trang: "nếu URL có `?tv=1` VÀ tab
+  đang KHÔNG ở chế độ TV thì TỰ BẬT chế độ TV" — thiết kế ban đầu để phục vụ đúng 1 tab CHUYÊN DÙNG làm
+  màn TV (F5 màn TV vẫn phải tự vào lại TV, không cần bấm tay). Nhưng nếu Admin dùng CHÍNH tab đó cho
+  công việc Staff bình thường và bấm "Thoát chế độ TV" (chỉ tắt cờ nội bộ), URL vẫn còn nguyên `?tv=1`
+  — nên F5 LẦN SAU đoạn tự-động ở trên lại đọc thấy `?tv=1` và tự bật lại TV, "kéo ngược" Admin vào TV
+  mỗi lần F5 dù vừa mới thoát tay xong. Sửa (không đổi hành vi mong muốn của tab TV chuyên dùng thật
+  sự — F5 tab đó vẫn tự vào lại TV bình thường, vì từ bản trước việc này đã chuyển sang dựa vào
+  sessionStorage riêng của từng tab, không còn phụ thuộc URL nữa):
+  1) Thêm `stripTvUrlParamIfPresent()` — xoá `?tv=1` khỏi thanh địa chỉ bằng `history.replaceState()`
+  (không tải lại trang, chỉ đổi URL hiển thị).
+  2) Gọi hàm này NGAY SAU LẦN ĐẦU tự động vào TV qua URL lúc khởi động trang — từ giờ trở đi, việc 1
+  tab có ở lại TV mode qua F5 hay không HOÀN TOÀN dựa vào sessionStorage riêng của tab đó (đã có từ bản
+  trước), không cần URL nữa — nên xoá `?tv=1` ngay từ đầu không ảnh hưởng gì đến tab TV chuyên dùng,
+  chỉ giúp URL "sạch" hơn nếu tab đó sau này được dùng lại cho việc khác.
+  3) Gọi thêm hàm này mỗi khi Staff bấm "✕ Thoát chế độ TV" thủ công (trong `toggleTvMode()`) — đảm bảo
+  dù tab đó vào TV bằng cách nào (qua URL hay bấm nút thủ công), một khi đã thoát tay thì URL cũng được
+  dọn sạch theo, F5 lần sau chắc chắn khởi động bình thường như 1 tab Staff App, không còn bị "kéo"
+  vào lại TV nữa.
+  LƯU Ý cho Admin: tab ĐANG MỞ hiện tại (nếu vẫn còn `?tv=1` trên thanh địa chỉ từ trước khi có bản vá
+  này) cần xoá thủ công 1 lần — sửa trực tiếp trên thanh địa chỉ trình duyệt, bỏ đoạn `?tv=1` ở cuối
+  rồi bấm Enter — sau đó dùng đúng URL sạch đó cho công việc Staff hằng ngày; các lần F5 tiếp theo (và
+  mọi tab mới mở từ URL gốc, không qua nút "MỞ TV") sẽ không còn bị vấn đề này nữa.
+
+  v1.41.4 (2026-09-13) — §MERGE-OTHERCHARGE2026 — Admin phản hồi 2 ý sau khi thấy nút "🎱 + Thuê máy
+  bắn bóng" nằm riêng trong màn Bill: "sao nút thuê máy bắn bóng lại nằm trong này" (thắc mắc vì sao
+  1 dịch vụ lại có nút riêng tách biệt ngay trong Bill) và tiếp theo "trong khoản khác/dụng cụ, thêm
+  dịch vụ thuê máy bắn bóng vào — thuê máy bắn bóng, khoản khác, dịch vụ khác cũng nên cho vào mục sản
+  phẩm này luôn" — yêu cầu gộp cả 3 luồng (Sản phẩm tồn kho / Thuê máy bắn bóng / Khoản khác-Dụng cụ)
+  vào CHUNG 1 cửa duy nhất: modal "+ SẢN PHẨM" mở từ thẻ người chơi (nút "➕ SẢN PHẨM" cạnh BILL/KẾT
+  THÚC). Sửa (KHÔNG viết lại logic thêm bill của 3 luồng — vẫn dùng nguyên `addBillItem()`, giá mặc
+  định máy bắn bóng đọc từ Cài đặt như cũ — chỉ nối lại đường điều hướng):
+  1) Modal "+ SẢN PHẨM" (`openAddProductToBillModal()`) nay có thêm 2 nút lối tắt ngay phía trên ô tìm
+  sản phẩm: "🎱 Thuê máy bắn bóng" và "➕ Khoản khác/Dụng cụ", dẫn sang đúng 2 màn đã có sẵn từ trước.
+  2) `openOtherChargeModal()` nay nhận thêm `playerId` (tuỳ chọn): nếu được gọi TỪ lối tắt trong "+ SẢN
+  PHẨM" của 1 người chơi cụ thể, ẩn ô chọn "Người chơi" (đã biết rõ đang thao tác cho ai, tránh chọn
+  nhầm), ghi xong quay THẲNG về Bill của đúng người đó (giống cách "Thuê máy bắn bóng" đang làm), thay
+  vì quay về tab Bán hàng. Nút "+ Khoản khác/Dụng cụ" cũ ở tab Bán hàng (gọi không kèm playerId) giữ
+  NGUYÊN hành vi cũ 100% — vẫn hiện dropdown chọn người chơi, đóng xong quay lại Bán hàng.
+  3) Màn Bill: bỏ nút riêng "🎱 + Thuê máy bắn bóng" (nguồn gốc gây thắc mắc "sao nằm trong này"), thay
+  bằng 1 nút chung "➕ Thêm sản phẩm / dịch vụ khác" dẫn thẳng sang modal "+ SẢN PHẨM" đã gộp đủ cả 3
+  lựa chọn — Staff mở Bill trực tiếp vẫn tiếp cận được Thuê máy bắn bóng/Khoản khác, chỉ qua đúng 1 cửa
+  duy nhất thay vì có nút lẻ cho từng dịch vụ riêng trong Bill.
+  4) Modal "Thuê máy bắn bóng" (`openAddBallMachineRentalModal()`): nút "Xem Bill" đổi thành "← Quay
+  lại" dẫn về modal "+ SẢN PHẨM" (đồng bộ trải nghiệm điều hướng qua lại giữa 3 lựa chọn).
+
+  v1.41.3 (2026-09-13) — §FIX-TVMODE-LEAK — Admin phản hồi: "bản mới nhất, mỗi khi F5 lại là nó nhảy
+  vào chế độ tivi" — xảy ra ngay ở tab Staff App thường (chưa từng bấm nút "Chế độ TV" ở tab đó).
+  NGUYÊN NHÂN GỐC: biến `tvMode` (đánh dấu 1 tab đang ở màn hình TV hay không) trước đây được lưu chung
+  trong đối tượng `localUi` rồi ghi vào `localStorage` — nhưng `localStorage` là kho lưu trữ DÙNG CHUNG
+  cho CẢ trình duyệt (mọi tab/cửa sổ cùng origin đọc/ghi chung 1 chỗ), KHÔNG tách riêng theo từng tab
+  như thiết kế ban đầu lầm tưởng. Tính năng "MỞ TV" (mở màn TV ở 1 tab riêng, để tab Staff App gốc vẫn
+  dùng bình thường song song) vô tình kích hoạt đúng lỗi này: ngay khi tab TV đó bật chế độ TV, nó ghi
+  tvMode=true vào `localStorage` DÙNG CHUNG ấy — khiến MỌI tab khác của CÙNG trình duyệt trên máy đó (kể
+  cả tab Staff App gốc Admin đang thao tác) bị "ăn theo" ngay lần F5 tiếp theo, dù tab đó chưa hề bấm nút
+  Chế độ TV bao giờ. Sửa:
+  1) Tách riêng `tvMode` ra khỏi phần dữ liệu lưu trong `localStorage` (LOCAL_UI_KEY) — các trường UI
+  khác (bộ lọc Người chơi, tài khoản đang đăng nhập, workspace...) vẫn lưu như cũ, không đổi hành vi.
+  2) `tvMode` nay lưu riêng trong `sessionStorage` (key `picpoc_tv_mode_v1`) — kho lưu trữ CHỈ RIÊNG CHO
+  TỪNG TAB/CỬA SỔ (không bị chia sẻ giữa các tab như localStorage), nhưng vẫn giữ được giá trị qua F5
+  CỦA CHÍNH TAB ĐÓ — đúng yêu cầu thực tế: tab TV rồi F5 lại vẫn phải ở nguyên chế độ TV, còn tab Staff
+  App khác của cùng máy thì tuyệt đối không bị ảnh hưởng.
+  3) Tự động dọn dữ liệu `tvMode` cũ còn sót lại trong `localStorage` từ các bản trước khi đọc lên (bỏ
+  qua, không dùng), tránh trường hợp máy đã từng bị lỗi này vẫn tiếp tục lặp lại sau khi cập nhật bản vá.
+  4) Tách phần "hành động khi vào chế độ TV" (bật class, ép về tab LIVE, khởi động đồng hồ kiểm tra giải
+  đấu, khởi động TV Announcement Engine) ra hàm riêng `runTvModeEnterEffects()` — nhân tiện sửa luôn 1 lỗ
+  hổng liên quan: trước đây nếu Staff F5 lại CHÍNH tab TV (không phải tab Staff App), điều kiện tự-động-
+  vào-TV lúc khởi động app sẽ bỏ qua vì tab đó "đã ở TV mode sẵn" (đọc được từ phiên trước) — nghĩa là
+  `initTvAnnouncementEngine()` KHÔNG được gọi lại, khiến màn TV "câm" (không đọc tên VĐV mới) sau mỗi lần
+  F5 màn TV cho đến khi Staff thoát TV rồi bật lại thủ công. Nay ở đúng trường hợp này, app tự gọi lại
+  `runTvModeEnterEffects()` ngay khi khởi động, đảm bảo TV luôn hoạt động đúng ngay cả sau khi tự F5.
+
   v1.41.2 (2026-09-13) — §TVANNOUNCE2026-VOICEFIX — Admin phản hồi sau khi thử TV Announcer thật:
   "giọng đọc gì ko hiểu gì hết, có giọng người việt đọc ko". NGUYÊN NHÂN GỐC: hàm `pickVietnameseVoice()`
   gọi `speechSynthesis.getVoices()` một cách ĐỒNG BỘ ngay tại thời điểm Staff bấm "BẬT ÂM THANH..." lần
@@ -7318,7 +7395,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.2'; // §TVANNOUNCE2026-VOICEFIX — Sua giong doc TV khong ro/sai tieng Viet, them bo chon giong thu cong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.5'; // §FIX-TVMODE-URLSTICK — Sua loi F5 van bi keo vao lai TV mode do URL con dinh "?tv=1" sau khi da thoat thu cong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -9517,6 +9594,28 @@ normalizeProducts();
    RIENG, khong bao gio di qua saveState()/dbRef.set(). saveBusinessState()/saveLocalUiState() la
    2 ham TACH BACH ro rang de sprint sau de chuyen Firebase sang entity-level ma khong dam lan. */
 const LOCAL_UI_KEY = 'picpoc_local_ui_v1';
+/* §FIX-TVMODE-LEAK — Admin bao "F5 lại là nó nhảy vào chế độ tivi" ngay cả ở tab Staff App bình
+   thường (chưa từng bấm "Chế độ TV" ở tab đó). NGUYEN NHAN GOC: tvMode truoc day duoc luu chung trong
+   `localUi` roi ghi vao `localStorage` (LOCAL_UI_KEY) — nhung localStorage la kho luu tru DUNG CHUNG
+   cho CA TRINH DUYET (moi tab/cua so cung origin doc/ghi chung 1 cho), KHONG rieng cho tung tab nhu
+   nham tuong. Tinh nang "MỞ TV" (§15/§44) mo TV o 1 TAB RIENG (dung y thiet ke, de Staff App tab goc
+   van dung binh thuong song song) — nhung ngay khi tab TV do goi toggleTvMode(), no ghi tvMode=true
+   vao chinh localStorage DUNG CHUNG ay, khien MOI tab khac cua CUNG trinh duyet (ke ca tab Staff App
+   goc) bi "ăn theo" ngay lan F5 tiep theo, du chua he bam nut Che do TV o tab do bao gio. FIX: tach
+   rieng tvMode ra khoi doi tuong luu trong localStorage, chuyen sang luu trong `sessionStorage` voi
+   key rieng (TV_MODE_SESSION_KEY) — sessionStorage la kho luu tru RIENG CHO TUNG TAB/CUA SO (dung
+   dac tinh nay de moi tab tu quyet dinh trang thai TV cua chinh no, KHONG "lay" tu tab khac), nhung
+   VAN giu duoc gia tri qua F5 CUA CHINH TAB DO (dung yeu cau: tab TV rieng F5 van phai o lai TV mode
+   — xem doan boot-time o renderAll()). Cac field UI khac trong localUi (playerFilter/currentUserId/
+   workspace/...) KHONG doi hanh vi, van dung chung qua localStorage nhu truoc (khong nam trong pham
+   vi loi nay). */
+const TV_MODE_SESSION_KEY = 'picpoc_tv_mode_v1';
+function readTvModeFromSession(){
+  try{ return sessionStorage.getItem(TV_MODE_SESSION_KEY) === '1'; }catch(e){ return false; }
+}
+function writeTvModeToSession(v){
+  try{ sessionStorage.setItem(TV_MODE_SESSION_KEY, v ? '1' : '0'); }catch(e){ /* ignore — khong lam gian doan saveLocalUiState */ }
+}
 /* §PROD-11/12 — deviceId: dinh danh THIET BI nay (may/tab trinh duyet), sinh 1 lan roi luu
    ben trong localStorage RIENG (khong nam trong LOCAL_UI_KEY vi khong nen bi xoa/doi khi
    reset UI state thong thuong). Gan voi audit log de biet hanh dong nhay cam den tu may nao —
@@ -9623,7 +9722,9 @@ const SESSION_UI_DEFAULTS = {
 function loadLocalUiState(){
   try{
     const raw = localStorage.getItem(LOCAL_UI_KEY);
-    return Object.assign({ tvMode:false }, PLAYER_UI_DEFAULTS, REPORTS_UI_DEFAULTS, SESSION_UI_DEFAULTS, raw ? JSON.parse(raw) : {});
+    const parsed = raw ? JSON.parse(raw) : {};
+    delete parsed.tvMode; // §FIX-TVMODE-LEAK — bo qua tvMode CU (neu con sot lai trong localStorage tu ban truoc loi), luon lay tvMode THAT tu sessionStorage rieng cua tab nay
+    return Object.assign({ tvMode:false }, PLAYER_UI_DEFAULTS, REPORTS_UI_DEFAULTS, SESSION_UI_DEFAULTS, parsed, { tvMode: readTvModeFromSession() });
   }catch(e){ return Object.assign({ tvMode:false }, PLAYER_UI_DEFAULTS, REPORTS_UI_DEFAULTS, SESSION_UI_DEFAULTS); }
 }
 /* §HOTFIX-QUOTA2 — ROOT CAUSE tim duoc tu console Admin gui: localStorage tren thiet bi da DAY QUOTA
@@ -9638,7 +9739,10 @@ function loadLocalUiState(){
    thuc thi cua ham goi no. */
 function saveLocalUiState(){
   try{
-    localStorage.setItem(LOCAL_UI_KEY, JSON.stringify(localUi));
+    writeTvModeToSession(localUi.tvMode); // §FIX-TVMODE-LEAK — tvMode luu RIENG vao sessionStorage (tab-scoped), KHONG ghi vao localStorage dung chung nua
+    const toSave = Object.assign({}, localUi);
+    delete toSave.tvMode; // tranh ghi lai tvMode vao localStorage — nguon that duy nhat cho tvMode gio la sessionStorage cua tung tab
+    localStorage.setItem(LOCAL_UI_KEY, JSON.stringify(toSave));
   }catch(e){
     console.error('[saveLocalUiState] ghi cache local that bai (co the day quota)', e);
     if(typeof logSystemError === 'function') logSystemError('saveLocalUiState', 'localStorage quota: ' + (e && e.message), e && e.stack);
@@ -12499,12 +12603,28 @@ function addBillItem(playerId, item){
    sau nay CHI dong cham tien, khong dong lai inventory — §34 "1 product sale, stock effect dung 1
    lan"). Xoa dong nay khoi bill (qua editBillProductItem/confirmEditBillItem co san) da hoan tra
    dung stock (§35), khong can code moi. */
+/* §MERGE-OTHERCHARGE2026 — Admin phản hồi 2 ý liên quan:
+   (1) thắc mắc "sao nút thuê máy bắn bóng lại nằm trong [Bill]" — vì trước đây "🎱 Thuê máy bắn bóng"
+   la 1 nut RIENG chi co trong man Bill, tach biet hoan toan voi luong "+ SẢN PHẨM" quen thuoc, gay
+   cam giac "moc noi" o sai cho.
+   (2) yeu cau ro rang: "thuê máy bắn bóng, khoản khác, dịch vụ khác cũng nên cho vào mục sản phẩm này
+   luôn" — nghia la GOP CA BA (San pham ton kho / Thue may ban bong / Khoan khac-Dung cu) vao CHUNG 1
+   noi duy nhat: modal "+ SẢN PHẨM" mo tu the nguoi choi (openAddProductToBillModal()).
+   FIX: them 2 nut LOI TAT ngay tren dau modal nay (truoc o tim kiem san pham) dan sang 2 luong da co
+   san (openAddBallMachineRentalModal()/openOtherChargeModal()) — KHONG viet lai logic them bill cua
+   2 luong do (giu nguyen addBillItem()/gia mac dinh Cai dat...), chi noi lai duong dieu huong de Staff
+   luon vao dung 1 cua "+ SẢN PHẨM" thay vi phai nho nhieu nut o nhieu cho khac nhau. openOtherChargeModal()
+   duoc sua rieng de nhan playerId co san (bo qua o Nguoi choi, xem sua ben duoi). */
 function openAddProductToBillModal(playerId){
   const p = playerById(playerId);
   if(!p) return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm vào bill — ${p.name}</h2>
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <button class="secondary" style="flex:1;" onclick="openAddBallMachineRentalModal('${playerId}')">🎱 Thuê máy bắn bóng</button>
+      <button class="secondary" style="flex:1;" onclick="openOtherChargeModal('${playerId}')">➕ Khoản khác/Dụng cụ</button>
+    </div>
     <input type="text" placeholder="Tìm sản phẩm..." oninput="renderAddProductToBillGrid('${playerId}', this.value)" style="margin-bottom:10px; width:100%;">
     <div id="addProductToBillGrid" style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow:auto;"></div>
     <button class="secondary" style="width:100%; margin-top:10px; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openBillModal('${playerId}')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6"/></svg>Xem Bill</button>
@@ -15349,32 +15469,76 @@ function openTvInNewWindow(){
   const url = base + '?tv=1';
   window.open(url, '_blank');
 }
+/* §FIX-TVMODE-LEAK — tach rieng "cac hanh dong khi VAO TV mode" ra khoi toggleTvMode() thanh 1 ham
+   dung lai duoc (runTvModeEnterEffects()), vi gio day co 2 truong hop can chay dung 1 bo hanh dong nay:
+   (1) Staff bam nut "Chế độ TV" thu cong (qua toggleTvMode(), co doi bien localUi.tvMode), VA
+   (2) tab TV rieng (mo qua "MỞ TV", URL ?tv=1) tu F5 CHINH NO — luc nay localUi.tvMode DA la true tu
+   truoc (doc tu sessionStorage cua tab do, xem §FIX-TVMODE-LEAK o loadLocalUiState()), nen dieu kien
+   auto-detect cu "!localUi.tvMode" o renderAll() se KHONG con dung nua, va neu chi goi lai toggleTvMode()
+   thi se bi LAT NGUOC ve false (sai). Truoc ban vá nay, truong hop (2) hoan toan bi bo sot — TV Announcement
+   Engine (initTvAnnouncementEngine) khong duoc khoi dong lai sau moi lan F5 chinh tab TV, khien TV "cam"
+   (khong doc duoc goi ten moi) cho den khi Staff bam Thoat roi bam lai TV thu cong. */
+function runTvModeEnterEffects(){
+  document.body.classList.add('tv-mode');
+  document.documentElement.classList.add('tv-mode'); // §FIX-TV-1 — chan scroll o ca <html> khi TV mode
+  // §PROD-39 — vao TV: LUON ep ve tab LIVE (khong duoc dung dang o Bill/Bao cao/Cai dat roi bat TV)
+  const liveBtn = document.querySelector('.tab-btn[data-tab="live"]');
+  if(liveBtn) liveBtn.click();
+  document.body.classList.toggle('tv-disconnected', !isOnline);
+  // §TOURNTV2026-AUTOSTART — man TV thuong duoc bat truoc gio thi dau roi de nguyen ca buoi (khong ai
+  // dung lai bam nut) — can 1 dong ho rieng KIEM TRA LAI dinh ky (moi 20s) de tu chuyen sang Tournament
+  // TV DUNG LUC gio bat dau da cau hinh (tsStartTime) den, thay vi chi kiem tra 1 lan luc bam nut. Chi
+  // check thoi gian THUAN (Date.now() so voi setup.matchDate+startTime) — KHONG doi dieu kien groups/
+  // schedule da co san (§10/11 "khong doan": chua chia bang/tao lich thi den gio van khong co gi de
+  // hien, dong ho nay se thay khong co active tournament va giu nguyen Club TV, khong loi). Huy timer
+  // cu truoc khi tao moi de tranh leak khi bam TV on/off nhieu lan hoac F5 nhieu lan.
+  if(tvAutoStartCheckTimer) clearInterval(tvAutoStartCheckTimer);
+  tvAutoStartCheckTimer = setInterval(()=>{ if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); }, 20000);
+  // §TVANNOUNCE2026/§13/§37 — khoi dong TV Announcement Engine (audio-enable gate + leader lock +
+  // hang doi TTS) MOI LAN vao TV mode (ke ca khi F5 lai chinh tab TV). Ham nay tu kiem tra da enable
+  // audio trong session nay chua.
+  if(typeof initTvAnnouncementEngine === 'function') initTvAnnouncementEngine();
+}
+function runTvModeExitEffects(){
+  document.body.classList.remove('tv-mode');
+  document.documentElement.classList.remove('tv-mode');
+  document.body.classList.remove('tv-tournament-active');
+  if(tvChampionTimer){ clearTimeout(tvChampionTimer); tvChampionTimer = null; } // §AW — thoat TV: huy timer, tranh leak
+  if(tvAutoStartCheckTimer){ clearInterval(tvAutoStartCheckTimer); tvAutoStartCheckTimer = null; } // §TOURNTV2026-AUTOSTART
+  if(typeof teardownTvAnnouncementEngine === 'function') teardownTvAnnouncementEngine(); // §TVANNOUNCE2026 — thoat TV: huy heartbeat/timer, tranh leak + tranh giu leader lock vinh vien
+}
+/* §FIX-TVMODE-URLSTICK — Admin phan hoi TIEP sau ban va §FIX-TVMODE-LEAK: "f5 lại vẫn bị nhảy vô chế
+   độ tivi" — ngay ca sau khi da tu bam "✕ Thoát chế độ TV" thu cong. NGUYEN NHAN GOC (khac voi loi
+   cu — loi cu la ăn theo GIỮA CÁC TAB qua localStorage, da fix xong; loi nay la trong CHINH 1 TAB):
+   tab dang dung van con GIU NGUYEN "?tv=1" tren thanh dia chi (vi tab do duoc mo ra tu nut "MỞ TV" —
+   xem openTvInNewWindow() — hoac Admin da luu/dung lai duong link do cho cong viec Staff hang ngay).
+   Boot-time auto-detect o renderAll() doc dung URL nay MOI LAN F5 ("neu URL co ?tv=1 VA dang KHONG o
+   TV mode thi TU BAT TV mode") — logic nay dung y thiet ke cho 1 tab CHUYEN DUNG lam man TV (F5 tab
+   TV van phai o lai TV — day la ly do co doan nay tu dau). NHUNG neu Admin dang dung CHINH tab do de
+   lam viec Staff binh thuong va bam "Thoát chế độ TV" (tat localUi.tvMode), URL van con y nguyen
+   "?tv=1" — nen F5 KE TIEP se tu dong bat lai TV mode, "keo nguoc" Admin vao lai TV moi lan F5, du vua
+   moi thoat thu cong xong. FIX: khi THOÁT TV mode thu cong (o day, KHONG dung o auto-detect boot-time —
+   giu nguyen hanh vi cho tab TV chuyen dung F5 van o lai TV), CHU DONG xoa "?tv=1" khoi thanh dia chi
+   bang history.replaceState() (khong reload trang, chi doi URL hien thi) — F5 lan sau se KHONG con
+   thay ?tv=1 nua nen se boot BINH THUONG nhu 1 tab Staff App, khong con bi "keo" vao lai TV. Tab TV
+   CHUYEN DUNG that su (khong ai bam Thoat) khong bi anh huong gi — van giu ?tv=1 va F5 van vao lai TV
+   dung nhu thiet ke ban dau. */
+function stripTvUrlParamIfPresent(){
+  try{
+    const url = new URL(location.href);
+    if(url.searchParams.get('tv') === '1'){
+      url.searchParams.delete('tv');
+      history.replaceState(null, '', url.toString());
+    }
+  }catch(e){ /* URL API khong ho tro (trinh duyet rat cu) — bo qua, khong crash */ }
+}
 function toggleTvMode(){
   localUi.tvMode = !localUi.tvMode;
-  document.body.classList.toggle('tv-mode', localUi.tvMode);
-  document.documentElement.classList.toggle('tv-mode', localUi.tvMode); // §FIX-TV-1 — chan scroll o ca <html> khi TV mode
   if(localUi.tvMode){
-    // §PROD-39 — vao TV: LUON ep ve tab LIVE (khong duoc dung dang o Bill/Bao cao/Cai dat roi bat TV)
-    const liveBtn = document.querySelector('.tab-btn[data-tab="live"]');
-    if(liveBtn) liveBtn.click();
-    document.body.classList.toggle('tv-disconnected', !isOnline);
-    // §TOURNTV2026-AUTOSTART — man TV thuong duoc bat truoc gio thi dau roi de nguyen ca buoi (khong ai
-    // dung lai bam nut) — can 1 dong ho rieng KIEM TRA LAI dinh ky (moi 20s) de tu chuyen sang Tournament
-    // TV DUNG LUC gio bat dau da cau hinh (tsStartTime) den, thay vi chi kiem tra 1 lan luc bam nut. Chi
-    // check thoi gian THUAN (Date.now() so voi setup.matchDate+startTime) — KHONG doi dieu kien groups/
-    // schedule da co san (§10/11 "khong doan": chua chia bang/tao lich thi den gio van khong co gi de
-    // hien, dong ho nay se thay khong co active tournament va giu nguyen Club TV, khong loi). Huy timer
-    // cu truoc khi tao moi de tranh leak khi bam TV on/off nhieu lan.
-    if(tvAutoStartCheckTimer) clearInterval(tvAutoStartCheckTimer);
-    tvAutoStartCheckTimer = setInterval(()=>{ if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); }, 20000);
-    // §TVANNOUNCE2026/§13/§37 — khoi dong TV Announcement Engine (audio-enable gate + leader lock +
-    // hang doi TTS) MOI LAN vao TV mode. Ham nay tu kiem tra da enable audio trong session nay chua.
-    if(typeof initTvAnnouncementEngine === 'function') initTvAnnouncementEngine();
+    runTvModeEnterEffects();
   } else {
-    document.body.classList.remove('tv-tournament-active');
-    if(tvChampionTimer){ clearTimeout(tvChampionTimer); tvChampionTimer = null; } // §AW — thoat TV: huy timer, tranh leak
-    if(tvAutoStartCheckTimer){ clearInterval(tvAutoStartCheckTimer); tvAutoStartCheckTimer = null; } // §TOURNTV2026-AUTOSTART
-    if(typeof teardownTvAnnouncementEngine === 'function') teardownTvAnnouncementEngine(); // §TVANNOUNCE2026 — thoat TV: huy heartbeat/timer, tranh leak + tranh giu leader lock vinh vien
+    runTvModeExitEffects();
+    stripTvUrlParamIfPresent(); // §FIX-TVMODE-URLSTICK — tranh F5 sau khi thoat thu cong bi keo lai vao TV
   }
   if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); // §AG-AJ — vao TV: neu co giai dang dien ra thi tu chuyen sang Tournament TV ngay, khong can render lai
   saveLocalUiState();
@@ -18393,13 +18557,27 @@ function goToBookingFromPOS(){
 
 
 /* ================= KHOAN KHAC / DUNG CU ================= */
-function openOtherChargeModal(){
-  const activePlayers = state.players.filter(p=>p.status!=='checked_out');
+/* §MERGE-OTHERCHARGE2026 — modal nay gio dung o 2 NOI: (1) nut "+ Khoản khác/Dụng cụ" cu o tab Bán
+   hàng (goi khong tham so, giu NGUYEN hanh vi cu — chon Nguoi choi tu dropdown, dong xong quay lai
+   Bán hàng), VA (2) loi tat MOI trong modal "+ SẢN PHẨM" cua tung nguoi choi (goi co san playerId —
+   xem openAddProductToBillModal()) — luc nay AN dropdown chon nguoi choi di (da biet ro dang thao tac
+   cho ai, tranh Staff chon nham nguoi khac giua chung), va sau khi ghi xong quay VE LAI dung Bill cua
+   nguoi choi do (giong het cach openAddBallMachineRentalModal() dang lam), thay vi ve tab Ban hang. */
+function openOtherChargeModal(playerId){
   const box = document.getElementById('matchModalContent');
+  let playerFieldHtml;
+  if(playerId){
+    const p = playerById(playerId);
+    if(!p) return;
+    playerFieldHtml = `<input type="hidden" id="otherPlayer" value="${playerId}"><p class="muted" style="margin:2px 0 10px;">Người chơi: <b>${escapeHtml(p.name)}</b></p>`;
+  } else {
+    const activePlayers = state.players.filter(p=>p.status!=='checked_out');
+    playerFieldHtml = `<label>Người chơi</label>
+    <select id="otherPlayer">${activePlayers.map(p=>`<option value="${p.id}" ${p.id===selectedBuyerId?'selected':''}>${p.name}</option>`).join('') || '<option value="">Chưa có ai check-in</option>'}</select>`;
+  }
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Khoản khác / Dụng cụ</h2>
-    <label>Người chơi</label>
-    <select id="otherPlayer">${activePlayers.map(p=>`<option value="${p.id}" ${p.id===selectedBuyerId?'selected':''}>${p.name}</option>`).join('') || '<option value="">Chưa có ai check-in</option>'}</select>
+    ${playerFieldHtml}
     <label>Loại</label>
     <select id="otherType">
       <option value="equipment">Dụng cụ (thuê vợt, bóng...)</option>
@@ -18409,24 +18587,32 @@ function openOtherChargeModal(){
     <input type="text" id="otherDesc" placeholder="VD: Thuê vợt">
     <label>Số tiền</label>
     <input type="number" id="otherAmount" placeholder="20000">
-    <button onclick="confirmOtherCharge()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>Ghi vào bill</button>
-    <button class="secondary" onclick="closeModal()">Hủy</button>
+    <button onclick="confirmOtherCharge('${playerId||''}')" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>Ghi vào bill</button>
+    <button class="secondary" onclick="${playerId ? `openAddProductToBillModal('${playerId}')` : 'closeModal()'}">${playerId ? '← Quay lại' : 'Hủy'}</button>
   `;
   document.getElementById('matchModal').classList.add('show');
 }
-function confirmOtherCharge(){
+function confirmOtherCharge(fromPlayerId){
   const playerId = document.getElementById('otherPlayer').value;
   const type = document.getElementById('otherType').value;
   const desc = document.getElementById('otherDesc').value.trim();
   const amount = parseFloat(document.getElementById('otherAmount').value);
   if(!playerId){ showToast('Chọn người chơi'); return; }
   if(!desc || !amount){ showToast('Nhập đủ mô tả và số tiền'); return; }
-  addBillItem(playerId, { type, label: desc, amount, qty:1, unitPrice: amount, meta:{} });
+  const bill = addBillItem(playerId, { type, label: desc, amount, qty:1, unitPrice: amount, meta:{} });
   saveState();
-  closeModal();
-  renderSalesTab();
-  renderMoneyTab();
+  if(bill) markEntityDirty('bills', bill.id);
   showToast('Đã ghi ' + fmtVnd(amount) + ' vào bill');
+  if(fromPlayerId){
+    // §MERGE-OTHERCHARGE2026 — vao tu loi tat trong "+ SẢN PHẨM" cua 1 nguoi choi cu the: quay ve
+    // dung Bill cua nguoi do (giong het openAddBallMachineRentalModal()), KHONG ve tab Ban hang.
+    openBillModal(fromPlayerId);
+    if(typeof renderPresenceTab === 'function') renderPresenceTab();
+  } else {
+    closeModal();
+    renderSalesTab();
+    renderMoneyTab();
+  }
 }
 
 function openAddManualWaterLossModal(){
@@ -27767,7 +27953,12 @@ function openBillModal(playerId, explicitBillId){
     ${passUsedBadge}
     ${billLinesHtml(bill)}
     <div class="cart-total"><span>TỔNG</span><span>${fmtVnd(total)}</span></div>
-    ${bill.status==='open' ? `<button class="secondary" style="width:100%; margin:6px 0; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openAddBallMachineRentalModal('${bill.playerId}')">🎱 + Thuê máy bắn bóng</button>` : ''}
+    ${/* §MERGE-OTHERCHARGE2026 — Admin thac mac "sao nut thue may ban bong lai nam trong [Bill]" vi
+         truoc day day la 1 nut RIENG chi phuc vu 1 dich vu duy nhat, tach roi voi luong quen thuoc
+         "+ SẢN PHẨM". Gop lai thanh 1 nut chung dan sang openAddProductToBillModal() — noi da gom san
+         San pham/Thue may ban bong/Khoan khac vao 1 cho duy nhat (xem §MERGE-OTHERCHARGE2026 o do) —
+         thay vi giu rieng 1 nut chi cho 1 dich vu ngay trong man Bill. */''}
+    ${bill.status==='open' ? `<button class="secondary" style="width:100%; margin:6px 0; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openAddProductToBillModal('${bill.playerId}')">➕ Thêm sản phẩm / dịch vụ khác</button>` : ''}
     ${bill.status==='open' ? billCreditSectionHtml(bill) : ''}
     ${footer}
     <button class="secondary" onclick="closeModal()">Đóng</button>
@@ -27823,7 +28014,7 @@ function openAddBallMachineRentalModal(playerId){
     <label>Số tiền</label>
     <input type="number" id="ballMachineAmountInput" min="0" step="1000" value="${defaultPrice}">
     <button style="margin-top:10px;" onclick="confirmAddBallMachineRental('${playerId}')">THÊM VÀO BILL</button>
-    <button class="secondary" onclick="openBillModal('${playerId}')">Xem Bill</button>
+    <button class="secondary" onclick="openAddProductToBillModal('${playerId}')">← Quay lại</button>
     <button class="secondary" onclick="closeModal()">Đóng</button>
   `;
   document.getElementById('matchModal').classList.add('show');
@@ -36270,7 +36461,24 @@ function renderAll(){
   if(!__tvAutoParamHandled){
     __tvAutoParamHandled = true;
     try{
-      if(new URLSearchParams(location.search).get('tv') === '1' && !localUi.tvMode) toggleTvMode();
+      const urlWantsTv = new URLSearchParams(location.search).get('tv') === '1';
+      if(urlWantsTv && !localUi.tvMode){
+        toggleTvMode();
+        // §FIX-TVMODE-URLSTICK — ngay sau khi vao TV mode lan dau qua URL, XOA LUON "?tv=1" khoi
+        // thanh dia chi (khong reload) — tu day ve sau, VIEC tab nay o lai TV qua F5 hay khong hoan
+        // toan dua vao sessionStorage rieng cua tab (xem §FIX-TVMODE-LEAK), KHONG con phu thuoc URL
+        // nua. Muc dich: tranh 1 URL "?tv=1" con dinh mai tren thanh dia chi (vi tab nay co the duoc
+        // Admin luu lai/dung tiep cho cong viec Staff binh thuong sau nay) — neu khong xoa, MOI lan F5
+        // sau khi da bam "Thoát chế độ TV" thu cong se bi URL nay "keo nguoc" vao lai TV mode (dung
+        // trieu chung Admin bao cao: "f5 lại vẫn bị nhảy vô chế độ tivi" ngay ca sau khi da thoat).
+        stripTvUrlParamIfPresent();
+      } else if(localUi.tvMode){
+        // §FIX-TVMODE-LEAK — tab nay DA o TV mode tu truoc (F5 lai CHINH tab TV, sessionStorage con
+        // giu tvMode=true) — toggleTvMode() se KHONG duoc goi vi dieu kien tren da false, nen phai tu
+        // chay lai runTvModeEnterEffects() O DAY de khoi dong lai TV Announcement Engine/timer, tranh
+        // TV bi "cam" (khong doc goi ten moi) sau moi lan F5 chinh no.
+        runTvModeEnterEffects();
+      }
     }catch(e){ /* URLSearchParams khong ho tro (trinh duyet rat cu) — bo qua, khong crash boot */ }
   }
   renderLiveTab();
