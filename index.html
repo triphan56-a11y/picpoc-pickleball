@@ -2,6 +2,129 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.0 (2026-09-13) — §PROFILE2026/§TVANNOUNCE2026 — NÂNG CẤP PLAYER PROFILE + TV ANNOUNCER +
+  STAFF CONTROL (theo yêu cầu chi tiết 97 mục của Admin). Tóm tắt các phần đã triển khai đầy đủ trong
+  source (không dừng ở audit):
+
+  PHẦN A — THIẾT KẾ LẠI HỒ SƠ NGƯỜI CHƠI:
+  1) Header gọn: tên là chữ chính, dòng phụ gồm nickname (mới) + SĐT + nút copy, dòng nhỏ PPR + trạng
+  thái — bỏ các dòng kỹ thuật (Tin cậy/số trận tính điểm/ngày tạo) ra khỏi phần chính, chỉ còn ở
+  subtab liên quan. Player có thêm field `nickname` (tùy chọn) — TV Announcer và header ưu tiên đọc/
+  hiển thị nickname nếu có (`getPlayerAnnouncerName()`), qua `openEditPlayerModal()`/`savePlayerEdit()`.
+  2) Khối "TỔNG QUAN" dạng lưới 2x2 gọn (PPR / Số buổi tháng này / Tổng số trận / Công nợ) thay cho 3
+  ô KPI cũ, cạnh khối "PICPOC CREDITS" (số dư + sắp hết hạn + nút LỊCH SỬ) trong layout 2 cột (desktop)
+  / xếp dọc (mobile) — `.pp-grid2`/`.pp-panel` (CSS mới, tuân [[picpoc_ui_design_rules]]: compact/light/
+  teal-navy, không gradient/neon, không mỗi field 1 card riêng).
+  3) "HOẠT ĐỘNG GẦN ĐÂY" hiển thị 5 bill gần nhất (ngày/nhãn/số tiền/trạng thái) ngay trên header —
+  `buildPlayerActivityOverview()`, dữ liệu thật từ `state.bills`, không bịa nguồn mới.
+  4) Gộp subtab "LƯỢT CHƠI" vào "LỊCH SỬ CHƠI", đổi "TÀI CHÍNH" thành "THANH TOÁN", thêm subtab mới
+  "GIẢI ĐẤU" (`renderPlayerTournamentSubtab()` — khớp theo tên với `tournamentEntryParticipants`, có
+  ghi chú rõ đây là khớp tên, không phải liên kết ID chính xác 100%, vì Tournament pair hiện là chuỗi
+  tự do không gắn Player ID — xem §60 phần B).
+  5) Nút "CHỈNH SỬA" mở form gồm Họ tên/Nickname/SĐT/Trình độ/Ghi chú nội bộ — gộp cả ô Ghi chú (trước
+  đây là textarea rời tự-lưu-khi-blur trên trang chính) vào form này để tránh 2 nơi cùng sửa 1 field.
+
+  PHẦN B — TV ANNOUNCER + STAFF CONTROL:
+  6) TV Announcement Engine DÙNG CHUNG cho Social và Giải đấu (không viết 2 hệ thống TTS riêng) —
+  entity mới `tvAnnouncements` (ARRAY_ENTITY_NODE, đồng bộ Firebase per-id giống
+  tournamentEntryParticipants) là nguồn DUY NHẤT cho cả âm thanh lẫn hiển thị trên TV.
+  7) `buildMatchAnnouncement(type, courtId, teamAText, teamBText)` là CHOKE POINT DUY NHẤT dựng câu
+  "Mời cặp... và cặp... vào sân số X"/"Cặp... và cặp... vui lòng chuẩn bị" — Social lấy tên qua
+  `getAnnouncerNameForPlayerId()` (ưu tiên nickname theo Cài đặt), Tournament dùng `pairLabel()` (dữ
+  liệu chuỗi tự do có sẵn) sanitize qua `sanitizeNameForTts()` (bỏ "/"/"&"/emoji, đổi thành "và").
+  8) Social: CALL_TO_COURT tạo tại `sendReadyGroupToCourt()` (điểm vào sân canonical duy nhất),
+  PREPARE_NEXT tạo tại `createReadyGroup()` (nhóm sẵn sàng vừa được ghép). Hủy/tạo lại khi đổi sân
+  (`assignReadyGroupCourt()`), hủy khi nhóm bị hủy/giải tán (`cancelReadyGroup()`,
+  `removePlayerFromOperationalQueues()`), hủy CALL_TO_COURT khi trận thật sự kết thúc
+  (`applyFinishMatchLocally()`).
+  9) Tournament: `syncTournamentTvAnnouncements(catKey)` đọc THẲNG từ `getTournamentLiveOpsBoard()`
+  (bảng "đang đánh"/"tiếp theo" canonical đã có sẵn dựa trên `t.schedule`/`m.status`, không tạo hệ
+  thống match song song) — gọi lại sau mỗi lần `updateScore()` khóa 1 trận. Phạm vi V1 chỉ phủ VÒNG
+  BẢNG (giai đoạn có nhiều trận đồng thời nhất) — vòng loại trực tiếp (knockout) là mở rộng cho bản
+  sau, ghi rõ trong Definition of Done bên dưới.
+  10) Idempotency: id ổn định = matchId + loại + sân (upsert, không dùng timestamp) → tự chống đọc
+  trùng khi F5/reconnect. Announcement quá 15 phút (`TV_ANNOUNCEMENT_STALE_MS`) bị coi là hết hạn,
+  không phát nữa dù còn PENDING.
+  11) Client TV (chỉ chạy khi `localUi.tvMode`): hàng đợi ưu tiên CALL_TO_COURT trước PREPARE_NEXT,
+  cách nhau tối thiểu theo "Khoảng nghỉ" cấu hình (mặc định 3s), phát qua `SpeechSynthesis` (vi-VN, dò
+  giọng Tiếng Việt nếu có, không hard-code tên giọng, lỗi TTS không làm crash TV — vẫn hiện thẻ hình).
+  Overlay "BẬT ÂM THANH & VÀO CHẾ ĐỘ TV" hiện 1 lần mỗi phiên TV thật sự (sessionStorage), sau đó tự
+  chạy không cần bấm lại từng trận.
+  12) Audio leader lock đơn giản (`displayAudioLeader`, OBJECT_ENTITY_NODE) — chỉ 1 TV client phát âm
+  thanh tại 1 thời điểm (heartbeat 5s, timeout 15s cho phép TV khác chiếm lại), TV không phải leader
+  vẫn hiển thị hình bình thường, chỉ không tự đọc — tránh 2 màn hình TV đọc đè nhau.
+  13) TV visual mới (`renderTvAnnouncerBoard()`): thẻ "SÂN X — MỜI VÀO SÂN" (viền xanh) và "CHUẨN BỊ —
+  SÂN X" (viền vàng) nổi trên đầu màn hình TV, đọc trực tiếp từ `tvAnnouncements` (không đọc
+  `readyGroups`/`state.courts` trực tiếp để tránh 2 nguồn sự thật lệch nhau giữa các thiết bị/tab).
+  14) Nút "🔊 GỌI LẠI" (Staff App): trên từng ô sân "ĐANG CHƠI" (Social), từng dòng "Sẵn sàng" (Social
+  prepare), và từng ô sân trong bảng điểm Giải đấu — tạo 1 operation MỚI (`manualReplayTvAnnouncement()`),
+  KHÔNG sửa bản ghi PLAYED cũ.
+  15) Nút "MỞ TV" mới mở TV ở tab/cửa sổ RIÊNG (`openTvInNewWindow()`, URL `?tv=1`, tự động vào TV mode
+  ngay khi app tải xong ở tab mới) — Staff App ở tab hiện tại KHÔNG bị thay thế, vẫn tính tiền/check-in/
+  Credits/công nợ bình thường song song. Nút "Chế độ TV" cũ (chuyển tab hiện tại thành TV) vẫn giữ
+  nguyên cho trường hợp 1 máy/1 màn hình.
+  16) Cài đặt → Vận hành → thẻ mới "Gọi VĐV trên TV": bật/tắt, đọc khi nào (mời vào sân/chuẩn bị), tên
+  sử dụng (nickname/họ tên đầy đủ), khoảng nghỉ (giây), nút "THỬ GIỌNG" nghe thử ngay không cần lưu.
+  17) Riêng tư: đã audit `body.tv-mode` — SĐT/công nợ/Credit/bill KHÔNG xuất hiện ở bất kỳ chỗ nào
+  trong `#tab-live`/TV visual mới; TV hoàn toàn read-only (không có action ghi Bill/Player/Finance/
+  Credit nào được thêm vào code chạy trong tv-mode).
+  18) Data Health (`runDataIntegrityCheck()`) bổ sung 3 cảnh báo mới cho `tvAnnouncements`: kẹt
+  PLAYING quá 5 phút, PENDING quá hạn 15 phút (thường do không có TV nào mở — INFO, không phải lỗi),
+  và tham chiếu tới giải đấu đã không còn tồn tại.
+
+  Phạm vi CHỦ ĐỘNG KHÔNG làm trong V1 (ghi rõ để không nhầm là thiếu sót): âm thanh cho vòng loại trực
+  tiếp (knockout) của Giải đấu (chỉ phủ vòng bảng — không có "live-ops-board" tương tự cho bracket ở
+  thời điểm này); GIẢI ĐẤU subtab trong Hồ sơ Player là khớp theo TÊN (không phải ID) do kiến trúc
+  Tournament hiện tại lưu cặp đấu dạng chuỗi tự do.
+
+  v1.40.0 (2026-09-13) — §PHONE2026 — THÊM SỐ ĐIỆN THOẠI VÀO HỒ SƠ NGƯỜI CHƠI (theo yêu cầu chi tiết
+  47 mục của Admin). Tóm tắt các phần đã triển khai đầy đủ trong source (không dừng ở audit):
+
+  1) DATA MODEL: Player có thêm 2 field mới — `phone` (chuỗi hiển thị đã chuẩn hoá, định dạng
+  "XXXX XXX XXX" cho đúng 10 số bắt đầu bằng 0) và `phoneDigits` (chuỗi chỉ gồm chữ số, dùng để tìm
+  kiếm/so khớp/chống trùng — KHÔNG bao giờ dùng làm playerId). 2 field này hoàn toàn tùy chọn, Player
+  cũ không có SĐT vẫn hoạt động bình thường (không cần migrate vì audit xác nhận Player chưa từng có
+  field phone thật nào trước đây — chỉ có vài chỗ code cũ "chờ sẵn" `p.phone||''` chưa từng được ghi).
+
+  2) CHUẨN HÓA (canonical, 1 nguồn duy nhất): hàm mới `normalizePhone(raw)` xử lý mọi trường hợp nhập
+  — tự nhận diện +84/84 và đổi thành số 0 đầu, loại bỏ khoảng trắng/dấu gạch, kiểm tra đúng 10 số bắt
+  đầu bằng 0 mới coi là hợp lệ. Nếu nhập chữ hoặc không đúng định dạng, KHÔNG tự "đoán sửa" — trả về
+  `valid:false` và giữ nguyên chuỗi gốc để Staff tự sửa lại, tránh lưu nhầm 1 số sai mà tưởng là đúng.
+  `formatPhoneDigits()` hiển thị đẹp "0932 565 545"; `autoFormatPhoneInput()` tự format khi rời khỏi ô
+  nhập (onblur) trên mọi form có SĐT.
+
+  3) TẠO/SỬA HỒ SƠ: ô "Số điện thoại (không bắt buộc)" đã thêm vào form Check-in khách mới
+  (`checkInPlayer()`) và form Sửa hồ sơ người chơi (`openEditPlayerModal()`/`savePlayerEdit()`). Nếu
+  Staff nhập SĐT sai định dạng, app chặn lại và báo lỗi rõ ràng thay vì lưu bừa.
+
+  4) CHỐNG TRÙNG SĐT: hàm mới `findPlayerByPhoneDigits()` so khớp theo phoneDigits (không so chuỗi
+  thô) để không bị lệch vì cách gõ khác nhau. Khi tạo Player mới hoặc sửa SĐT của Player có sẵn, nếu
+  phát hiện SĐT đã thuộc về 1 hồ sơ KHÁC, app hiện hộp thoại cảnh báo rõ tên hồ sơ cũ và hỏi lại Staff
+  trước khi cho phép lưu — không tự động từ chối, không tự động gộp, để Staff tự quyết định (2 khách
+  có thể thật sự dùng chung 1 số gia đình).
+
+  5) TÌM KIẾM: khung tìm kiếm ở Check-in (`renderPlayerSearch()`) và danh sách người chơi chính
+  (`computeFilteredPlayerList()`) giờ khớp thêm theo SĐT (khớp 1 phần từ 3 số trở lên), không chỉ theo
+  tên như trước. Khung tìm kiếm Công nợ (`renderFinanceDebt()`) nâng cấp từ so sánh chuỗi thô sang so
+  theo phoneDigits chuẩn hoá, đồng thời hiện luôn SĐT bên cạnh tên từng khách đang nợ để Staff gọi thu
+  nợ dễ hơn. Màn hình Đặt sân (`goToBookingFromPOS()`) đã tự động điền đúng SĐT vì trước đó đã đọc
+  `p.phone` (chỉ là chưa từng có dữ liệu thật — nay đã hoạt động, không cần sửa thêm).
+
+  6) HỒ SƠ CHI TIẾT (popup giữa màn hình từ v1.39.2): thêm dòng hiển thị SĐT kèm nút COPY nhanh; nếu
+  chưa có SĐT hiện rõ "Chưa có SĐT" thay vì để trống mập mờ.
+
+  7) RIÊNG TƯ: Chế độ TV/màn hình công khai (`body.tv-mode`) chỉ hiện đúng tab LIVE (sân/hàng chờ) —
+  đã audit toàn bộ và xác nhận SĐT KHÔNG xuất hiện ở bất kỳ template nào trong khu vực này. Giải đấu
+  hiện dùng tên VĐV dạng chuỗi tự do (không liên kết Player thật), nên không có gì để lộ SĐT ở đây.
+
+  8) KIỂM TRA SỨC KHỎE DỮ LIỆU: `runDataIntegrityCheck()` bổ sung 2 loại cảnh báo mới (WARNING, chỉ
+  báo cáo không tự sửa) — nhiều hồ sơ active trùng cùng 1 phoneDigits (`DUPLICATE_PHONE_DIGITS`), và
+  hồ sơ có `phone` nhưng thiếu `phoneDigits` hợp lệ khiến không tìm kiếm được (`PHONE_INVALID_FORMAT`).
+
+  Phạm vi CHỦ ĐỘNG KHÔNG đổi: các field `phone` riêng của Student/Guardian/Lead/Coach bên Academy giữ
+  nguyên độc lập (không gộp với Player.phone theo đúng yêu cầu); `bookingCustomerId()` giữ nguyên cách
+  tạo key cũ (dùng chuỗi SĐT thô) để không phá vỡ lịch sử các booking đã tạo trước đây.
+
   v1.39.8 (2026-09-13) — §AUTHGUARD2026-ROOTCAUSE — TÌM RA VÀ SỬA ĐÚNG GỐC BUG "ĐĂNG NHẬP THÀNH CÔNG
   NHƯNG MÀN HÌNH ĐỨNG YÊN VĨNH VIỄN Ở Đang đăng nhập..." — kể cả sau khi F5 tải lại nhiều lần. Điều tra
   qua Console theo yêu cầu Admin xác nhận: request đăng nhập lên Firebase đã 200 OK thật sự
@@ -4757,6 +4880,31 @@
   .player-stat-box .num{font-size:1.3rem; font-weight:800; color:var(--primary-dark);}
   .player-stat-box .lbl{font-size:.72rem; color:var(--muted); margin-top:2px;}
   .player-detail-subtabs{display:flex; gap:6px; margin:12px 0 10px;}
+  /* §PROFILE2026 — redesign compact header + tong quan grid (khong con "moi field 1 card"): xem
+     [[picpoc_ui_design_rules]] — compact/light/professional, khong gradient/neon, khong avatar to. */
+  .pp-header{padding-bottom:10px; border-bottom:1px solid var(--border); margin-bottom:10px;}
+  .pp-name-row{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
+  .pp-name{font-size:1.15rem; font-weight:800; letter-spacing:.2px;}
+  .pp-secondary{color:var(--muted); font-size:.86rem; margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .pp-tertiary{color:var(--muted); font-size:.8rem; margin-top:2px;}
+  .pp-actions{display:flex; gap:6px; flex-wrap:wrap;}
+  .pp-grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:10px;}
+  @media (max-width:720px){ .pp-grid2{grid-template-columns:1fr;} }
+  .pp-panel{background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px;}
+  .pp-panel-title{font-size:.72rem; font-weight:800; color:var(--muted); letter-spacing:.4px; margin-bottom:8px;}
+  .pp-metric-grid{display:grid; grid-template-columns:1fr 1fr; gap:6px 14px;}
+  .pp-metric-row{display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; font-size:.9rem;}
+  .pp-metric-row .pp-metric-val{font-weight:800; color:var(--primary-dark);}
+  .pp-inline-row{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .pp-inline-val{font-weight:800; font-size:1.05rem;}
+  .pp-inline-val.pp-debt{color:#b45309;}
+  .pp-inline-val.pp-zero{color:var(--muted); font-weight:700; font-size:.95rem;}
+  .pp-activity-row{display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed var(--border); font-size:.85rem;}
+  .pp-activity-row:last-child{border-bottom:none;}
+  .pp-activity-date{color:var(--muted); font-size:.76rem; min-width:38px;}
+  .pp-activity-label{flex:1; padding:0 8px;}
+  .pp-activity-amount{font-weight:700; white-space:nowrap;}
+  .pp-copy-btn{padding:1px 8px; font-size:.65rem;}
   .player-match-row{padding:8px 0; border-bottom:1px solid var(--border); font-size:.86rem;}
   .player-match-row .pmr-time{color:var(--muted); font-size:.76rem;}
   .player-bill-row{display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);}
@@ -4798,6 +4946,25 @@
   body.tv-mode #readyQueueCard #readyQueueList{ flex:1; min-height:0; overflow:auto; }
   #tvExitBtn{ display:none; position:fixed; top:10px; right:10px; z-index:9999; }
   body.tv-mode #tvExitBtn{ display:block; }
+  /* §TVANNOUNCE2026/§37 — overlay bat am thanh, chi hien tren TV, phai o TREN CUNG (z-index cao hon
+     #tvExitBtn) va PHAI click-through duoc (Staff/nguoi phu trach TV bam 1 lan de mo khoa autoplay). */
+  .tv-audio-gate-overlay{ position:fixed; inset:0; z-index:10000; background:rgba(11,18,32,.94); display:flex; align-items:center; justify-content:center; }
+  .tv-audio-gate-box{ text-align:center; color:#fff; padding:32px 40px; }
+  .tv-audio-gate-title{ font-size:1.8rem; font-weight:800; letter-spacing:1px; margin-bottom:10px; }
+  .tv-audio-gate-sub{ font-size:1.05rem; color:#cbd5e1; margin-bottom:22px; }
+  .tv-audio-gate-btn{ background:#0F766E; color:#fff; border:none; border-radius:var(--radius-md); padding:14px 28px; font-size:1.05rem; font-weight:800; cursor:pointer; }
+  .tv-audio-gate-btn:hover{ background:#0d6259; }
+  /* §25/§26/§52/§62/§63 — the "MOI VAO SAN"/"CHUAN BI" noi tren cung man hinh TV, de doc tu xa, font
+     lon/contrast cao (khac Staff App) nhung van teal/navy, khong neon/animation rom ra (§63). */
+  .tv-announcer-board{ position:fixed; top:calc(var(--topbar-h) + 8px); left:12px; right:12px; z-index:40; display:flex; gap:12px; flex-wrap:wrap; pointer-events:none; }
+  .tv-ann-group{ display:flex; gap:12px; flex-wrap:wrap; }
+  .tv-ann-card{ min-width:260px; border-radius:12px; padding:12px 16px; color:#fff; box-shadow:0 4px 18px rgba(0,0,0,.35); }
+  .tv-ann-live-card{ background:#0F766E; border:2px solid #34d399; }
+  .tv-ann-next-card{ background:#78350f; border:2px solid #fbbf24; }
+  .tv-ann-card-title{ font-weight:800; font-size:.95rem; letter-spacing:.4px; }
+  .tv-ann-source{ font-size:.68rem; opacity:.75; margin-top:1px; letter-spacing:.6px; }
+  .tv-ann-vs{ display:flex; align-items:center; gap:8px; margin-top:6px; font-size:1.1rem; font-weight:800; }
+  .tv-ann-vs-sep{ font-size:.75rem; opacity:.8; font-weight:700; }
   #tvDisconnectedBanner{ display:none; align-items:center; justify-content:center; gap:8px; position:fixed; top:0; left:0; right:0; z-index:9998; background:#7f1d1d; color:#fff;
     text-align:center; font-weight:800; font-size:1.1rem; padding:10px; letter-spacing:.02em; }
   #tvDisconnectedBanner svg{ width:20px; height:20px; flex-shrink:0; }
@@ -5176,6 +5343,7 @@
       <div class="flex-between">
         <h2><span class="section-dot section-dot-teal"></span>Tình trạng sân</h2>
         <button class="secondary small tv-mode-btn" onclick="toggleTvMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg><span>Chế độ TV</span></button>
+        <button class="secondary small tv-mode-btn" title="Mở TV ở cửa sổ/tab riêng — Staff App vẫn dùng bình thường ở đây" onclick="openTvInNewWindow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg><span>MỞ TV</span></button>
       </div>
       <!-- §SOCIAL4-14 — XEP SAN NHANH: 2 quick action gon canh header, khong lam Live roi. -->
       <div class="no-print" id="socialQuickActions" data-require-permission="MATCHMAKING" style="display:flex; gap:8px; flex-wrap:wrap; margin:-4px 0 10px;">
@@ -5258,6 +5426,12 @@
           <div class="checkin-form-group">
             <label>Tên người chơi</label>
             <input type="text" id="newPlayerName" placeholder="VD: Anh Tuấn">
+          </div>
+          <!-- §PHONE2026 — SDT khong bat buoc (§6), chi ho tro nhan dien/chong trung ho so — xem
+               checkInPlayer() (§16: neu trung phoneDigits voi 1 ho so cu, canh bao thay vi tao trung). -->
+          <div class="checkin-form-group">
+            <label>Số điện thoại <span class="muted" style="font-weight:400;">(không bắt buộc)</span></label>
+            <input type="text" id="newPlayerPhone" placeholder="0932 565 545" onblur="autoFormatPhoneInput('newPlayerPhone')">
           </div>
           <div class="checkin-form-group">
             <label>Giới tính</label>
@@ -6072,6 +6246,29 @@
         <label>Loại nước độ mặc định</label>
         <select id="defaultWaterProductSelect" onchange="setDefaultWaterProduct(this.value)"></select>
       </div>
+      <!-- §TVANNOUNCE2026/§41 — GOI VDV TREN TV: bat/tat doc ten qua TTS + chon nguon ten + khoang
+           nghi. Tach rieng khoi card "Vận hành" (dirty-flag rieng 'tvAnnouncer') giong cach lam voi
+           Picpoc Credits — moi nhom cai dat co nut LUU rieng, khong gop chung 1 form lon. -->
+      <div class="card">
+        <h2><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M19 5a13 13 0 0 1 0 14M15.5 8.5a7 7 0 0 1 0 7"/></svg>Gọi VĐV trên TV</h2>
+        <p class="muted" style="font-size:.85rem; margin-top:-6px;">TV sẽ đọc to tên cặp VĐV được mời vào sân/chuẩn bị (áp dụng cho cả Social và Giải đấu). Xem trước bằng nút THỬ GIỌNG bên dưới.</p>
+        <div class="checkbox-row"><input type="checkbox" id="tvAnnouncerEnabledInput" onchange="markSettingsDirty('tvAnnouncer')"><label style="margin:0;">Bật đọc tên VĐV</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="tvAnnouncerOnCallInput" onchange="markSettingsDirty('tvAnnouncer')"><label style="margin:0;">Đọc khi mời vào sân</label></div>
+        <div class="checkbox-row"><input type="checkbox" id="tvAnnouncerOnPrepareInput" onchange="markSettingsDirty('tvAnnouncer')"><label style="margin:0;">Đọc khi cặp chuẩn bị</label></div>
+        <label>Tên sử dụng</label>
+        <div class="segmented" id="tvAnnouncerNameSourceRow">
+          <button type="button" class="segment-btn" data-src="nickname" onclick="pickTvAnnouncerNameSource('nickname',this)">Nickname nếu có</button>
+          <button type="button" class="segment-btn" data-src="fullname" onclick="pickTvAnnouncerNameSource('fullname',this)">Họ tên đầy đủ</button>
+        </div>
+        <input type="hidden" id="tvAnnouncerNameSourceInput" value="nickname">
+        <label>Khoảng nghỉ giữa 2 lượt đọc (giây)</label>
+        <input type="number" id="tvAnnouncerGapInput" min="1" max="10" step="1" oninput="markSettingsDirty('tvAnnouncer')">
+        <div class="settings-save-row" data-require-permission="SETTINGS_EDIT">
+          <button onclick="saveTvAnnouncerSettings()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>LƯU THAY ĐỔI</button>
+          <span class="settings-dirty-note" id="tvAnnouncerDirtyNote">Có thay đổi chưa lưu</span>
+          <button class="secondary" onclick="testTvAnnouncerVoice()" style="margin-left:auto;">🔊 THỬ GIỌNG</button>
+        </div>
+      </div>
     </div>
 
     <!-- GIA & THANH TOAN -->
@@ -6758,10 +6955,10 @@ const ACADEMY_ENTITY_NODES = ['academyLeads','academyStudents','academyGuardians
   'academyInvoices','academyCredits','academyRefunds','academyPayments','academyCoachCompensations','academyCoachSettlements','academyReferralRewards',
   'academyClassSizeChanges','academyTasks','academyPprUpdateProposals','academyCoaches','academyCoachLeaves',
   'academyQuickNotes']; // §224/PHẦN S — Quick Progress Note (rieng biet voi Assessment score); §CC — Academy entities dung chung co che nay
-const ARRAY_ENTITY_NODES = ['players','playerVisits','history','bills','payments','products','inventoryLog','waterLoss','bookings','bookingSeries','overrideLog','dailyClosures','users','pprHistory','tournamentEntryParticipants','socialRequestedFours','socialGroups','financeTransactions','socialPassPackages','socialPassUsages','tournamentSeries','creditLots','creditTransactions'].concat(ACADEMY_ENTITY_NODES); // §CREDIT2026 — creditLots/creditTransactions dung LAI dung co che entity-sync nay (per-id set/transaction), khong tao pipeline rieng // §RESTRUCTURE2026-WS3 muc 8-9/93 — tournamentSeries dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline rieng // §SOCIALPASS2026 — dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline Firebase rieng // §FINANCE1 — financeTransactions dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite), giong het pattern tournamentEntryParticipants/socialRequestedFours — khong tao pipeline sync rieng // §AI — pprHistory them vao entity sync giong cac node khac; §CC — Academy entities dung chung co che nay; §TOURN-ENTRY-9 — Ve tham gia giai dung lai dung co che entity-sync nay (khong tao pipeline rieng); §SOCIAL4-35 — socialRequestedFours/socialGroups dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite) de Staff B thay Staff A tao Requested Four/Group gan realtime — LUU Y: day la sync TOT HON readyGroups hien tai (readyGroups KHONG nam trong ARRAY_ENTITY_NODES, chi luu local/localStorage — han che co san cua kien truc, khong phai loi moi)
+const ARRAY_ENTITY_NODES = ['players','playerVisits','history','bills','payments','products','inventoryLog','waterLoss','bookings','bookingSeries','overrideLog','dailyClosures','users','pprHistory','tournamentEntryParticipants','socialRequestedFours','socialGroups','financeTransactions','socialPassPackages','socialPassUsages','tournamentSeries','creditLots','creditTransactions','tvAnnouncements'].concat(ACADEMY_ENTITY_NODES); // §TVANNOUNCE2026 — tvAnnouncements dung LAI dung co che entity-sync nay (per-id set), khong tao pipeline rieng // §CREDIT2026 — creditLots/creditTransactions dung LAI dung co che entity-sync nay (per-id set/transaction), khong tao pipeline rieng // §RESTRUCTURE2026-WS3 muc 8-9/93 — tournamentSeries dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline rieng // §SOCIALPASS2026 — dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline Firebase rieng // §FINANCE1 — financeTransactions dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite), giong het pattern tournamentEntryParticipants/socialRequestedFours — khong tao pipeline sync rieng // §AI — pprHistory them vao entity sync giong cac node khac; §CC — Academy entities dung chung co che nay; §TOURN-ENTRY-9 — Ve tham gia giai dung lai dung co che entity-sync nay (khong tao pipeline rieng); §SOCIAL4-35 — socialRequestedFours/socialGroups dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite) de Staff B thay Staff A tao Requested Four/Group gan realtime — LUU Y: day la sync TOT HON readyGroups hien tai (readyGroups KHONG nam trong ARRAY_ENTITY_NODES, chi luu local/localStorage — han che co san cua kien truc, khong phai loi moi)
 /* Cac collection da la OBJECT map-by-id san trong state (courts keyed by courtId, tournaments
    keyed by catKey) — khop thang voi schema entity, khong can convert. */
-const OBJECT_ENTITY_NODES = ['courts','tournaments','authProfiles']; // §AUTH-33/38 — authProfiles la object map-by-authUid, dung LAI co che entity-sync co san (khong tao pipeline rieng)
+const OBJECT_ENTITY_NODES = ['courts','tournaments','authProfiles','displayAudioLeader']; // §AUTH-33/38 — authProfiles la object map-by-authUid, dung LAI co che entity-sync co san (khong tao pipeline rieng); §TVANNOUNCE2026/§65-67 — displayAudioLeader la 1 O DUY NHAT (khong phai list), dung LAI dung co che nay
 
 /* Firebase RTDB tu choi gia tri `undefined` va khong xu ly tot Date/NaN — chuan hoa truoc khi ghi. */
 function sanitizeForFirebase(obj){
@@ -7067,7 +7264,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.39.8'; // §AUTHGUARD2026-ROOTCAUSE — Sua goc bug dung yen vinh vien o man hinh dang nhap: boot code di nham duong Legacy do cache authMode cu, gio attachSettingsListener() tu kich hoat lai beginProductionAuthFlow() khi phat hien PRODUCTION_FIREBASE that su — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.0'; // §PROFILE2026/§TVANNOUNCE2026 — Redesign Ho so Player + TV Announcer Engine (Social/Giai dau) + audio leader lock — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -9981,11 +10178,35 @@ function defaultState(){
       queueHealthGoodMax: 8,
       queueHealthBusyMax: 15,
       socialCrowdThreshold: 24,
-      avgMatchDurationMinutes: 15
+      avgMatchDurationMinutes: 15,
+      /* §TVANNOUNCE2026/§41 — Cai dat > Van hanh > "GỌI VĐV TRÊN TV". Mac dinh BAT (enabled:true) —
+         gia tri hien co cua tinh nang thi enabled=false se an toan hon, nhung Admin yeu cau tinh nang
+         nay ngay trong spec nen bat san, Staff co the tat neu khong dung TTS. nameSource 'nickname'
+         (mac dinh) uu tien getPlayerAnnouncerName() (§23); 'fullname' ep luon doc ho ten day du du co
+         nickname. gapSeconds la khoang nghi GIUA 2 announcement (§29, mac dinh 3s, cho phep 2-5s). */
+      tvAnnouncer: {
+        enabled: true,
+        onCallToCourt: true,
+        onPrepareNext: true,
+        nameSource: 'nickname', // 'nickname' | 'fullname'
+        gapSeconds: 3
+      }
     },
     players: [],
     courts: {},
     readyGroups: [],
+    /* §TVANNOUNCE2026/§31 — 1 record = 1 su kien AM THANH/HIEN THI TV (CALL_TO_COURT/PREPARE_NEXT),
+       dung LAI co che entity-sync ARRAY_ENTITY_NODES (per-id set, giong tournamentEntryParticipants/
+       socialRequestedFours) de TV (co the o tab/thiet bi khac) va Staff App thay doi cung 1 nguon du
+       lieu realtime (§15/§47) — KHONG tao pipeline Firebase rieng. status dung CHUNG cho ca vong doi
+       am thanh (PENDING/PLAYING/PLAYED) LAN "con hop le de hien thi tren TV hay khong" (CANCELLED =
+       da bi huy/thay the/tran da ket thuc — xem cancelTvAnnouncementsFor()). */
+    tvAnnouncements: [], // {id, matchId, sourceType('SOCIAL'|'TOURNAMENT'), sourceId, type('CALL_TO_COURT'|'PREPARE_NEXT'), courtId, playerIds[], textSnapshot, status, createdAt, playedAt, operationId}
+    /* §65-67 — audio leader lock DON GIAN: 1 TV client duy nhat duoc phat am thanh tai 1 thoi diem (cac
+       TV khac van hien thi visual binh thuong, chi khong tu phat TTS) — tranh 2 man hinh TV cung doc
+       de len nhau khi mo nhieu TV. Dung OBJECT_ENTITY_NODES (giong 'courts'/'tournaments') vi day la
+       1 O DUY NHAT (khong phai list nhieu ban ghi) can ghi de toan bo moi lan claim/heartbeat. */
+    displayAudioLeader: { clientId: null, claimedAt: 0, heartbeatAt: 0 },
     /* §SOCIAL4-1 — "4 NGUOI MUON DANH CUNG" (HARD REQUEST, Staff chon dich danh 4 playerId) VA
        "NHOM SOCIAL" (SOFT PREFERENCE, bonus khi chon FOUR, khong hard-lock). 2 entity RIENG BIET
        (khac semantics — xem spec goc), dung LAI 100% engine ghep tran hien co (buildFourOptions/
@@ -11509,6 +11730,60 @@ function isCreditSystemEnabled(){ return !!getCreditSettings().enabled; }
 /* §59-62 — form Cai dat rieng (khong dung chung dirty-flag 'pricing' cua cac card khac — xem ghi chu
    tai HTML card "Picpoc Credits"). populatePicpocCreditsSettingsForm() duoc goi tu renderSettingsTab()
    moi lan mo tab Cai dat; savePicpocCreditsSettings() ghi thang state.settings.picpocCredits. */
+/* §TVANNOUNCE2026/§41 — populate/save rieng cho card "Gọi VĐV trên TV", dung LAI dung pattern
+   populatePicpocCreditsSettingsForm()/savePicpocCreditsSettings() ngay ben duoi (setVal/setChecked/
+   dirty-flag rieng 'tvAnnouncer'). */
+function populateTvAnnouncerSettingsForm(){
+  const cfg = getTvAnnouncerSettings();
+  const canEdit = (typeof can === 'function') ? can(PERMISSION.SETTINGS_EDIT) : true;
+  const setChecked = (id, v)=>{ const el = document.getElementById(id); if(el){ el.checked = !!v; el.disabled = !canEdit; } };
+  setChecked('tvAnnouncerEnabledInput', cfg.enabled);
+  setChecked('tvAnnouncerOnCallInput', cfg.onCallToCourt);
+  setChecked('tvAnnouncerOnPrepareInput', cfg.onPrepareNext);
+  const gapEl = document.getElementById('tvAnnouncerGapInput'); if(gapEl){ gapEl.value = cfg.gapSeconds; gapEl.disabled = !canEdit; }
+  const hidden = document.getElementById('tvAnnouncerNameSourceInput'); if(hidden) hidden.value = cfg.nameSource;
+  document.querySelectorAll('#tvAnnouncerNameSourceRow .segment-btn').forEach(b=>{
+    const active = b.dataset.src === cfg.nameSource;
+    b.classList.toggle('active', active);
+    b.disabled = !canEdit;
+  });
+}
+function pickTvAnnouncerNameSource(src, btn){
+  const hidden = document.getElementById('tvAnnouncerNameSourceInput');
+  if(hidden) hidden.value = src;
+  document.querySelectorAll('#tvAnnouncerNameSourceRow .segment-btn').forEach(b=>b.classList.toggle('active', b===btn));
+  markSettingsDirty('tvAnnouncer');
+}
+function saveTvAnnouncerSettings(){
+  if(!requirePermission(PERMISSION.SETTINGS_EDIT)) return;
+  const chk = id=>{ const el = document.getElementById(id); return el ? el.checked : false; };
+  const gapRaw = parseInt(document.getElementById('tvAnnouncerGapInput').value, 10);
+  const gap = (!isNaN(gapRaw) && gapRaw >= 1 && gapRaw <= 10) ? gapRaw : 3;
+  const nameSourceEl = document.getElementById('tvAnnouncerNameSourceInput');
+  state.settings.tvAnnouncer = {
+    enabled: chk('tvAnnouncerEnabledInput'),
+    onCallToCourt: chk('tvAnnouncerOnCallInput'),
+    onPrepareNext: chk('tvAnnouncerOnPrepareInput'),
+    nameSource: (nameSourceEl && nameSourceEl.value === 'fullname') ? 'fullname' : 'nickname',
+    gapSeconds: gap
+  };
+  saveState();
+  settingsDirtyFlags.tvAnnouncer = false;
+  const note = document.getElementById('tvAnnouncerDirtyNote'); if(note) note.classList.remove('show');
+  showToast('Đã lưu cài đặt Gọi VĐV trên TV');
+}
+/* §37 — nut THỬ GIỌNG: phat 1 cau mau NGAY (khong can luu cai dat truoc, khong can dang o TV mode) de
+   Staff nghe thu giong/toc do truoc khi ap dung that su tren TV. */
+function testTvAnnouncerVoice(){
+  try{
+    if(!window.speechSynthesis){ showToast('Trình duyệt này không hỗ trợ đọc giọng nói'); return; }
+    const utter = new SpeechSynthesisUtterance('Mời cặp Nguyễn Minh Anh và cặp Lê Hoàng Nam vào sân số một.');
+    utter.lang = 'vi-VN';
+    const voice = (typeof pickVietnameseVoice === 'function') ? pickVietnameseVoice() : null;
+    if(voice) utter.voice = voice;
+    window.speechSynthesis.speak(utter);
+  }catch(e){ console.error('[tv-tts] test error', e); showToast('Không phát được thử giọng'); }
+}
 function populatePicpocCreditsSettingsForm(){
   const cfg = getCreditSettings();
   const canEdit = (typeof can === 'function') ? can(PERMISSION.PRICING_EDIT) : true;
@@ -13389,6 +13664,28 @@ function getPlayerBills(player, limit){
     .sort((a,b)=>(b.openedAt||0)-(a.openedAt||0))
     .slice(0, limit);
 }
+/* §PROFILE2026/§7 — "HOẠT ĐỘNG GẦN ĐÂY" o header Ho so: CHI dung du lieu THAT da co san (bill da
+   dong/da thu mot phan), KHONG bia them nguon moi. Moi dong = 1 bill (ngay/nhan+so tien/trang thai) —
+   don gian hon getPlayerRecentActivity() (chi dem so tran/ngay, khong co so tien/trang thai) nen
+   dung rieng cho khoi tong quan nay thay vi tai su dung ham cu. */
+function buildPlayerActivityOverview(player, limit){
+  if(!player) return [];
+  limit = limit || 5;
+  const bills = state.bills.filter(b=>b.playerId===player.id && b.status !== 'void' && b.status !== 'cancelled' && (b.paidAt || b.openedAt))
+    .sort((a,b)=>(b.paidAt||b.openedAt||0)-(a.paidAt||a.openedAt||0))
+    .slice(0, limit);
+  return bills.map(b=>{
+    const t = b.paidAt || b.openedAt;
+    const d = new Date(t);
+    const labels = (b.items||[]).map(it=>it.label).slice(0,2).join(' + ') || 'Bill';
+    const outstanding = getBillOutstanding(b);
+    let status;
+    if(b.status === 'paid') status = 'Đã thanh toán';
+    else if(outstanding > 0) status = 'Nợ';
+    else status = (b.status||'').toUpperCase();
+    return { dateStr: String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0'), label: labels, amount: billTotal(b), status };
+  });
+}
 
 /* §PLAYER-16 (V1.1) — hoat dong gan day, tong hop tu du lieu DA CO (history + lastCheckInAt),
    KHONG tao event-sourcing/log check-in nhieu lan moi (du lieu goc chi luu 1 lastCheckInAt duy
@@ -13671,6 +13968,15 @@ function createReadyGroup(courtId, team1, team2, options){
     sourceType: (options && options.sourceType) || null, sourceId: (options && options.sourceId) || null };
   state.readyGroups.push(group);
   saveState();
+  // §TVANNOUNCE2026/§20 — PREPARE_NEXT ngay khi 1 nhom san sang duoc tao (truoc khi vao san that).
+  // readyGroups KHONG dong bo Firebase (xem ghi chu goc o ARRAY_ENTITY_NODES) nen day la LUC DUY NHAT
+  // dam bao 1 TV o thiet bi/tab khac cung biet nhom nay ton tai — ghi qua tvAnnouncements (co dong bo).
+  if(typeof queueTvAnnouncement === 'function'){
+    const teamAText = ids1.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+    const teamBText = ids2.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+    const prepText = buildMatchAnnouncement('PREPARE_NEXT', group.courtId, teamAText, teamBText);
+    if(prepText) queueTvAnnouncement({ matchId: group.id, type:'PREPARE_NEXT', sourceType:'SOCIAL', sourceId: group.id, courtId: group.courtId, playerIds:[...ids1,...ids2], teamAText, teamBText, text: prepText });
+  }
   return group;
 }
 
@@ -13723,6 +14029,16 @@ function sendReadyGroupToCourt(groupId){
     const p = playerById(id);
     if(p) p.status = 'playing';
   });
+  // §TVANNOUNCE2026/§19 — CALL_TO_COURT ngay tai choke point canonical DUY NHAT vao san (§17 "khong
+  // tao pipeline song song"). Huy PREPARE_NEXT cua CHINH nhom nay truoc (§20 → §19: da "chuan bi" xong,
+  // chuyen sang "vao san", khong con la "sap toi" nua).
+  if(typeof cancelTvAnnouncementsFor === 'function') cancelTvAnnouncementsFor(groupId, 'PREPARE_NEXT');
+  if(typeof queueTvAnnouncement === 'function'){
+    const teamAText = safeTeam1.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+    const teamBText = safeTeam2.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+    const callText = buildMatchAnnouncement('CALL_TO_COURT', courtId, teamAText, teamBText);
+    if(callText) queueTvAnnouncement({ matchId, type:'CALL_TO_COURT', sourceType:'SOCIAL', sourceId: matchId, courtId, playerIds:[...safeTeam1,...safeTeam2], teamAText, teamBText, text: callText });
+  }
   state.readyGroups = state.readyGroups.filter(x=>x.id!==groupId);
   // §SOCIAL4-31 — CHI cap nhat metadata request (status/courtId), KHONG doi logic vao san chinh o tren.
   if(g.sourceType === 'REQUESTED_FOUR' && g.sourceId){
@@ -13804,6 +14120,9 @@ function finishMatch(courtId, matchResult){
    mode). §MATCHFIX-9/10/11 — CO doi 1 phan logic so voi truoc day: khong con GHI DE p.status='waiting'
    VO DIEU KIEN cho ca 4 nguoi nua (xem chi tiet o duoi). */
 function applyFinishMatchLocally(courtId, m, matchResult){
+  // §TVANNOUNCE2026/§53 — tran ket thuc that su -> huy CALL_TO_COURT cua chinh tran nay (TV khong con
+  // hien "MỜI VÀO SÂN" cho 1 tran da xong).
+  if(m.matchId && typeof cancelTvAnnouncementsFor === 'function') cancelTvAnnouncementsFor(m.matchId, 'CALL_TO_COURT');
   const allIds = [...m.team1, ...m.team2];
   allIds.forEach(id=>{
     const p = playerById(id);
@@ -14923,6 +15242,15 @@ function setTournamentWorkspaceSubtab(key){
   if(typeof syncTopbarTitle === 'function') syncTopbarTitle(); // §FIX-SHELL-3
 }
 let tvAutoStartCheckTimer = null; // §TOURNTV2026-AUTOSTART — xem getActiveTvTournament()/hasTournamentStartTimeArrived()
+/* §15/§44 — "MỞ TV": mo 1 TAB/CUA SO MOI o cung URL kem ?tv=1, KHONG dung route /display rieng (app
+   single-file khong co server routing that su) — tab moi se tu bat toggleTvMode() ngay sau khi vao app
+   xong (xem doan boot-time check gan cuoi file). Staff App o tab hien tai KHONG bi thay the/anh huong
+   gi (§45 "Không yêu cầu Staff thoát TV để tính tiền"). */
+function openTvInNewWindow(){
+  const base = location.href.split('#')[0].split('?')[0];
+  const url = base + '?tv=1';
+  window.open(url, '_blank');
+}
 function toggleTvMode(){
   localUi.tvMode = !localUi.tvMode;
   document.body.classList.toggle('tv-mode', localUi.tvMode);
@@ -14941,10 +15269,14 @@ function toggleTvMode(){
     // cu truoc khi tao moi de tranh leak khi bam TV on/off nhieu lan.
     if(tvAutoStartCheckTimer) clearInterval(tvAutoStartCheckTimer);
     tvAutoStartCheckTimer = setInterval(()=>{ if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); }, 20000);
+    // §TVANNOUNCE2026/§13/§37 — khoi dong TV Announcement Engine (audio-enable gate + leader lock +
+    // hang doi TTS) MOI LAN vao TV mode. Ham nay tu kiem tra da enable audio trong session nay chua.
+    if(typeof initTvAnnouncementEngine === 'function') initTvAnnouncementEngine();
   } else {
     document.body.classList.remove('tv-tournament-active');
     if(tvChampionTimer){ clearTimeout(tvChampionTimer); tvChampionTimer = null; } // §AW — thoat TV: huy timer, tranh leak
     if(tvAutoStartCheckTimer){ clearInterval(tvAutoStartCheckTimer); tvAutoStartCheckTimer = null; } // §TOURNTV2026-AUTOSTART
+    if(typeof teardownTvAnnouncementEngine === 'function') teardownTvAnnouncementEngine(); // §TVANNOUNCE2026 — thoat TV: huy heartbeat/timer, tranh leak + tranh giu leader lock vinh vien
   }
   if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); // §AG-AJ — vao TV: neu co giai dang dien ra thi tu chuyen sang Tournament TV ngay, khong can render lai
   saveLocalUiState();
@@ -14955,6 +15287,7 @@ function toggleTvMode(){
    Ngay thuong (khong giai nao dang dien ra) TV van hien Club TV (courts/ready-queue) nhu cu — khong
    pha vo hanh vi cu (§AJ). Dung lai ENTITY_RENDER_MAP/realtime listener san co — KHONG polling moi. */
 let tvChampionTimer = null;
+let __tvAutoParamHandled = false; // §TVANNOUNCE2026/§44 — guard 1-lan cho auto-vao TV mode qua URL ?tv=1
 let tvChampionShownFor = null; // key catKey+'_'+tournamentCompletedWitnessedAt da chay celebration — F5 sau KHONG chay lai (§AX)
 // §TOURNTV2026-AUTOSTART — chi tra ve true khi Admin da cau hinh DAY DU ca Ngay thi dau (tsMatchDate)
 // VA Gio bat dau (tsStartTime) va thoi diem hien tai da toi/qua moc do. Thieu 1 trong 2 hoac gia tri
@@ -14985,7 +15318,13 @@ function updateTournamentTvView(){
   const active = getActiveTvTournament();
   document.body.classList.toggle('tv-tournament-active', !!active);
   document.body.classList.toggle('tv-disconnected', !isOnline);
-  if(active) renderTournamentTv(active.catKey, active.t);
+  if(active){
+    renderTournamentTv(active.catKey, active.t);
+    // §TVANNOUNCE2026/§49 — luoi an toan dinh ky (dong bo voi chu ky kiem tra tu-dong-bat co san 20s):
+    // dam bao announcement luon khop board hien tai ke ca khi trigger truc tiep tu updateScore() bi bo
+    // qua vi ly do nao do (vd Staff sua diem tu console/thiet bi khac roi F5 chinh tab TV nay).
+    if(typeof syncTournamentTvAnnouncements === 'function') syncTournamentTvAnnouncements(active.catKey);
+  }
 }
 function tvShortRoundTag(rounds, idx){
   const label = knockoutRoundLabel(rounds, idx);
@@ -15418,6 +15757,15 @@ function forceMatchDespiteBooking(courtId){
   openMatchOptionsModal(courtId);
 }
 
+/* §35 — GOI LAI (nut 🔊) tren the san "ĐANG CHƠI": tao 1 announcement CALL_TO_COURT MOI cho dung
+   tran/san hien tai (khong sua ban ghi PLAYED cu — §35 "Không sửa status PLAYED cũ. Tạo operation mới"). */
+function replaySocialCourtAnnouncement(courtId){
+  const m = state.courts[courtId];
+  if(!m){ showToast('Sân này hiện không có trận nào'); return; }
+  const teamAText = m.team1.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+  const teamBText = m.team2.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+  manualReplayTvAnnouncement('SOCIAL', m.matchId || courtId, 'CALL_TO_COURT', courtId, teamAText, teamBText, [...m.team1, ...m.team2]);
+}
 function renderCourts(){
   const grid = document.getElementById('courtsGrid');
   grid.innerHTML = '';
@@ -15463,6 +15811,7 @@ function renderCourts(){
         </div>
         <div class="no-print" style="display:flex; gap:6px;">
           <button class="small" onclick="finishMatchWithWater('${courtId}')">Kết thúc</button>
+          <button class="small secondary" title="Gọi lại trên TV" onclick="replaySocialCourtAnnouncement('${courtId}')">🔊</button>
         </div>
       `;
     } else if(readyForCourt){
@@ -15546,20 +15895,45 @@ function renderReadyQueue(){
       </div>
       <select onchange="assignReadyGroupCourt('${g.id}', this.value)">${courtOptions.join('')}</select>
       <button class="small secondary" style="border-color:var(--color-primary); color:var(--color-primary);" onclick="sendReadyGroupToCourt('${g.id}')" ${!g.courtId?'disabled':''}>Vào sân</button>
+      <button class="small secondary" title="Gọi lại cặp chuẩn bị trên TV" onclick="replaySocialReadyGroupAnnouncement('${g.id}')">🔊</button>
       <button class="small secondary" onclick="cancelReadyGroup('${g.id}')">Hủy</button>
     </div>`;
   }).join('');
 }
 
+/* §35/§36 — GOI LAI (nut 🔊) tren hang doi San sang: tao 1 announcement PREPARE_NEXT MOI (khong sua
+   ban ghi cu) voi dung ten/san hien tai cua nhom. Dat CANH nut "Vào sân"/"Hủy" co san — khong them
+   overflow menu rieng cho V1 (§36 "khong bat buoc neu UI qua nhieu nut" — 1 nut nho la du gon). */
+function replaySocialReadyGroupAnnouncement(groupId){
+  const g = state.readyGroups.find(x=>x.id===groupId);
+  if(!g){ showToast('Nhóm không còn tồn tại'); return; }
+  const teamAText = g.team1.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+  const teamBText = g.team2.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+  manualReplayTvAnnouncement('SOCIAL', g.id, 'PREPARE_NEXT', g.courtId, teamAText, teamBText, [...g.team1, ...g.team2]);
+}
 function assignReadyGroupCourt(groupId, courtId){
   const g = state.readyGroups.find(x=>x.id===groupId);
-  if(g){ g.courtId = courtId || null; saveState(); renderReadyQueue(); }
+  if(g){
+    g.courtId = courtId || null;
+    saveState();
+    renderReadyQueue();
+    // §TVANNOUNCE2026/§51 — doi san TRUOC khi played: huy ban ghi PREPARE_NEXT cu (san cu), tao lai
+    // dung san moi (hoac khong nhac san neu vua bi bo chon).
+    if(typeof cancelTvAnnouncementsForMatchExceptCourt === 'function'){
+      cancelTvAnnouncementsForMatchExceptCourt(groupId, 'PREPARE_NEXT', g.courtId);
+      const teamAText = g.team1.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+      const teamBText = g.team2.map(id=>getAnnouncerNameForPlayerId(id)).filter(Boolean).join(', ');
+      const prepText = buildMatchAnnouncement('PREPARE_NEXT', g.courtId, teamAText, teamBText);
+      if(prepText) queueTvAnnouncement({ matchId: g.id, type:'PREPARE_NEXT', sourceType:'SOCIAL', sourceId: g.id, courtId: g.courtId, playerIds:[...g.team1,...g.team2], teamAText, teamBText, text: prepText });
+    }
+  }
 }
 
 function cancelReadyGroup(groupId){
   const g = state.readyGroups.find(x=>x.id===groupId);
   if(!g) return;
   [...g.team1, ...g.team2].forEach(id=>{ const p = playerById(id); if(p) p.status='waiting'; }); // §SOCIAL4-9 — KHONG dong waitSince, giu dung hanh vi cu
+  if(typeof cancelTvAnnouncementsFor === 'function') cancelTvAnnouncementsFor(groupId, 'PREPARE_NEXT'); // §TVANNOUNCE2026/§53 — nhom bi huy, TV khong con doc/hien "chuan bi" cho nhom nay nua
   state.readyGroups = state.readyGroups.filter(x=>x.id!==groupId);
   // §SOCIAL4-9 — "Hủy" 1 Ready Group xuat than tu Requested Four = huy CA yeu cau (khong tu dong
   // tao lai group giong het — Staff muon danh cung nhau thi tao lai yeu cau moi, dung theo spec
@@ -16769,6 +17143,9 @@ function removePlayerFromOperationalQueues(playerId, reason){
       });
     });
     const affectedIds = affected.map(g=>g.id);
+    // §TVANNOUNCE2026/§53 — nhom bi giai tan do 1 thanh vien roi hang doi -> TV khong con doc/hien
+    // "chuan bi" cho nhom nay nua (tranh goi ten nguoi da roi khoi hang doi).
+    if(typeof cancelTvAnnouncementsFor === 'function') affectedIds.forEach(gid=> cancelTvAnnouncementsFor(gid, 'PREPARE_NEXT'));
     state.readyGroups = state.readyGroups.filter(g=> !affectedIds.includes(g.id));
     // §SOCIAL4-30 — neu group vua bi don dep la group cua 1 Requested Four dang READY, request KHONG
     // duoc tu dong huy/hoan tat sai — chuyen ve NEEDS_ATTENTION de Staff xu ly lai (huy hoac chon lai
@@ -16966,6 +17343,17 @@ function checkInPlayer(){
   } else {
     const genderVal = document.getElementById('newPlayerGender') ? document.getElementById('newPlayerGender').value : '';
     if(genderVal !== 'MALE' && genderVal !== 'FEMALE'){ showToast('Vui lòng chọn Giới tính cho khách mới'); return; } // §BM — bat buoc cho khach moi
+    // §PHONE2026/§16 — SDT KHONG bat buoc (§6); neu co nhap, PHAI chuan hoa hop le + chan tao TRUNG ho
+    // so theo phoneDigits (§9/§10) truoc khi tao Player moi — canh bao ro, KHONG tu dong mo lai ho so
+    // cu thay Staff (de Staff tu quyet dinh dung hay khong, tranh mo nham).
+    const phoneInputEl = document.getElementById('newPlayerPhone');
+    const phoneRawVal = phoneInputEl ? phoneInputEl.value : '';
+    const phoneResult = normalizePhone(phoneRawVal);
+    if(phoneRawVal.trim() && !phoneResult.valid){ showToast('Số điện thoại không hợp lệ — cần đúng 10 số, bắt đầu bằng 0'); return; }
+    if(phoneResult.phoneDigits){
+      const dupPhonePlayer = findPlayerByPhoneDigits(phoneResult.phoneDigits, null);
+      if(dupPhonePlayer && !confirm('Số điện thoại này đã thuộc về hồ sơ "' + dupPhonePlayer.name + '"' + (dupPhonePlayer.phone ? ' (' + dupPhonePlayer.phone + ')' : '') + '.\n\nVẫn tạo hồ sơ MỚI với cùng số này? (Chỉ dùng nếu chắc chắn đây là 2 khách khác nhau — nếu không, bấm Hủy rồi tìm "' + dupPhonePlayer.name + '" ở khung bên trái để check-in đúng hồ sơ cũ.)')) return;
+    }
     const pprKey = document.getElementById('newPlayerPprKey') ? document.getElementById('newPlayerPprKey').value : 'coban';
     const pprSet = getPprSettings();
     const isAssessed = pprKey === 'assessed'; // §I — da qua Danh gia chi tiet, level input da la so PPR tinh san
@@ -16977,6 +17365,7 @@ function checkInPlayer(){
       restOneRound:false, notReadyStrikes:0, consecutivePlayed:0, lastSelectedRound:0,
       recentPartners:[], recentOpponents:[], checkins:0, createdAt: Date.now(), lastCheckInAt: null,
       archived:false, tags:[], note:'',
+      phone: phoneResult.phone, phoneDigits: phoneResult.phoneDigits, // §PHONE2026
       socialParticipation:false, // §SOCIALMODE2026 — luon bat dau KHONG tham gia Smart Social, phai bam THAM GIA rieng (doc lap check-in)
       // §E/H/I — PPR fields cho player MOI, seed tu muc choi ban dau da chon (hoac Danh gia chi tiet)
       gender: genderVal, ppr: seedPpr, pprInitial: seedPpr, pprInitialSource: isAssessed ? 'DETAILED_ASSESSMENT' : 'SEED_LEVEL_PICK',
@@ -16989,6 +17378,7 @@ function checkInPlayer(){
   reopenPlayerSession(player); // status/waitSince/checkins + Open Bill + Ve Social — 1 service duy nhat
   saveState();
   nameInput.value = '';
+  if(document.getElementById('newPlayerPhone')) document.getElementById('newPlayerPhone').value = '';
   renderLiveTab();
   renderPlayerSearch();
   renderLevelPickRow(); // reset ve muc mac dinh + xoa ket qua Danh gia chi tiet cu (§I) cho lan check-in tiep theo
@@ -17021,13 +17411,511 @@ function vnFold(str){
   }
   return s.replace(/đ/g,'d').replace(/Đ/g,'D').toLowerCase();
 }
+/* ================= §PHONE2026 — CANONICAL PHONE HELPERS (Player.phone/phoneDigits) =================
+   ONE SOURCE OF TRUTH duy nhat cho toan bo logic chuan hoa/dinh dang SDT trong app — theo dung yeu
+   cau "KHONG copy logic normalize/format o nhieu noi". Moi noi tao/sua/tim SDT (Create/Edit Player,
+   Check-in, Danh sach Nguoi choi, Cong no, Giai dau, Data Health repair...) PHAI goi qua cac ham nay.
+   Khong dung phone/phoneDigits lam playerId — chi la field ho tro tim kiem/chong trung/nhan dien. */
+/* Rut ve THUAN chu so, tu nhan dien +84/84 -> doi thanh 0 dau (theo dung §4 cua yeu cau). KHONG doan/
+   sua thanh 1 so khac neu khong xac dinh duoc dinh dang — chi rut so, khong ep buoc do dai. */
+function normalizePhoneDigits(raw){
+  let s = String(raw == null ? '' : raw).trim();
+  if(!s) return '';
+  s = s.replace(/[^\d+]/g, ''); // bo khoang trang/cham/gach/ngoac... nhung GIU lai '+' de nhan dien +84
+  if(s.indexOf('+84') === 0) s = '0' + s.slice(3);
+  else if(s.indexOf('84') === 0 && s.length >= 10) s = '0' + s.slice(2); // "84xxxxxxxxx" khong dau + -> "0xxxxxxxxx" (so noi dia VN luon bat dau bang 0 nen khong the trung nham voi so hop le khac)
+  return s.replace(/\D/g, ''); // bo not dau + con sot (so nuoc ngoai khac VN se bi loai o buoc validate ben duoi)
+}
+/* Dinh dang hien thi CHUAN DUY NHAT cua Picpoc: "XXXX XXX XXX" (4-3-3) — CHI ap dung khi dung 10 so
+   va bat dau bang 0 (di dong VN chuan, §2 cua yeu cau). Cac do dai khac tra ve nguyen digits, KHONG
+   doan/ep format sai gay hieu lam. */
+function formatPhoneDigits(digits){
+  if(!digits) return '';
+  if(digits.length === 10 && digits.charAt(0) === '0'){
+    return digits.slice(0,4) + ' ' + digits.slice(4,7) + ' ' + digits.slice(7,10);
+  }
+  return digits;
+}
+/* Ham CANONICAL DUY NHAT dung o MOI noi tao/sua SDT — tra ve {phone, phoneDigits, valid}. Rong =
+   HOP LE (SDT khong bat buoc — §6). "valid" CHI true khi rut duoc dung 10 chu so bat dau bang 0 (di
+   dong VN chuan, §5 "khong tu sua thanh 1 so khac neu khong xac dinh duoc") — cac truong hop khac
+   (thieu/du so, co chu cai) tra ve valid:false kem phone=raw goc de UI bao loi ro rang, KHONG tu y
+   luu 1 gia tri doan mo. */
+function normalizePhone(raw){
+  const trimmed = String(raw == null ? '' : raw).trim();
+  if(!trimmed) return { phone: '', phoneDigits: '', valid: true };
+  if(/[a-zA-Z]/.test(trimmed)) return { phone: trimmed, phoneDigits: '', valid: false };
+  const digits = normalizePhoneDigits(trimmed);
+  const valid = digits.length === 10 && digits.charAt(0) === '0';
+  return { phone: valid ? formatPhoneDigits(digits) : trimmed, phoneDigits: digits, valid: valid };
+}
+/* Dung cho O TIM KIEM (Check-in/Danh sach Nguoi choi/Cong no/Giai dau...) — rut truy van nguoi dung
+   go ve thuan chu so de so sanh substring voi phoneDigits da luu (§14 "khong bat user nhap dung
+   format"). Tra ve '' neu query khong co chu so nao (vd tim theo ten thuan). */
+function normalizeSearchPhoneQuery(raw){
+  return String(raw == null ? '' : raw).replace(/[^\d]/g, '');
+}
+/* Player co dang trung SDT voi 1 player KHAC (active, chua luu tru) — dung o ca Create lan Edit
+   (§10/§11), so sanh THEO phoneDigits (khong so sanh raw string — §9). excludePlayerId de loai chinh
+   no ra khi dang Edit. */
+function findPlayerByPhoneDigits(phoneDigits, excludePlayerId){
+  if(!phoneDigits) return null;
+  return state.players.find(p=> p.id !== excludePlayerId && !p.archived && (p.phoneDigits||'') === phoneDigits) || null;
+}
+/* §PROFILE2026/§23 — TEN DE HIEN THI/DOC: uu tien nickname (neu Staff da nhap va khac rong), roi
+   moi fallback ve p.name day du. Dung CHUNG cho ca header Ho so (§2) LAN TV Announcer (§23/§59) de
+   khong lech nhau giua 2 noi. KHONG bao gio dung phone/id lam ten hien thi/doc (§24). */
+function getPlayerAnnouncerName(p){
+  if(!p) return '';
+  const nick = (p.nickname||'').trim();
+  return nick || p.name || '';
+}
+
+/* ================= §TVANNOUNCE2026 — TV ANNOUNCEMENT ENGINE (dung CHUNG Social + Tournament) =================
+   Muc tieu (§17): 1 engine DUY NHAT, khong viet 2 he thong TTS tach biet. tvAnnouncements (them vao
+   ARRAY_ENTITY_NODES o dau file) la nguon DUY NHAT cho ca AM THANH (client TV o tab/thiet bi khac doc
+   PENDING de phat TTS) LAN HIEN THI (§52 doc ban ghi con "hop le" — status != CANCELLED — de ve the
+   "SAN X - MOI VAO SAN"/"CHUAN BI") — tranh phai dong bo them readyGroups (hien KHONG nam trong
+   ARRAY_ENTITY_NODES, chi luu local — xem ghi chu goc tai khai bao ARRAY_ENTITY_NODES phia tren).
+   Idempotency (§30): id ON DINH = matchId + '_' + type + '_' + (courtId||'nocourt'), KHONG dung
+   timestamp — goi lai voi cung matchId+type+courtId se GHI DE (upsert), tu nhien chong doc trung khi
+   F5/reconnect/goi lai nhieu lan tu nhieu diem hook khac nhau. */
+function getTvAnnouncerSettings(){
+  const s = (state.settings && state.settings.tvAnnouncer) || {};
+  return {
+    enabled: s.enabled !== false,
+    onCallToCourt: s.onCallToCourt !== false,
+    onPrepareNext: s.onPrepareNext !== false,
+    nameSource: s.nameSource === 'fullname' ? 'fullname' : 'nickname',
+    gapSeconds: (typeof s.gapSeconds === 'number' && s.gapSeconds >= 1) ? s.gapSeconds : 3
+  };
+}
+/* §56 — bo emoji/ky tu phan cach truoc khi dua vao TTS (KHONG doi text hien thi UI, chi doi ban rieng
+   dua cho SpeechSynthesis). "/" hoac "&" hoac "+" giua 2 ten -> " và " (khop §56 "Tín Ruồi và Hưng
+   Tiến", KHONG doc "slash"/"and"). Dung cho ca ten Player LAN pair.label tu do cua Tournament (§60). */
+function sanitizeNameForTts(str){
+  return String(str==null?'':str)
+    .replace(/[\/&+]/g, ' và ')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}]/gu, '') // bo emoji/mui ten pho bien
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+/* Ten 1 Player THAT (co id) de doc — uu tien nickname theo Cai dat (§23/§41). Tournament pair (chuoi
+   tu do, khong co Player id — §60) KHONG di qua ham nay, dung sanitizeNameForTts truc tiep tren
+   pairLabel() da co san (xem syncTournamentTvAnnouncements()). */
+function getAnnouncerNameForPlayerId(playerId){
+  const p = playerById(playerId);
+  if(!p) return '';
+  const cfg = getTvAnnouncerSettings();
+  const name = cfg.nameSource === 'fullname' ? (p.name||'') : getPlayerAnnouncerName(p);
+  return sanitizeNameForTts(name);
+}
+/* CHOKE POINT DUY NHAT xay dung cau chu CALL_TO_COURT/PREPARE_NEXT (§57) — Social va Tournament deu
+   goi ham nay, KHONG viet text thu cong rieng o 2 noi. teamAText/teamBText la CHUOI DA GHEP san (vd
+   "Minh Anh, Quốc Bảo" — cac thanh vien cach nhau bang dau phay, dung mau cau §19/§20/§21/§22).
+   courtId co the null (Social prepare chua co san — §20 nhanh "chua biet san"). Tra ve null neu thieu
+   du lieu (§59/§60 — khong bia). */
+function buildMatchAnnouncement(type, courtId, teamAText, teamBText){
+  const teamA = (teamAText||'').trim(), teamB = (teamBText||'').trim();
+  if(!teamA || !teamB) return null;
+  if(type === 'CALL_TO_COURT'){
+    const courtPhrase = courtId ? ('vào sân số ' + courtId) : 'vào sân';
+    return 'Mời cặp ' + teamA + ' và cặp ' + teamB + ' ' + courtPhrase + '.';
+  }
+  // PREPARE_NEXT (§20/§22 — chi neu ro san khi DA biet san)
+  const prefix = courtId ? ('Trận tiếp theo sân số ' + courtId + '. ') : '';
+  return prefix + 'Cặp ' + teamA + ' và cặp ' + teamB + ' vui lòng chuẩn bị.';
+}
+/* Upsert 1 announcement — id ON DINH nen goi lai voi cung tham so se GHI DE thay vi nhan ban (§30).
+   Tra ve null neu tat/khong hop le du lieu (khong queue gi ca). */
+function queueTvAnnouncement(opts){
+  const cfg = getTvAnnouncerSettings();
+  if(!cfg.enabled) return null;
+  if(opts.type === 'CALL_TO_COURT' && !cfg.onCallToCourt) return null;
+  if(opts.type === 'PREPARE_NEXT' && !cfg.onPrepareNext) return null;
+  if(!opts.text) return null;
+  const id = opts.matchId + '_' + opts.type + '_' + (opts.courtId || 'nocourt');
+  const now = Date.now();
+  const record = { id, matchId: opts.matchId, sourceType: opts.sourceType, sourceId: opts.sourceId || opts.matchId,
+    type: opts.type, courtId: opts.courtId || null, playerIds: opts.playerIds || [],
+    teamAText: opts.teamAText || '', teamBText: opts.teamBText || '', // §52 — luu san 2 doi de VE the TV, khong can parse lai cau van
+    textSnapshot: opts.text, status: 'PENDING', createdAt: now, playedAt: null, operationId: uid('tvop') };
+  const idx = state.tvAnnouncements.findIndex(a=>a.id===id);
+  if(idx >= 0) state.tvAnnouncements[idx] = record; else state.tvAnnouncements.push(record);
+  markEntityDirty('tvAnnouncements', id);
+  saveState();
+  return record;
+}
+/* Huy (KHONG xoa) moi announcement con hop le khop matchId (+ type neu truyen) — dung khi tran doi
+   san/huy/ket thuc (§33/§34/§51/§53). TV client se tu loai CANCELLED khoi ca hang doi AM THANH lan
+   the HIEN THI o lan render ke tiep. */
+function cancelTvAnnouncementsFor(matchId, type){
+  let changed = false;
+  state.tvAnnouncements.forEach(a=>{
+    if(a.matchId !== matchId) return;
+    if(type && a.type !== type) return;
+    if(a.status === 'CANCELLED') return;
+    a.status = 'CANCELLED';
+    markEntityDirty('tvAnnouncements', a.id);
+    changed = true;
+  });
+  if(changed) saveState();
+}
+/* §51 — doi san TRUOC khi played: huy moi ban ghi CU cung matchId+type nhung KHAC san (san cu khong
+   con dung), giu lai/tao moi cho dung san hien tai. Dung cho ca Social (assignReadyGroupCourt) lan
+   Tournament (syncTournamentTvAnnouncements, phong truong hop m.court doi giua 2 lan dong bo). */
+function cancelTvAnnouncementsForMatchExceptCourt(matchId, type, keepCourtId){
+  let changed = false;
+  state.tvAnnouncements.forEach(a=>{
+    if(a.matchId !== matchId || a.type !== type) return;
+    if(a.status === 'CANCELLED') return;
+    if(String(a.courtId) === String(keepCourtId)) return;
+    a.status = 'CANCELLED';
+    markEntityDirty('tvAnnouncements', a.id);
+    changed = true;
+  });
+  if(changed) saveState();
+}
+/* §35 — GOI LAI (manual replay): tao 1 OPERATION MOI (id/operationId moi rieng biet), KHONG sua ban
+   ghi PLAYED cu (giu nguyen lich su/audit). Dung lai buildMatchAnnouncement() nen text nhat quan voi
+   lan phat dau tien — day la diem goi DUY NHAT tu nut "🔊 GỌI LẠI" trong Staff App. */
+function manualReplayTvAnnouncement(sourceType, sourceId, type, courtId, teamAText, teamBText, playerIds){
+  const text = buildMatchAnnouncement(type, courtId, teamAText, teamBText);
+  if(!text){ showToast('Không đủ dữ liệu để gọi lại trên TV'); return; }
+  const now = Date.now();
+  const record = { id: uid('tvreplay'), matchId: sourceId + '_replay_' + now, sourceType, sourceId,
+    type, courtId: courtId || null, playerIds: playerIds || [], teamAText: teamAText||'', teamBText: teamBText||'',
+    textSnapshot: text, status: 'PENDING', createdAt: now, playedAt: null, operationId: uid('tvop') };
+  state.tvAnnouncements.push(record);
+  markEntityDirty('tvAnnouncements', record.id);
+  saveState();
+  showToast('🔊 Đã gọi lại trên TV');
+}
+/* §49 — Tournament: dong bo announcement THEO canonical live-ops board da co san (getTournamentLiveOpsBoard,
+   dua tren t.schedule/m.status — KHONG tao he thong match song song §16/§49). Goi sau moi lan
+   updateScore() khoa 1 tran (result.finished) vi luc do board CO THE dich chuyen (tran vua xong roi
+   khoi "live", tran ke tiep tren CUNG san duoc day len). V1 CHI cover vong bang (getTournamentLiveOpsBoard
+   hien tai cung chi doc stage==='groupStage' — xem ham do); vong knockout la pham vi mo rong sau
+   (§18 "co the de CUSTOM cho V2") vi khong co the "live-ops-board" tuong tu san co cho bracket. */
+function syncTournamentTvAnnouncements(catKey){
+  const cfg = getTvAnnouncerSettings();
+  if(!cfg.enabled) return;
+  const t = state.tournaments[catKey];
+  if(!t || typeof getTournamentLiveOpsBoard !== 'function') return;
+  const board = getTournamentLiveOpsBoard(t);
+  const stillRelevantIds = new Set();
+  Object.keys(board.liveByCourt).forEach(courtStr=>{
+    const entry = board.liveByCourt[courtStr];
+    const matchId = catKey + '_g' + entry.gIdx + '_m' + entry.mIdx;
+    stillRelevantIds.add(matchId);
+    const teamA = sanitizeNameForTts(pairLabel(entry.m.a));
+    const teamB = sanitizeNameForTts(pairLabel(entry.m.b));
+    if(!teamA || !teamB || teamA==='(đã xóa)' || teamB==='(đã xóa)') return; // §60 — khong bia du lieu
+    cancelTvAnnouncementsForMatchExceptCourt(matchId, 'CALL_TO_COURT', entry.m.court);
+    const text = buildMatchAnnouncement('CALL_TO_COURT', entry.m.court, teamA, teamB);
+    if(text) queueTvAnnouncement({ matchId, type:'CALL_TO_COURT', sourceType:'TOURNAMENT', sourceId: catKey, courtId: entry.m.court, playerIds:[], teamAText:teamA, teamBText:teamB, text });
+  });
+  // §50 — "cap chuan bi" = 1 tran ke tiep MOI SAN (khop dung ban chat "san la tai nguyen gioi han"),
+  // lay THANG tu board.nextEntries (canonical, KHONG doan theo thu tu UI).
+  const nextByCourt = {};
+  board.nextEntries.forEach(entry=>{ const c = String(entry.m.court); if(!nextByCourt[c]) nextByCourt[c] = entry; });
+  Object.keys(nextByCourt).forEach(courtStr=>{
+    const entry = nextByCourt[courtStr];
+    const matchId = catKey + '_g' + entry.gIdx + '_m' + entry.mIdx;
+    stillRelevantIds.add(matchId);
+    const teamA = sanitizeNameForTts(pairLabel(entry.m.a));
+    const teamB = sanitizeNameForTts(pairLabel(entry.m.b));
+    if(!teamA || !teamB || teamA==='(đã xóa)' || teamB==='(đã xóa)') return;
+    cancelTvAnnouncementsForMatchExceptCourt(matchId, 'PREPARE_NEXT', entry.m.court);
+    const text = buildMatchAnnouncement('PREPARE_NEXT', entry.m.court, teamA, teamB);
+    if(text) queueTvAnnouncement({ matchId, type:'PREPARE_NEXT', sourceType:'TOURNAMENT', sourceId: catKey, courtId: entry.m.court, playerIds:[], teamAText:teamA, teamBText:teamB, text });
+  });
+  // §53 — tran khong con trong live/next board nua (da xong, hoac ca 2 doi da bi xoa) -> huy moi
+  // announcement con hop le cua tran do, TV khong duoc doc/hien tran da ket thuc.
+  let changed = false;
+  state.tvAnnouncements.forEach(a=>{
+    if(a.sourceType !== 'TOURNAMENT' || a.sourceId !== catKey || a.status === 'CANCELLED') return;
+    if(!stillRelevantIds.has(a.matchId)){ a.status = 'CANCELLED'; markEntityDirty('tvAnnouncements', a.id); changed = true; }
+  });
+  if(changed) saveState();
+}
+
+/* §35 — GOI LAI (nut 🔊) tren tung court-block cua bang diem Giai dau: tao 1 announcement
+   CALL_TO_COURT MOI dung ten/san hien tai, khong sua ban ghi PLAYED cu. */
+function replayTournamentMatchAnnouncement(catKey, gIdx, mIdx){
+  const t = state.tournaments[catKey];
+  const m = t && t.schedule[gIdx] && t.schedule[gIdx][mIdx];
+  if(!m){ showToast('Không tìm thấy trận này'); return; }
+  const teamA = sanitizeNameForTts(pairLabel(m.a));
+  const teamB = sanitizeNameForTts(pairLabel(m.b));
+  if(!teamA || !teamB || teamA==='(đã xóa)' || teamB==='(đã xóa)'){ showToast('Thiếu dữ liệu cặp đấu để gọi lại'); return; }
+  manualReplayTvAnnouncement('TOURNAMENT', catKey, 'CALL_TO_COURT', m.court, teamA, teamB, []);
+}
+
+/* ================= §TVANNOUNCE2026 — CLIENT: HANG DOI TTS + LEADER LOCK + VISUAL (§37/§51/§65-67) =================
+   Chi chay khi localUi.tvMode === true (Staff App KHONG bao gio phat TTS). §69/§70 — hoan toan
+   READ-ONLY, khong ghi Bill/Player/Finance/Credit; announcement chi doc TU tvAnnouncements (da duoc
+   Staff App ghi qua cac hook §49/§50), KHONG tu suy dien match state moi (§48/§49 "khong tao he thong
+   match song song"). Speech CHI trigger tu qua trinh xu ly hang doi (setInterval tick), KHONG tu
+   render loop/DOM update (§70). */
+let __tvClientId = null;
+let __tvAudioEnabled = false;
+let __tvIsLeader = false;
+let __tvSpeaking = false;
+let __tvQueueTimer = null;
+let __tvLeaderHeartbeatTimer = null;
+let __tvLastSpeakEndAt = 0;
+let __tvSpeechRetryCount = {}; // announcementId -> so lan da retry (§55 — toi da 1 lan)
+function getOrCreateTvClientId(){
+  if(__tvClientId) return __tvClientId;
+  try{
+    let id = sessionStorage.getItem('picpoc_tv_client_id');
+    if(!id){ id = uid('tvc'); sessionStorage.setItem('picpoc_tv_client_id', id); }
+    __tvClientId = id;
+  }catch(e){ __tvClientId = uid('tvc'); }
+  return __tvClientId;
+}
+/* §37 — TV moi mo lan dau (hoac chua tung bam nut trong session nay) PHAI hien overlay yeu cau bam
+   1 lan truoc khi phat duoc am thanh (gioi han autoplay cua trinh duyet). Dung sessionStorage (KHONG
+   phai localStorage) — moi lan mo TV that su (tab/cua so moi) van hoi lai 1 lan, dung y "session TV". */
+function hasEnabledTvAudioThisSession(){
+  try{ return sessionStorage.getItem('picpoc_tv_audio_enabled') === '1'; }catch(e){ return false; }
+}
+function ensureTvAudioGateEl(){
+  let el = document.getElementById('tvAudioGateOverlay');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'tvAudioGateOverlay';
+    el.className = 'tv-audio-gate-overlay';
+    el.innerHTML = `
+      <div class="tv-audio-gate-box">
+        <div class="tv-audio-gate-title">PICPOC TV</div>
+        <div class="tv-audio-gate-sub">🔊 Chế độ gọi VĐV bằng giọng nói</div>
+        <button type="button" class="tv-audio-gate-btn" onclick="enableTvAudioAndEnterMode()">BẬT ÂM THANH &amp; VÀO CHẾ ĐỘ TV</button>
+      </div>`;
+    document.body.appendChild(el);
+  }
+  return el;
+}
+/* §37/§38 — Staff bam 1 LAN duy nhat; sau do announcement TU CHAY, khong bat click Play tung tran. */
+function enableTvAudioAndEnterMode(){
+  try{ sessionStorage.setItem('picpoc_tv_audio_enabled', '1'); }catch(e){ /* ignore */ }
+  __tvAudioEnabled = true;
+  const el = document.getElementById('tvAudioGateOverlay');
+  if(el) el.remove();
+  // §39 — "danh thuc" SpeechSynthesis bang 1 phat am rong ngay trong user-gesture nay (mot so trinh
+  // duyet yeu cau lan speak() DAU TIEN phai nam trong click handler that su moi duoc phep tu dong
+  // phat cac lan sau).
+  try{
+    if(window.speechSynthesis){ const warm = new SpeechSynthesisUtterance(' '); warm.volume = 0; window.speechSynthesis.speak(warm); }
+  }catch(e){ /* §40 — TTS loi khong duoc lam crash TV */ }
+  claimOrHeartbeatAudioLeader();
+  if(__tvLeaderHeartbeatTimer) clearInterval(__tvLeaderHeartbeatTimer);
+  __tvLeaderHeartbeatTimer = setInterval(claimOrHeartbeatAudioLeader, 5000);
+  if(__tvQueueTimer) clearInterval(__tvQueueTimer);
+  __tvQueueTimer = setInterval(processTvAnnouncementQueue, 1000);
+  processTvAnnouncementQueue();
+}
+function initTvAnnouncementEngine(){
+  getOrCreateTvClientId();
+  renderTvAnnouncerBoard();
+  if(hasEnabledTvAudioThisSession()){
+    enableTvAudioAndEnterMode();
+  } else {
+    ensureTvAudioGateEl();
+  }
+}
+function teardownTvAnnouncementEngine(){
+  if(__tvQueueTimer){ clearInterval(__tvQueueTimer); __tvQueueTimer = null; }
+  if(__tvLeaderHeartbeatTimer){ clearInterval(__tvLeaderHeartbeatTimer); __tvLeaderHeartbeatTimer = null; }
+  __tvAudioEnabled = false;
+  try{ if(window.speechSynthesis) window.speechSynthesis.cancel(); }catch(e){ /* ignore */ }
+  const gate = document.getElementById('tvAudioGateOverlay'); if(gate) gate.remove();
+  const board = document.getElementById('tvAnnouncerBoard'); if(board) board.remove();
+  // §65-67 — thoat TV: buong leader lock NEU chinh minh dang la leader, de TV khac (neu co) co the
+  // claim ngay thay vi phai cho het 15s timeout.
+  if(__tvIsLeader && state.displayAudioLeader && state.displayAudioLeader.clientId === __tvClientId){
+    state.displayAudioLeader = { clientId: null, claimedAt: 0, heartbeatAt: 0 };
+    writeDisplayAudioLeaderToFirebase();
+  }
+  __tvIsLeader = false;
+}
+/* §65-67 — audio leader lock DON GIAN: 1 O DUY NHAT (displayAudioLeader), claim neu trong/stale (qua
+   15s khong heartbeat — gap 3 lan chu ky 5s cho an toan mang cham), heartbeat dinh ky neu dang la
+   leader. TV khong phai leader VAN hien thi visual binh thuong (§66 "cac TV khac: visual only"), chi
+   khong tu phat TTS — tranh 2 man hinh doc de len nhau khi Staff lo mo 2 TV. */
+function claimOrHeartbeatAudioLeader(){
+  const leader = state.displayAudioLeader || {};
+  const now = Date.now();
+  const stale = !leader.clientId || (now - (leader.heartbeatAt||0) > 15000);
+  if(leader.clientId === __tvClientId || stale){
+    state.displayAudioLeader = { clientId: __tvClientId, claimedAt: (leader.clientId===__tvClientId && leader.claimedAt) ? leader.claimedAt : now, heartbeatAt: now };
+    __tvIsLeader = true;
+    writeDisplayAudioLeaderToFirebase();
+  } else {
+    __tvIsLeader = false;
+  }
+}
+function writeDisplayAudioLeaderToFirebase(){
+  if(!SYNC_ENABLED || !dbRoot){ __tvIsLeader = true; return; } // local-only mode (khong Firebase) — chi co 1 TV co the co, luon la leader
+  try{ dbRoot.child(fbNodeNameFor('displayAudioLeader')).set(sanitizeForFirebase(state.displayAudioLeader)); }
+  catch(e){ console.error('[tv-leader] set error', e); }
+}
+/* §TVANNOUNCE2026 — goi tu ENTITY_RENDER_MAP moi lan tvAnnouncements dong bo tu remote (Staff App
+   vua tao/huy 1 announcement o thiet bi khac). Chi lam viec neu dang o TV mode — Staff App khong can
+   xu ly gi them (render bang duoi day vo hai neu goi nham luc khong o TV mode, tu return som). */
+function onTvAnnouncementsChangedFromRemote(){
+  renderTvAnnouncerBoard();
+  if(localUi.tvMode && __tvAudioEnabled) processTvAnnouncementQueue();
+}
+function onDisplayAudioLeaderChangedFromRemote(){
+  if(!localUi.tvMode || !__tvAudioEnabled) return;
+  const leader = state.displayAudioLeader || {};
+  __tvIsLeader = (leader.clientId === __tvClientId);
+}
+/* §27/§28/§29/§30 — TIM 1 announcement PENDING de phat tiep theo: uu tien CALL_TO_COURT hon
+   PREPARE_NEXT (§28), trong cung priority thi cu (createdAt) truoc (FIFO), va PHAI con "hop le"
+   (status PENDING, chua CANCELLED, chua qua 15 phut ke tu luc tao — §34 "tran da ket thuc nhung
+   announcement con pending do TV offline lau: khong phat"). Chi 1 lan tai 1 thoi diem (§27 khong cho
+   phat de) — kiem tra __tvSpeaking + khoang nghi gapSeconds truoc khi lay tiep. */
+const TV_ANNOUNCEMENT_STALE_MS = 15*60*1000;
+function pickNextTvAnnouncementToPlay(){
+  const cfg = getTvAnnouncerSettings();
+  const now = Date.now();
+  const candidates = (state.tvAnnouncements||[]).filter(a=> a.status==='PENDING' && (now-a.createdAt) < TV_ANNOUNCEMENT_STALE_MS);
+  if(!candidates.length) return null;
+  candidates.sort((a,b)=>{
+    const prioA = a.type==='CALL_TO_COURT' ? 0 : 1;
+    const prioB = b.type==='CALL_TO_COURT' ? 0 : 1;
+    if(prioA !== prioB) return prioA - prioB;
+    return a.createdAt - b.createdAt;
+  });
+  return candidates[0];
+}
+/* Vong lap chinh (setInterval 1s) — chi LEADER moi phat TTS that su (§66); TV khong-leader van danh
+   dau PLAYED (de khong bi TV leader phat trung ne trong luc no dang bat) nhung KHONG goi speechSynthesis. */
+function processTvAnnouncementQueue(){
+  if(!localUi.tvMode || !__tvAudioEnabled) return;
+  const cfg = getTvAnnouncerSettings();
+  if(!cfg.enabled) return;
+  if(__tvSpeaking) return; // §54 — dang noi, cho onend/onerror
+  const now = Date.now();
+  if(now - __tvLastSpeakEndAt < cfg.gapSeconds*1000) return; // §29 — khoang nghi giua 2 announcement
+  const next = pickNextTvAnnouncementToPlay();
+  if(!next) return;
+  next.status = 'PLAYING';
+  markEntityDirty('tvAnnouncements', next.id);
+  if(!__tvIsLeader){
+    // §66 — khong phai leader: chi danh dau PLAYED ngay (khong phat am), tranh TV nay ket lai lan sau
+    next.status = 'PLAYED'; next.playedAt = Date.now();
+    markEntityDirty('tvAnnouncements', next.id);
+    return;
+  }
+  speakTvAnnouncement(next);
+}
+/* §39/§40/§55 — TTS qua browser SpeechSynthesis, locale vi-VN, uu tien giong Tieng Viet neu co (khong
+   hard-code ten giong theo 1 trinh duyet cu the). Loi KHONG duoc lam crash TV — visual (the tren man
+   hinh) da duoc renderTvAnnouncerBoard() ve doc lap voi TTS, nen du TTS loi TV van "nhin duoc". Retry
+   toi da 1 lan neu hop ly (§55), khong loop vo han. */
+function pickVietnameseVoice(){
+  try{
+    const voices = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    return voices.find(v=> /vi([-_]VN)?/i.test(v.lang)) || null;
+  }catch(e){ return null; }
+}
+function speakTvAnnouncement(record){
+  __tvSpeaking = true;
+  const finish = (played)=>{
+    __tvSpeaking = false;
+    __tvLastSpeakEndAt = Date.now();
+    record.status = played ? 'PLAYED' : 'PLAYED'; // §55 — du loi cung khong giu PLAYING vinh vien (se ket lai vo han)
+    record.playedAt = Date.now();
+    markEntityDirty('tvAnnouncements', record.id);
+  };
+  try{
+    if(!window.speechSynthesis){ finish(false); return; } // §40 — khong ho tro TTS, van coi nhu da "xu ly" de khong ket lai
+    const utter = new SpeechSynthesisUtterance(record.textSnapshot);
+    utter.lang = 'vi-VN';
+    const voice = pickVietnameseVoice();
+    if(voice) utter.voice = voice;
+    utter.rate = 1.0;
+    utter.onend = ()=> finish(true);
+    utter.onerror = ()=>{
+      const retries = __tvSpeechRetryCount[record.id] || 0;
+      if(retries < 1){
+        __tvSpeechRetryCount[record.id] = retries + 1;
+        __tvSpeaking = false;
+        try{ window.speechSynthesis.speak(utter); __tvSpeaking = true; }
+        catch(e2){ finish(false); }
+      } else {
+        finish(false);
+      }
+    };
+    window.speechSynthesis.speak(utter);
+  }catch(e){
+    console.error('[tv-tts] speak error', e);
+    finish(false);
+  }
+}
+/* ================= §25/§26/§52/§61/§62/§63 — TV VISUAL: THE "MỜI VÀO SÂN"/"CHUẨN BỊ" ================= */
+function ensureTvAnnouncerBoardEl(){
+  let el = document.getElementById('tvAnnouncerBoard');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'tvAnnouncerBoard';
+    el.className = 'tv-announcer-board';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function tvAnnCardHtml(a, isLive){
+  const courtLabel = a.courtId ? ('SÂN ' + escapeHtml(String(a.courtId))) : '';
+  const title = isLive ? ('🔊 ' + (courtLabel ? (courtLabel + ' — MỜI VÀO SÂN') : 'MỜI VÀO SÂN')) : ('CHUẨN BỊ' + (courtLabel ? (' — ' + courtLabel) : ''));
+  const sourceLabel = a.sourceType === 'TOURNAMENT' ? 'GIẢI ĐẤU' : 'SOCIAL'; // §61 — nhan nho phan biet nguon, khong lam banner to
+  return `<div class="tv-ann-card ${isLive?'tv-ann-live-card':'tv-ann-next-card'}">
+    <div class="tv-ann-card-title">${title}</div>
+    <div class="tv-ann-source">${sourceLabel}</div>
+    <div class="tv-ann-vs"><span>${escapeHtml(a.teamAText||'')}</span><span class="tv-ann-vs-sep">VS</span><span>${escapeHtml(a.teamBText||'')}</span></div>
+  </div>`;
+}
+/* §52/§62 — hien thi TOI DA: 1 the "dang vao san" (CALL_TO_COURT) + 1 the "chuan bi" (PREPARE_NEXT)
+   MOI SAN, khong nhoi qua nhieu thong tin (§62). Doc TU tvAnnouncements (da dong bo Firebase — §15),
+   KHONG doc readyGroups/state.courts truc tiep de tranh 2 nguon su that lech nhau giua thiet bi. */
+function renderTvAnnouncerBoard(){
+  const existing = document.getElementById('tvAnnouncerBoard');
+  if(!localUi.tvMode){ if(existing) existing.remove(); return; }
+  const live = (state.tvAnnouncements||[]).filter(a=>a.type==='CALL_TO_COURT' && a.status!=='CANCELLED');
+  const next = (state.tvAnnouncements||[]).filter(a=>a.type==='PREPARE_NEXT' && a.status!=='CANCELLED');
+  const byCourtLive = {}; live.forEach(a=>{ const key=String(a.courtId||a.matchId); if(!byCourtLive[key] || a.createdAt>byCourtLive[key].createdAt) byCourtLive[key]=a; });
+  const byCourtNext = {}; next.forEach(a=>{ const key=String(a.courtId||a.matchId); if(!byCourtNext[key] || a.createdAt>byCourtNext[key].createdAt) byCourtNext[key]=a; });
+  const liveCards = Object.values(byCourtLive).sort((a,b)=>String(a.courtId||'').localeCompare(String(b.courtId||''), undefined, {numeric:true}));
+  const nextCards = Object.values(byCourtNext).sort((a,b)=>String(a.courtId||'').localeCompare(String(b.courtId||''), undefined, {numeric:true}));
+  if(!liveCards.length && !nextCards.length){ if(existing) existing.remove(); return; }
+  const el = ensureTvAnnouncerBoardEl();
+  el.innerHTML = `
+    ${liveCards.length ? '<div class="tv-ann-group">' + liveCards.map(a=>tvAnnCardHtml(a,true)).join('') + '</div>' : ''}
+    ${nextCards.length ? '<div class="tv-ann-group">' + nextCards.map(a=>tvAnnCardHtml(a,false)).join('') + '</div>' : ''}
+  `;
+}
+/* §PHONE2026 — dung CHUNG cho MOI o nhap SDT trong app (Check-in/Tao-Sua Player/Data Health...):
+   auto-format ve dung dinh dang hien thi luc blur (§8 "auto-format khi blur hoac save"). KHONG bao
+   loi ngay tai day (chi format neu hop le) — validate that su chi chan luc save/submit, tranh gay
+   kho chiu khi nguoi dung dang go do. */
+function autoFormatPhoneInput(inputId){
+  const el = document.getElementById(inputId);
+  if(!el) return;
+  const result = normalizePhone(el.value);
+  if(result.valid) el.value = result.phone;
+}
 const debouncedRenderPlayerSearch = debounce(()=>{ if(typeof renderPlayerSearch === 'function') renderPlayerSearch(); }, 150); // §PROD-33
 function onCheckinSearchInput(){ debouncedRenderPlayerSearch(); }
 function renderPlayerSearch(){
-  const q = vnFold((document.getElementById('playerSearchInput').value || '').trim());
+  const qRaw = (document.getElementById('playerSearchInput').value || '').trim();
+  const q = vnFold(qRaw);
+  const qPhoneDigits = normalizeSearchPhoneQuery(qRaw); // §PHONE2026/§13 — cho phep tim theo SDT (khop 1 phan)
   const results = document.getElementById('playerSearchResults');
   if(!q){ results.innerHTML = ''; return; }
-  const matches = state.players.filter(p=>vnFold(p.name).includes(q)).slice(0,10);
+  const matches = state.players.filter(p=> vnFold(p.name).includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits)) ).slice(0,10);
   if(!matches.length){ results.innerHTML = '<p class="muted">Không tìm thấy, check-in như khách mới bên dưới.</p>'; return; }
   results.innerHTML = matches.map(p=>{
     const meta = statusMetaFor(p);
@@ -17662,6 +18550,7 @@ function renderSettingsTab(){
     updateSocialPassTotalPreview();
   }
   if(typeof populatePicpocCreditsSettingsForm === 'function') populatePicpocCreditsSettingsForm(); // §CREDIT2026-59-62
+  if(typeof populateTvAnnouncerSettingsForm === 'function') populateTvAnnouncerSettingsForm(); // §TVANNOUNCE2026/§41
   // §TOURN-ENTRY-25/26 — Phi tham gia giai (dung chung PRICING_EDIT, dropdown lay tu state.products,
   // KHONG tu chon san pham theo ten — de trong ("— Chưa chọn —") neu Admin chua cau hinh (§26).
   document.getElementById('tournEntryFeeInput').value = state.settings.tournamentEntryFeePerPlayer != null ? state.settings.tournamentEntryFeePerPlayer : 90000;
@@ -25489,14 +26378,19 @@ function renderFinanceDebt(){
   let debtors = debtorIds.map(pid=>{
     const p = playerById(pid);
     const bills = getPlayerOutstandingBills(pid);
-    return { playerId: pid, name: p ? p.name : (bills[0] ? bills[0].playerName : '(?)'), phone: p ? p.phone : '', total: getPlayerOutstanding(pid), billCount: bills.length };
+    return { playerId: pid, name: p ? p.name : (bills[0] ? bills[0].playerName : '(?)'), phone: p ? p.phone : '', phoneDigits: p ? p.phoneDigits : '', total: getPlayerOutstanding(pid), billCount: bills.length };
   }).sort((a,b)=> b.total - a.total);
   const totalOutstanding = debtors.reduce((s,d)=>s+d.total,0);
-  if(financeDebtSearch) debtors = debtors.filter(d=> (d.name||'').toLowerCase().includes(financeDebtSearch) || (d.phone||'').toLowerCase().includes(financeDebtSearch));
+  // §PHONE2026/§18 — financeDebtSearch la text da lowercase tu o input chung (ten hoac SDT); neu la
+  // chuoi so thi so sanh theo phoneDigits (khong phu thuoc dinh dang co dau cach), neu khong thi theo ten.
+  if(financeDebtSearch){
+    const searchDigits = normalizeSearchPhoneQuery(financeDebtSearch);
+    debtors = debtors.filter(d=> (d.name||'').toLowerCase().includes(financeDebtSearch) || (searchDigits.length >= 3 && (d.phoneDigits||'').includes(searchDigits)));
+  }
   const rows = debtors.map(d=>`
     <div class="card" style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px;">
       <div>
-        <div style="font-weight:700;">${d.name}</div>
+        <div style="font-weight:700;">${d.name}${d.phone ? ` <span class="muted" style="font-weight:400; font-size:.8rem;">· ${d.phone}</span>` : ''}</div>
         <div class="muted" style="font-size:.85rem;">${d.billCount} bill chưa thu đủ</div>
       </div>
       <div style="display:flex; align-items:center; gap:10px;">
@@ -30010,6 +30904,65 @@ function runDataIntegrityCheck(){
     }
   });
 
+  // ===== PLAYER PHONE (§PHONE2026/§40) =====
+  // Chi BAO CAO, khong tu sua (dung tinh than chung cua ham nay) — 2 loai issue:
+  // a) phoneDigits trung giua >=2 player active (deu da qua duplicate-check khi tao/sua, nhung van co
+  //    the phat sinh qua sync tu thiet bi khac / import cu chua qua canonical helper) — WARNING, co
+  //    the la 2 nguoi that dung chung 1 SDT gia dinh, khong chac chan la loi that su.
+  // b) phone khong rong nhung khong dat dinh dang chuan (phoneDigits rong trong khi phone co gia tri)
+  //    — thuong la du lieu nhap tu truoc khi co canonical helper, hoac gia tri khong the chuan hoa.
+  const phoneDigitsGroups = {};
+  state.players.forEach(p=>{
+    if(p.archived) return;
+    if(p.phoneDigits) (phoneDigitsGroups[p.phoneDigits] = phoneDigitsGroups[p.phoneDigits] || []).push(p);
+  });
+  Object.keys(phoneDigitsGroups).forEach(digits=>{
+    const group = phoneDigitsGroups[digits];
+    if(group.length > 1) addIssue('Player','WARNING', 'Có ' + group.length + ' hồ sơ đang active cùng chung SĐT ' + (group[0].phone||digits) + ': ' + group.map(p=>p.name).join(', ') + ' — kiểm tra lại xem có phải trùng hồ sơ hay 2 khách dùng chung 1 số.', {
+      code:'DUPLICATE_PHONE_DIGITS', entityType:'player', entityId:group[0].id, entityLabel:group.map(p=>p.name).join(', '),
+      impact:'Có thể là 2 hồ sơ Player trùng nhau cho cùng 1 khách (nên gộp), hoặc 2 khách khác nhau vô tình dùng chung 1 SĐT (ví dụ SĐT gia đình) — cần Admin/Staff xác nhận, không tự sửa.',
+      repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+    });
+  });
+  state.players.forEach(p=>{
+    if(p.archived) return;
+    if(p.phone && !p.phoneDigits) addIssue('Player','WARNING', p.name + ' có trường SĐT ("' + p.phone + '") nhưng không đúng định dạng chuẩn (10 số, bắt đầu bằng 0) — tìm kiếm theo SĐT sẽ không tìm ra hồ sơ này.', {
+      code:'PHONE_INVALID_FORMAT', entityType:'player', entityId:p.id, entityLabel:p.name,
+      impact:'Hồ sơ này sẽ không xuất hiện khi tìm kiếm/đối chiếu theo SĐT (Check-in, Công nợ, Booking) vì không có phoneDigits hợp lệ. Sửa lại SĐT trong hồ sơ để khắc phục.',
+      repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:true
+    });
+  });
+
+  // ===== TV ANNOUNCEMENTS (§TVANNOUNCE2026/§57) =====
+  // Chi BAO CAO, khong tu sua — 2 loai bat thuong co the xay ra neu TV offline lau hoac client crash
+  // giua chung: (a) PLAYING qua lau (TTS ket ket qua vi mot loi khong duoc bat), (b) PENDING qua han
+  // TV_ANNOUNCEMENT_STALE_MS (15 phut, dung CHUNG hang so voi client TV) ma van chua duoc client nao
+  // xu ly — thuong la vi khong co TV nao dang mo luc do, khong phai loi du lieu.
+  const TV_ANN_STALE_MS_FOR_HEALTH = (typeof TV_ANNOUNCEMENT_STALE_MS === 'number') ? TV_ANNOUNCEMENT_STALE_MS : 15*60*1000;
+  const nowForTvAnn = Date.now();
+  (state.tvAnnouncements||[]).forEach(a=>{
+    if(a.status === 'PLAYING' && (nowForTvAnn - (a.createdAt||0)) > 5*60*1000){
+      addIssue('Tournament','WARNING', 'Announcement TV "' + a.textSnapshot + '" (id=' + a.id + ') đang kẹt ở trạng thái PLAYING quá 5 phút — có thể TV bị lỗi/đứng giữa lúc đọc.', {
+        code:'TV_ANNOUNCEMENT_STUCK_PLAYING', entityType:'tvAnnouncement', entityId:a.id, entityLabel:a.textSnapshot,
+        impact:'Hàng đợi TTS của TV có thể bị kẹt lại (không phát tiếp announcement mới) cho tới khi TV được tải lại (F5).',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+      });
+    } else if(a.status === 'PENDING' && (nowForTvAnn - (a.createdAt||0)) > TV_ANN_STALE_MS_FOR_HEALTH){
+      addIssue('Tournament','INFO', 'Announcement TV "' + a.textSnapshot + '" (id=' + a.id + ') đã PENDING quá lâu (>15 phút) mà chưa có TV nào xử lý — thường do không có màn hình TV nào đang mở lúc đó, không phải lỗi dữ liệu.', {
+        code:'TV_ANNOUNCEMENT_STALE_PENDING', entityType:'tvAnnouncement', entityId:a.id, entityLabel:a.textSnapshot,
+        impact:'Không ảnh hưởng vận hành — client TV tự bỏ qua announcement quá hạn này (§34), chỉ còn là dữ liệu lịch sử.',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:true
+      });
+    }
+    if(a.sourceType === 'TOURNAMENT' && a.status !== 'CANCELLED' && !state.tournaments[a.sourceId]){
+      addIssue('Tournament','WARNING', 'Announcement TV "' + a.textSnapshot + '" tham chiếu giải đấu "' + a.sourceId + '" không còn tồn tại.', {
+        code:'TV_ANNOUNCEMENT_ORPHAN_TOURNAMENT', entityType:'tvAnnouncement', entityId:a.id, entityLabel:a.textSnapshot,
+        impact:'Announcement này sẽ không bao giờ được TV dọn dẹp tự động (vì giải đấu tham chiếu không còn) — an toàn để bỏ qua, chỉ còn là dữ liệu thừa.',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:true
+      });
+    }
+  });
+
   // ===== MATCHMAKING ELIGIBILITY / LIFECYCLE (§MATCHFIX-19/35) =====
   // Bo sung cac check phat hien dung LOP BUG da fix (player operational status lech khoi Active
   // Visit that su) — CHI BAO CAO, khong tu sua (dung tinh than chung cua ham nay).
@@ -32599,6 +33552,9 @@ function updateScore(catKey, groupIdx, matchIdx, field, value){
     advanceKnockoutIfApplicable(catKey, m);
     maybeAdvanceTournamentStatus(catKey);
     maybeAutoProgressTournament(catKey); // §AUTO-Q/R — tu dong CHOT VONG BANG + TAO CAY khi vong bang vua xong
+    // §TVANNOUNCE2026/§49 — 1 tran vua khoa co the lam board "live/next" dich chuyen (tran xong roi
+    // khoi live, tran ke tiep tren CUNG san duoc day len) -> dong bo lai announcement ngay.
+    if(typeof syncTournamentTvAnnouncements === 'function') syncTournamentTvAnnouncements(catKey);
   }
   saveState();
   // §HOTFIX-SCOREBLUR1 — CHI ve lai toan bo tab khi tran vua duoc KHOA (result.finished): luc do o nhap
@@ -32691,7 +33647,7 @@ function renderScheduleGrid(catKey, gIdx, matches, catLabelText, groupName, pair
       }
       return `
       <div class="court-block" data-mk="${catKey}__${gIdx}__${mIdx}">
-        <div class="court-pill">Sân ${m.court}</div>
+        <div class="court-pill">Sân ${m.court}${!isLocked ? `<button class="small secondary no-print" title="Gọi lại trên TV" style="margin-left:6px; padding:0 6px;" onclick="replayTournamentMatchAnnouncement('${catKey}',${gIdx},${mIdx})">🔊</button>` : ''}</div>
         <div class="match-row top"><span class="team-name">${pairLabel(m.a)}</span><span class="match-score-box"><input type="number" min="0" inputmode="numeric" pattern="[0-9]*" value="${m.scoreA===null?'':m.scoreA}" ${isLocked?'disabled':''} onfocus="this.select()" onchange="updateScore('${catKey}',${gIdx},${mIdx},'scoreA',this.value)"></span></div>
         <div class="match-row bottom"><span class="team-name">${pairLabel(m.b)}</span><span class="match-score-box"><input type="number" min="0" inputmode="numeric" pattern="[0-9]*" value="${m.scoreB===null?'':m.scoreB}" ${isLocked?'disabled':''} onfocus="this.select()" onchange="updateScore('${catKey}',${gIdx},${mIdx},'scoreB',this.value)"></span></div>
         <div class="match-status-action">${statusHtml}
@@ -34436,7 +35392,8 @@ function computeFilteredPlayerList(){
   if(filter === 'archived') list = list.filter(p=>p.archived);
   else list = list.filter(p=>!p.archived);
 
-  if(q) list = list.filter(p=>p.name.toLowerCase().includes(q)); // §PLAYER-4 — khong doi logic nhan dien, chi loc theo name nhu hien tai
+  const qPhoneDigits = normalizeSearchPhoneQuery(localUi.playerSearchQuery || ''); // §PHONE2026/§14
+  if(q) list = list.filter(p=> p.name.toLowerCase().includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits)) ); // §PLAYER-4 mo rong: cho phep khop theo SDT
   if(filter === 'oncourt') list = list.filter(p=>PLAYER_ACTIVE_STATUSES.includes(p.status));
   if(levelFilter !== 'all') list = list.filter(p=>playerMatchesLevelFilter(p, levelFilter));
   if(activityFilter !== 'all') list = list.filter(p=>getPlayerActivityStatus(p).code === activityFilter);
@@ -34516,52 +35473,112 @@ function renderPlayerDetail(){
   const archiveBtnHtml = p.archived ? '' :
     `<button class="small secondary" ${canArchivePlayer(p) ? '' : 'disabled title="Đang hoạt động trên sân — kết thúc session trước khi lưu trữ"'} onclick="archivePlayer('${p.id}')">📦 LƯU TRỮ</button>`;
 
+  // §PROFILE2026/§1-§4 — cac so lieu Staff can thay NGAY trong 2-3 giay, tinh 1 lan duy nhat o day
+  // roi render vao header/khoi TONG QUAN (khong de rai rac o nhieu subtab nhu ban cu).
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const monthEnd = new Date(now.getFullYear(), now.getMonth()+1, 1).getTime();
+  const visitsThisMonth = countValidCompletedVisitsInMonth(p.id, monthStart, monthEnd);
+  const playerDebt = getPlayerOutstanding(p.id);
+  const creditsOn = isCreditSystemEnabled();
+  const creditBalance = creditsOn ? getAvailableCredits(p.id) : 0;
+  const expiringSoon = creditsOn ? getExpiringSoonCreditLots(p.id, 7) : [];
+  const expiringTotal = expiringSoon.reduce((s,l)=>s+(l.remainingAmount||0), 0);
+  const activityItems = buildPlayerActivityOverview(p, 5);
+
   box.innerHTML = `
-    <div class="player-detail-head">
-      <div>
-        <div class="player-detail-name">${p.name.toUpperCase()}${p.archived ? ' <span class="muted" style="font-size:.7rem; font-weight:700;">(ĐÃ LƯU TRỮ)</span>' : ''}${debtBadgeHtml(p.id)}</div>
-        <div class="player-detail-sub">${pprVal.toFixed(2)} PPR · ${getPprLabel(pprVal)}${p.gender ? ' · ' + (p.gender==='MALE'?'♂':'♀') : ''}</div>
-        <div class="player-detail-sub">${getPprStatusLabel(p.pprStatus||'PROVISIONAL')} · Tin cậy: ${p.pprConfidence||0}/100 (${getPprConfidenceLabel(p.pprConfidence||0)}) · ${p.pprRatedMatches||0} trận tính điểm</div>
-        <div class="player-detail-sub">${meta.icon} ${isOnCourt ? meta.label : 'Đã rời sân'}</div>
+    <div class="pp-header">
+      <div class="pp-name-row">
+        <div>
+          <div class="pp-name">${p.name.toUpperCase()}${p.archived ? ' <span class="muted" style="font-size:.7rem; font-weight:700;">(ĐÃ LƯU TRỮ)</span>' : ''}${debtBadgeHtml(p.id)}</div>
+          <div class="pp-secondary">${p.nickname ? escapeHtml(p.nickname) + ' · ' : ''}${p.phone ? p.phone : '<span class="muted">Chưa có SĐT</span>'}${p.phone ? ` <button class="small secondary pp-copy-btn" onclick="navigator.clipboard && navigator.clipboard.writeText('${p.phone}'); showToast('Đã copy SĐT');">📋 COPY</button>` : ''}</div>
+          <div class="pp-tertiary">${pprVal.toFixed(2)} PPR · ${meta.icon} ${isOnCourt ? meta.label : 'Đã rời sân'}</div>
+        </div>
+        <div class="pp-actions">
+          <button class="small secondary" onclick="openEditPlayerModal('${p.id}')">✏️ CHỈNH SỬA</button>
+        </div>
       </div>
-      <div style="display:flex; gap:6px; flex-wrap:wrap;">
-        <button class="small secondary" onclick="openEditPlayerModal('${p.id}')">✏️ SỬA</button>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+        ${actionsHtml}
         <button class="small secondary" data-require-permission="PPR_MANUAL_EDIT" onclick="openManualPprEditModal('${p.id}')">🛠️ SỬA PPR</button>
         ${archiveBtnHtml}
       </div>
     </div>
-    <div style="margin-top:8px;">${actionsHtml}</div>
-    <div class="player-stat-grid">
-      <div class="player-stat-box"><div class="num">${p.checkins||0}</div><div class="lbl">Check-in</div></div>
-      <div class="player-stat-box"><div class="num">${matchCount}</div><div class="lbl">Trận</div></div>
-      <div class="player-stat-box"><div class="num">${matchesToday}</div><div class="lbl">Trận hôm nay</div></div>
+
+    <div class="pp-grid2">
+      <div class="pp-panel">
+        <div class="pp-panel-title">TỔNG QUAN</div>
+        <div class="pp-metric-grid">
+          <div class="pp-metric-row"><span>PPR</span><span class="pp-metric-val">${pprVal.toFixed(2)}</span></div>
+          <div class="pp-metric-row"><span>Số buổi tháng này</span><span class="pp-metric-val">${visitsThisMonth}</span></div>
+          <div class="pp-metric-row"><span>Tổng số trận</span><span class="pp-metric-val">${matchCount}</span></div>
+          <div class="pp-metric-row"><span>Công nợ</span><span class="pp-metric-val ${playerDebt>0?'pp-debt':''}">${fmtVnd(playerDebt)}</span></div>
+        </div>
+        ${playerDebt>0 ? `<div style="margin-top:8px;"><button class="small secondary" onclick="setPlayerDetailSubtab('finance')">XEM CHI TIẾT</button></div>` : ''}
+      </div>
+      <div class="pp-panel">
+        <div class="pp-panel-title">PICPOC CREDITS</div>
+        ${!creditsOn ? '<p class="muted" style="font-size:.85rem; margin:0;">Đang tắt trong Cài đặt.</p>' : `
+          <div class="pp-inline-row"><span class="muted" style="font-size:.85rem;">Số dư</span><span class="pp-inline-val ${creditBalance>0?'':'pp-zero'}">${fmtVnd(creditBalance)}</span></div>
+          ${expiringTotal>0 ? `<div class="pp-inline-row" style="margin-top:4px;"><span class="muted" style="font-size:.82rem;">Sắp hết hạn</span><span style="color:#b45309; font-weight:700; font-size:.9rem;">${fmtVnd(expiringTotal)}</span></div>` : ''}
+          <div style="margin-top:8px;"><button class="small secondary" onclick="setPlayerDetailSubtab('credits')">LỊCH SỬ</button></div>
+        `}
+      </div>
     </div>
-    <div class="muted" style="font-size:.82rem;">Lần gần nhất: <b>${formatRelativeDatePlayer(getPlayerLastVisit(p))}</b> · Tham gia Picpoc từ: ${p.createdAt ? new Date(p.createdAt).toLocaleDateString('vi-VN') : '—'}</div>
-    <div id="playerTagsBox" style="margin-top:8px;">${renderPlayerTagsHtml(p)}</div>
-    <div style="margin-top:8px;">
-      <label style="margin:0 0 4px;">GHI CHÚ NỘI BỘ <span class="muted" style="font-weight:400;">(chỉ Staff/Admin, không hiện TV)</span></label>
-      <textarea id="playerNoteBox" rows="2" placeholder="VD: Thường đi sau 17h, hay đánh cùng Hùng..." onblur="savePlayerNote('${p.id}')">${p.note||''}</textarea>
+
+    <div class="pp-panel" style="margin-top:10px;">
+      <div class="pp-panel-title">HOẠT ĐỘNG GẦN ĐÂY</div>
+      ${activityItems.length ? activityItems.map(a=>`
+        <div class="pp-activity-row">
+          <span class="pp-activity-date">${a.dateStr}</span>
+          <span class="pp-activity-label">${escapeHtml(a.label)}</span>
+          ${a.amount!=null ? `<span class="pp-activity-amount">${fmtVnd(a.amount)}</span>` : ''}
+          <span class="muted" style="font-size:.78rem; margin-left:8px;">${a.status||''}</span>
+        </div>`).join('') : '<p class="muted" style="font-size:.85rem; margin:0;">Chưa có hoạt động nào.</p>'}
     </div>
+
+    <div id="playerTagsBox" style="margin-top:10px;">${renderPlayerTagsHtml(p)}</div>
+
     <div class="player-detail-subtabs">
       <button class="tab-pill ${subtab==='overview'?'active':''}" aria-pressed="${subtab==='overview'}" onclick="setPlayerDetailSubtab('overview')">TỔNG QUAN</button>
-      <button class="tab-pill ${subtab==='visits'?'active':''}" aria-pressed="${subtab==='visits'}" onclick="setPlayerDetailSubtab('visits')">LƯỢT CHƠI</button>
       <button class="tab-pill ${subtab==='history'?'active':''}" aria-pressed="${subtab==='history'}" onclick="setPlayerDetailSubtab('history')">LỊCH SỬ CHƠI</button>
-      <button class="tab-pill ${subtab==='finance'?'active':''}" aria-pressed="${subtab==='finance'}" onclick="setPlayerDetailSubtab('finance')">TÀI CHÍNH</button>
+      <button class="tab-pill ${subtab==='finance'?'active':''}" aria-pressed="${subtab==='finance'}" onclick="setPlayerDetailSubtab('finance')">THANH TOÁN</button>
       <button class="tab-pill ${subtab==='credits'?'active':''}" aria-pressed="${subtab==='credits'}" onclick="setPlayerDetailSubtab('credits')">🎫 CREDITS</button>
+      <button class="tab-pill ${subtab==='tournament'?'active':''}" aria-pressed="${subtab==='tournament'}" onclick="setPlayerDetailSubtab('tournament')">GIẢI ĐẤU</button>
     </div>
     <div id="playerDetailSubtabBody"></div>
   `;
 
   const body = document.getElementById('playerDetailSubtabBody');
-  if(subtab === 'visits') body.innerHTML = renderPlayerVisitsSubtab(p);
-  else if(subtab === 'history') body.innerHTML = renderPlayerHistorySubtab(p);
+  // §PROFILE2026/§8 — gop "LƯỢT CHƠI" (tung lan ghe san) + "LỊCH SỬ CHƠI" (tung tran) lam 1 tab
+  // duy nhat de giam so subtab (tranh "qua nhieu tab khong can thiet" — §8), van giu du lieu cu.
+  if(subtab === 'history') body.innerHTML = renderPlayerHistorySubtab(p) + '<h3 style="margin:16px 0 6px;">TỪNG LƯỢT GHÉ SÂN</h3>' + renderPlayerVisitsSubtab(p);
   else if(subtab === 'finance') body.innerHTML = renderPlayerFinanceSubtab(p);
   else if(subtab === 'credits') body.innerHTML = renderPlayerCreditsSubtab(p);
+  else if(subtab === 'tournament') body.innerHTML = renderPlayerTournamentSubtab(p);
   else body.innerHTML = renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday);
 }
 /* §48-50/§69 — PICPOC CREDITS trong Ho so nguoi choi: so du (canonical qua getAvailableCredits()),
    canh bao sap het han (<=7 ngay — §69, khong can he thong notification rieng), lich su day du qua
    creditTransactions (§49). Compact, khong gamification mau me (§89). */
+/* §PROFILE2026/§8 — subtab GIẢI ĐẤU: audit tại §PHONE2026 xac nhan tournamentEntryParticipants
+   KHONG luu playerId (chi luu ten dang chuoi tu do khi Staff nhap thu cong luc ghep cap/dang ky —
+   xem [[picpoc_project_overview]] neu ton tai), nen day la MATCH THEO TEN tot nhat co the lam, KHONG
+   phai lien ket ID chinh xac 100%. Hien thi ro dieu nay bang note nho, tranh Staff tuong nham day la
+   du lieu chinh xac tuyet doi khi 2 nguoi trung ten. */
+function renderPlayerTournamentSubtab(p){
+  const nameFold = vnFold(p.name);
+  const parts = (state.tournamentEntryParticipants||[]).filter(part=> !part.canceled && vnFold(part.name||'') === nameFold)
+    .sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+  if(!parts.length) return '<p class="muted small-note">Chưa tìm thấy lượt tham gia giải đấu nào khớp tên người chơi này.</p>';
+  const rows = parts.map(part=>{
+    const t = state.tournaments ? state.tournaments[part.catKey] : null;
+    const catLabel = (t && t.label) || part.catKey || 'Giải đấu';
+    const paidLabel = part.paid ? 'Đã đóng phí' : 'Chưa đóng phí';
+    return `<div class="player-partner-row"><span>${escapeHtml(catLabel)}</span><span class="muted" style="font-size:.82rem;">${paidLabel}</span></div>`;
+  }).join('');
+  return '<p class="muted small-note" style="margin-bottom:8px;">Khớp theo tên — có thể chưa chính xác 100% nếu trùng tên với người chơi khác.</p>' + rows;
+}
 function renderPlayerCreditsSubtab(p){
   if(!isCreditSystemEnabled()) return '<p class="muted">Picpoc Credits hiện đang tắt trong Cài đặt.</p>';
   const balance = getAvailableCredits(p.id);
@@ -34902,14 +35919,20 @@ function openEditPlayerModal(playerId){
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2>✏️ Sửa hồ sơ — ${p.name}</h2>
-    <label>Tên / Biệt danh</label>
+    <label>Họ tên</label>
     <input type="text" id="editPlayerNameInput" value="${p.name.replace(/"/g,'&quot;')}">
+    <label>Nickname <span class="muted" style="font-weight:400;">(không bắt buộc — TV sẽ gọi tên này nếu có)</span></label>
+    <input type="text" id="editPlayerNicknameInput" placeholder="VD: Trí Ruồi" value="${(p.nickname||'').replace(/"/g,'&quot;')}">
+    <label>Số điện thoại <span class="muted" style="font-weight:400;">(không bắt buộc)</span></label>
+    <input type="text" id="editPlayerPhoneInput" placeholder="0932 565 545" value="${(p.phone||'').replace(/"/g,'&quot;')}" onblur="autoFormatPhoneInput('editPlayerPhoneInput')">
     <label>Trình độ</label>
     <div class="level-pick" id="editPlayerLevelPresets">
       ${PLAYER_EDIT_LEVEL_PRESETS.map(lv=>`<button type="button" class="${lv===p.level?'active':''}" aria-pressed="${lv===p.level}" onclick="pickEditPlayerLevel(${lv})">${lv.toFixed(2)}</button>`).join('')}
     </div>
     <label>Hoặc nhập tùy chỉnh</label>
     <input type="number" id="editPlayerLevelInput" step="0.25" min="1" max="8" value="${p.level}">
+    <label>Ghi chú nội bộ <span class="muted" style="font-weight:400;">(chỉ Staff/Admin, không hiện TV)</span></label>
+    <textarea id="editPlayerNoteInput" rows="2" placeholder="VD: Thường đi sau 17h, hay đánh cùng Hùng...">${p.note||''}</textarea>
     <div style="display:flex; gap:8px; margin-top:14px;">
       <button onclick="savePlayerEdit('${p.id}')">💾 LƯU</button>
       <button class="secondary" onclick="closeModal()">Hủy</button>
@@ -34933,10 +35956,46 @@ function savePlayerEdit(playerId){
   if(!newName){ showToast('Tên không được để trống'); return; }
   if(isNaN(newLevel) || newLevel <= 0){ showToast('Trình độ không hợp lệ'); return; }
 
+  // §PHONE2026/§11 — sua SDT trong ho so: chuan hoa + chan trung voi Player KHAC (loai tru chinh no)
+  const phoneInputEl = document.getElementById('editPlayerPhoneInput');
+  if(phoneInputEl){
+    const phoneRawVal = phoneInputEl.value;
+    const phoneResult = normalizePhone(phoneRawVal);
+    if(phoneRawVal.trim() && !phoneResult.valid){ showToast('Số điện thoại không hợp lệ — cần đúng 10 số, bắt đầu bằng 0'); return; }
+    if(phoneResult.phoneDigits){
+      const dupPhonePlayer = findPlayerByPhoneDigits(phoneResult.phoneDigits, p.id);
+      if(dupPhonePlayer && !confirm('Số điện thoại này đã thuộc về hồ sơ "' + dupPhonePlayer.name + '". Vẫn lưu số này cho "' + p.name + '"?')) return;
+    }
+    if(phoneResult.phone !== (p.phone||'') || phoneResult.phoneDigits !== (p.phoneDigits||'')){
+      p.phone = phoneResult.phone;
+      p.phoneDigits = phoneResult.phoneDigits;
+      if(typeof markEntityDirty === 'function') markEntityDirty('players', p.id);
+    }
+  }
+
   /* §PLAYER-12 — doi ten CHI cap nhat player.name hien tai, KHONG rewrite snapshot ten trong
      history cu (team1/team2/team1Players/team2Players giu nguyen nhu luc tran do dien ra —
      day la snapshot lich su, khong phai reference song). */
   if(newName !== p.name) p.name = newName;
+
+  // §PROFILE2026/§23 — nickname: uu tien de TV announcer va header ho so goi ten ngan gon than
+  // thien hon thay vi ho ten day du; rong = xoa nickname (quay ve dung full name o moi noi).
+  const nicknameEl = document.getElementById('editPlayerNicknameInput');
+  if(nicknameEl){
+    const newNickname = nicknameEl.value.trim();
+    if(newNickname !== (p.nickname||'')){
+      p.nickname = newNickname;
+      if(typeof markEntityDirty === 'function') markEntityDirty('players', p.id);
+    }
+  }
+  const noteEl = document.getElementById('editPlayerNoteInput');
+  if(noteEl){
+    const newNote = noteEl.value;
+    if(newNote !== (p.note||'')){
+      p.note = newNote;
+      if(typeof markEntityDirty === 'function') markEntityDirty('players', p.id);
+    }
+  }
 
   /* §PLAYER-32 — ghi audit khi doi level, chi khi thuc su thay doi gia tri. */
   if(newLevel !== p.level){
@@ -35065,6 +36124,16 @@ function renderAll(){
   // applyRoleVisibility()) — hanh vi giu NGUYEN 100%, chi gom logic ve 1 cho de tab-switch handler
   // (§TABSWITCH-HARDEN2026) cung dung lai duoc, khong copy-paste dieu kien nay lan 2.
   if(typeof isAuthSessionLostGuard === 'function' && isAuthSessionLostGuard()) return;
+  // §TVANNOUNCE2026/§15/§44 — tab/cua so duoc mo qua openTvInNewWindow() (URL ?tv=1) tu dong vao
+  // luon TV mode NGAY KHI app render lan dau (ca 2 duong Production Auth lan Legacy deu di qua
+  // renderAll() dau tien nay) — Staff KHONG can bam lai nut "Chế độ TV" thu cong o tab moi. Guard
+  // 1-LAN (__tvAutoParamHandled) vi renderAll() duoc goi lai rat nhieu lan trong 1 phien.
+  if(!__tvAutoParamHandled){
+    __tvAutoParamHandled = true;
+    try{
+      if(new URLSearchParams(location.search).get('tv') === '1' && !localUi.tvMode) toggleTvMode();
+    }catch(e){ /* URLSearchParams khong ho tro (trinh duyet rat cu) — bo qua, khong crash boot */ }
+  }
   renderLiveTab();
   renderTournamentTab();
   renderLevelPickRow();
@@ -35087,6 +36156,8 @@ const ENTITY_RENDER_MAP = {
   playerVisits: ['renderPlayersTab'],
   courts: ['renderLiveTab'],
   readyGroups: ['renderLiveTab'],
+  tvAnnouncements: ['onTvAnnouncementsChangedFromRemote'], // §TVANNOUNCE2026 — TV (co the o tab/thiet bi khac) phai nhan announcement MOI ngay, khong doi F5
+  displayAudioLeader: ['onDisplayAudioLeaderChangedFromRemote'], // §TVANNOUNCE2026/§65-67
   socialRequestedFours: ['renderLiveTab'], // §SOCIAL4-35
   socialGroups: ['renderLiveTab', 'renderPresenceTab'], // §SOCIAL4-35 — Presence tab cung hien tag nhom
   history: ['renderLiveTab'],
