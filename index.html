@@ -2,6 +2,25 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.8 (2026-09-14) — §DATAHEALTH-FIX-WRITEOFF-DEBTBADGE — Admin gửi ảnh chụp: sau khi bấm "Xoá nợ
+  (dữ liệu test)" cho "Trang (Hùng Trang)" ở modal "Phiên hôm qua chưa đóng" (đúng theo hướng dẫn — bill
+  đó là dữ liệu test thật), thẻ của Trang ở tab ĐANG Ở SÂN lại hiện badge "NỢ CŨ 60K" dù Bill hiện tại
+  của Trang chỉ có 30.000đ — 30.000đ còn lại là "nợ ma" từ đúng bill VỪA được Xoá nợ.
+  NGUYÊN NHÂN GỐC: `writeOffTestBill()` đóng bill sang `status='paid'` CÓ CHỦ ĐÍCH mà KHÔNG tạo payment/
+  allocation nào (đúng thiết kế — tránh ghi nhầm doanh thu cho dữ liệu test, xem giải thích đầy đủ cạnh
+  chính hàm đó). Nhưng `getBillOutstanding(bill) = Generated − Collected` không quan tâm tới
+  `bill.status` — nên 1 bill 'paid' kiểu này vẫn có Outstanding > 0 MÃI MÃI (Collected=0 vì không có
+  payment nào, Generated giữ nguyên số tiền cũ). `getPlayerOutstanding()`/`getPlayerOutstandingBills()`
+  (nguồn tính badge "NỢ") trước đây CHỈ loại trừ bill `status==='void'`/`'cancelled'`, nên vô tình vẫn
+  cộng dồn Outstanding "ma" này vào tổng nợ hiển thị — với MỌI bill PAID THẬT SỰ thì Outstanding vốn đã
+  là 0 sẵn (không ai từng phát hiện được kẽ hở này), chỉ lộ ra đúng ở trường hợp đặc biệt: bill 'paid'
+  MÀ KHÔNG qua thu tiền thật (Xoá nợ test). Sửa: loại trừ THÊM `status==='paid'` khỏi cả 2 hàm tính nợ —
+  đúng đúng ý nghĩa sẵn có của `bill.status` trong toàn bộ codebase ("chỉ là cờ còn phải thu tiền được
+  hay không") — 1 bill đã 'paid' (bất kể lý do: thu đủ tiền thật, hay Admin chủ động Xoá nợ test) đều
+  KHÔNG còn được tính là "còn nợ" nữa. Không đổi kết quả cho bill 'paid' thật sự nào (Outstanding của
+  chúng vốn đã là 0), không đụng gì đến cách tính Outstanding của bill đang 'open' (vẫn đúng nguyên như
+  cũ cho thu-một-phần/split-payment).
+
   v1.41.7 (2026-09-14) — §DATAHEALTH-FIX-WRITEOFF-FALSEPOSITIVE + §DATAHEALTH-FIX-SOCIALPASS-RECONCILE
   — Admin tiếp tục gửi ảnh chụp "Kiểm tra dữ liệu" sau khi dùng "Xoá nợ (dữ liệu test)" cho vài khách ở
   modal "Phiên hôm qua chưa đóng". 2 việc:
@@ -7441,7 +7460,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.7'; // §DATAHEALTH-FIX-WRITEOFF-FALSEPOSITIVE/SOCIALPASS-RECONCILE — Bo bao loi nham cho bill Xoa-no-test, cho SUA AN TOAN 1-click loi lech Goi Social — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.8'; // §DATAHEALTH-FIX-WRITEOFF-DEBTBADGE — Sua badge "NỢ CŨ" cong nham no ao tu bill da Xoa-no-test — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13409,15 +13428,32 @@ function recalculateBillFinancialStatus(bill){
 }
 
 /* Tong con no cua 1 khach = SUM Outstanding cac bill con hieu luc cua ho — LUON
-   tinh lai (§41 CAM 2 SOURCE OF TRUTH), khong bao gio luu field player.debt rieng. */
+   tinh lai (§41 CAM 2 SOURCE OF TRUTH), khong bao gio luu field player.debt rieng.
+   §DATAHEALTH-FIX-WRITEOFF-DEBTBADGE — Admin phan anh: sau khi bam "Xoá nợ (dữ liệu test)" cho
+   "Trang (Hùng Trang)" (dung y da huong dan — bill do la du lieu test that), the cua Trang lai hien
+   badge "NỢ CŨ 60K" (30k that su dang no hom nay + 30k "ma" tu bill DA XOA NO). NGUYEN NHAN GOC:
+   writeOffTestBill() dong bill sang status='paid' CO CHU DICH ma KHONG tao payment/allocation nao
+   (dung y thiet ke — khong ghi nham doanh thu, xem giai thich day du canh chinh ham do) — nhung
+   getBillOutstanding(bill) = Generated - Collected KHONG QUAN TAM toi bill.status, nen 1 bill 'paid'
+   kieu nay van co Outstanding > 0 mai mai (Collected=0 vi khong co payment, Generated giu nguyen).
+   getPlayerOutstanding()/getPlayerOutstandingBills() truoc day CHI loai tru status 'void'/'cancelled',
+   VO TINH van cong don Outstanding "ma" nay vao tong no cua khach — dung LA nguyen nhan bug nay (voi
+   MOI bill PAID THAT SU thi Outstanding von da la 0 san, nen truoc gio khong ai phat hien duoc ke ho
+   nay — chi lo ra o dung 1 truong hop dac biet: bill 'paid' MA KHONG qua thu tien that). FIX: loai
+   tru THEM status==='paid' khoi ca 2 ham nay — dung dung y nghia sẵn co cua bill.status trong toan bo
+   codebase ("chi la co 'con thao tac thu tien duoc hay khong'", xem comment recalculateBillFinancialStatus())
+   — 1 bill da 'paid' (bat ke ly do gi: thu du that, hay Admin chu dong dong qua Xoá nợ test) deu
+   KHONG con duoc tinh la "con no" nua. KHONG anh huong bill 'open'/'cancelled' nao khac, va KHONG
+   thay doi ket qua cho MOI bill 'paid' THAT SU (Outstanding cua chung von da la 0, loai tru hay khong
+   cung ra cung 1 ket qua). */
 function getPlayerOutstanding(playerId){
   return state.bills
-    .filter(b=> b.playerId===playerId && b.status!=='void' && b.status!=='cancelled')
+    .filter(b=> b.playerId===playerId && b.status!=='void' && b.status!=='cancelled' && b.status!=='paid')
     .reduce((sum,b)=> sum + getBillOutstanding(b), 0);
 }
 function getPlayerOutstandingBills(playerId){
   return state.bills
-    .filter(b=> b.playerId===playerId && b.status!=='void' && b.status!=='cancelled' && getBillOutstanding(b) > 0)
+    .filter(b=> b.playerId===playerId && b.status!=='void' && b.status!=='cancelled' && b.status!=='paid' && getBillOutstanding(b) > 0)
     .sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)); // §46 — cu nhat truoc, tie-break theo id on dinh
 }
 /* §RESTRUCTURE2026 muc 23 — badge NHO "NỢ Xđ" dung chung cho ĐANG Ở SÂN/NGƯỜI CHƠI/CHECK-IN search,
