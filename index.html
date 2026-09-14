@@ -2,6 +2,20 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.13 (2026-09-14) — §FIX-TVANN-STUCKPLAYING-REPAIR — Admin xem tiếp mục "Tournament" trong "Kiểm
+  tra dữ liệu", thấy cảnh báo TV_ANNOUNCEMENT_STUCK_PLAYING ("Mời cặp Phú TP Bank, Trí Phan và cặp Bu Na
+  ... đang kẹt ở PLAYING quá 5 phút") đang bị đánh dấu "Không thể tự sửa an toàn — cần Admin kiểm tra".
+  Đọc lại code hàng đợi TTS (`pickNextTvAnnouncementToPlay()`) xác nhận: mô tả "ảnh hưởng" cũ trong issue
+  (nói rằng hàng đợi TV có thể bị kẹt lại) không chính xác — hàm chọn announcement kế tiếp để đọc CHỈ xét
+  các bản ghi đang ở PENDING, hoàn toàn bỏ qua bản ghi PLAYING, nên 1 bản ghi kẹt ở PLAYING KHÔNG chặn TV
+  đọc tiếp các announcement mới. Nguyên nhân thực sự: tab TV bị tắt/crash giữa lúc đang đọc, khiến đoạn
+  `finish()` trong `speakTvAnnouncement()` (vốn LUÔN set status='PLAYED' dù đọc thành công hay lỗi — xem
+  đúng dòng code cũ đã ghi chú "dù lỗi cũng không giữ PLAYING vĩnh viễn") không kịp chạy. Vì trạng thái
+  cuối đúng thiết kế trong MỌI trường hợp (thành công/lỗi) đều là 'PLAYED' như nhau, nên an toàn để tự
+  động sửa: thêm `repairTvAnnouncementStuckPlaying()` (đăng ký vào `DATA_INTEGRITY_REPAIR_FNS`) chuyển
+  thẳng về đúng trạng thái đó — không đụng dữ liệu tiền/bill — và nâng cấp issue lên `repairable:true,
+  repairConfidence:'DETERMINISTIC'`, màn "Kiểm tra dữ liệu" giờ hiện nút "SỬA AN TOÀN" cho lỗi này.
+
   v1.41.12 (2026-09-14) — §FIX-VOIDED-ALLOC-AMOUNT-MISMATCH — Sau khi Admin void thành công khoản
   37.000đ test của bill "Trí Phan" (v1.41.10/v1.41.11), chạy lại "Kiểm tra dữ liệu" xác nhận lỗi ERROR
   COLLECTED_EXCEEDS_GENERATED đã hết (LỖI: 0) — nhưng lộ ra 1 CẢNH BÁO (WARNING) khác đúng từ payment vừa
@@ -7532,7 +7546,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.12'; // §FIX-VOIDED-ALLOC-AMOUNT-MISMATCH — Sua canh bao WARNING sai cho allocation DA VOIDED (bill Trí Phan test) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.13'; // §FIX-TVANN-STUCKPLAYING-REPAIR — Them nut SUA AN TOAN cho TV Announcement ket o PLAYING qua lau — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13260,7 +13274,23 @@ function repairActiveVisitButEndedStatus(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus };
+/* §FIX-TVANN-STUCKPLAYING-REPAIR — repair cho TV_ANNOUNCEMENT_STUCK_PLAYING (xem giai thich day du tai
+   noi tao issue). An toan vi dung DUNG terminal state ('PLAYED') ma finish() trong speakTvAnnouncement()
+   se tu gan neu TV khong bi crash — khong dung/xoa du lieu tien/bill, chi don trang thai TTS. */
+function repairTvAnnouncementStuckPlaying(args){
+  const a = (state.tvAnnouncements||[]).find(x=>x.id===args.announcementId);
+  if(!a) return { ok:false, reason:'Không tìm thấy announcement để sửa (có thể đã bị xoá).' };
+  if(a.status !== 'PLAYING') return { ok:false, reason:'Announcement không còn ở trạng thái PLAYING — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { status: a.status, playedAt: a.playedAt };
+  a.status = 'PLAYED';
+  a.playedAt = Date.now();
+  logDataIntegrityRepair('TV_ANNOUNCEMENT_STUCK_PLAYING', 'tvAnnouncement', a.id, before, { status:a.status, playedAt:a.playedAt },
+    'Announcement TV "' + a.textSnapshot + '" kẹt ở PLAYING quá 5 phút (TV bị tắt/crash giữa lúc đọc) — chuyển về PLAYED, đúng trạng thái cuối mà TV lẽ ra tự set nếu không bị gián đoạn.');
+  markEntityDirty('tvAnnouncements', a.id);
+  saveState();
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -31597,10 +31627,19 @@ function runDataIntegrityCheck(){
   const nowForTvAnn = Date.now();
   (state.tvAnnouncements||[]).forEach(a=>{
     if(a.status === 'PLAYING' && (nowForTvAnn - (a.createdAt||0)) > 5*60*1000){
+      // §FIX-TVANN-STUCKPLAYING-REPAIR — Admin thay canh bao nay trong "Kiểm tra dữ liệu", tra code xac
+      // nhan: pickNextTvAnnouncementToPlay() (dung de chon announcement KE TIEP phat) CHI xet candidate
+      // co status==='PENDING' — 1 ban ghi ket o 'PLAYING' KHONG he chan cac TV/announcement khac hoat
+      // dong binh thuong (khac voi mo ta cu trong thong bao goc). Truong hop nay xay ra khi tab TV bi
+      // dong/crash GIUA LUC dang doc, khien doan finish() trong speakTvAnnouncement() (luon set status=
+      // 'PLAYED' du thanh cong hay loi — xem §55 dong ke tren) khong kip chay. Vi TERMINAL STATE dung
+      // theo thiet ke o moi truong hop (thanh cong/loi) DEU la 'PLAYED' nhu nhau, nen sua an toan y het:
+      // gan lai status='PLAYED', playedAt=now cho ban ghi ket qua — dung UNG dung logic finish() se lam
+      // neu TV khong bi crash, khong co rui ro nao (khong dung/xoa du lieu tien/bill).
       addIssue('Tournament','WARNING', 'Announcement TV "' + a.textSnapshot + '" (id=' + a.id + ') đang kẹt ở trạng thái PLAYING quá 5 phút — có thể TV bị lỗi/đứng giữa lúc đọc.', {
         code:'TV_ANNOUNCEMENT_STUCK_PLAYING', entityType:'tvAnnouncement', entityId:a.id, entityLabel:a.textSnapshot,
-        impact:'Hàng đợi TTS của TV có thể bị kẹt lại (không phát tiếp announcement mới) cho tới khi TV được tải lại (F5).',
-        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+        impact:'Không chặn TV khác đọc tiếp (hàng đợi chỉ chọn announcement PENDING) — chỉ là 1 bản ghi cũ chưa được đóng đúng trạng thái do tab TV bị tắt/crash giữa lúc đọc.',
+        repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairTvAnnouncementStuckPlaying', repairArgs:{ announcementId:a.id }, isLegacy:false
       });
     } else if(a.status === 'PENDING' && (nowForTvAnn - (a.createdAt||0)) > TV_ANN_STALE_MS_FOR_HEALTH){
       addIssue('Tournament','INFO', 'Announcement TV "' + a.textSnapshot + '" (id=' + a.id + ') đã PENDING quá lâu (>15 phút) mà chưa có TV nào xử lý — thường do không có màn hình TV nào đang mở lúc đó, không phải lỗi dữ liệu.', {
