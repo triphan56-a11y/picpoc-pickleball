@@ -2,6 +2,31 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.7 (2026-09-14) — §DATAHEALTH-FIX-WRITEOFF-FALSEPOSITIVE + §DATAHEALTH-FIX-SOCIALPASS-RECONCILE
+  — Admin tiếp tục gửi ảnh chụp "Kiểm tra dữ liệu" sau khi dùng "Xoá nợ (dữ liệu test)" cho vài khách ở
+  modal "Phiên hôm qua chưa đóng". 2 việc:
+  1) BÁO LỖI NHẦM cho bill đã Xoá nợ test: ngay sau khi Admin bấm "Xoá nợ (dữ liệu test)" cho "Lê Dung"/
+  "Trang (Hùng Trang)", màn Kiểm tra dữ liệu báo ERROR mới "Bill ở trạng thái PAID nhưng vẫn còn
+  Outstanding 30.000đ" (mã PAID_BILL_HAS_OUTSTANDING) — ĐÚNG THEO THIẾT KẾ của writeOffTestBill(): hàm
+  này CỐ Ý đóng bill sang 'paid' mà KHÔNG tạo payment thật (tránh ghi nhầm doanh thu), nên Outstanding
+  còn nguyên là chủ đích, không phải lỗi dữ liệu — check cũ không phân biệt được nên báo nhầm thành lỗi
+  nghiêm trọng. Sửa: loại trừ riêng các bill có `paymentMethod==='WRITE_OFF_TEST'` khỏi check ERROR này,
+  chuyển hiển thị thành mục THÔNG TIN (chỉ để tra cứu, không đòi xử lý gấp) — các bill PAID+Outstanding>0
+  KHÔNG phải do Xoá nợ test (dấu hiệu lỗi/xung đột thật) vẫn giữ nguyên cảnh báo ERROR như cũ.
+  2) 2 lỗi SOCIAL_PASS_RECONCILE_MISMATCH mới xuất hiện ("A Danh (Hoàng Gia)" và "A San", cùng 1 triệu
+  chứng: tổng lệch dư đúng 1 lượt) — đối chiếu lại đúng là cùng dạng bug đã điều tra và vá ở
+  §HOTFIX-DOUBLEDECREMENT (v1.38.29): trước đây `consumeSocialPassForVisit()` có 1 dòng ghi Firebase
+  "mù" chạy song song với 1 Firebase transaction cùng trừ trên `remainingSessions`, gây trừ 2 lần cho
+  đúng 1 lần dùng thật — bug gốc đã được vá từ bản đó, nhưng dữ liệu các gói bị lệch TỪ TRƯỚC khi vá thì
+  vẫn còn nguyên (lúc đó hướng dẫn Admin tự chạy lệnh console để sửa tay). Nay thêm hàm
+  `repairSocialPassReconcileMismatch()`: trong 3 thành phần của công thức đối chiếu, `usedBeforeImport`
+  là hằng số Admin tự nhập 1 lần (đáng tin cậy), `appUsed` là SỐ ĐẾM TRỰC TIẾP từ lịch sử
+  `socialPassUsages` (nguồn thật, không tự sai), CHỈ CÓ `remainingSessions` là bộ đếm dễ bị lệch do đúng
+  loại bug đã xác định — nên tính lại `remainingSessions = tổng lượt − đã dùng trước hệ thống − đã dùng
+  trên app` là phép sửa 1 chiều, an toàn, cùng nguyên tắc đã dùng cho lỗi FULLY_COLLECTED_BUT_OPEN ở bản
+  trước. Nâng issue này lên `repairable:true, repairConfidence:'DETERMINISTIC'` — màn Kiểm tra dữ liệu
+  giờ hiện nút "SỬA AN TOÀN" cho cả 2 gói này, không cần Admin mở console/tính tay nữa.
+
   v1.41.6 (2026-09-14) — §DATAHEALTH-FIX-FULLYCOLLECTED — Admin gửi ảnh chụp màn "Kiểm tra dữ liệu":
   lỗi "Bill của Phú TP Bank đã thu đủ (45.000đ/45.000đ) nhưng trạng thái vẫn là OPEN" — kiểm tra lại
   ngay trong Bill modal xác nhận đúng là đã thu đủ thật (lịch sử có 1 lần "Thu Chuyển khoản 45.000đ",
@@ -7416,7 +7441,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.6'; // §DATAHEALTH-FIX-FULLYCOLLECTED — Cho phep SUA AN TOAN 1-click cho loi bill da thu du nhung con OPEN — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.7'; // §DATAHEALTH-FIX-WRITEOFF-FALSEPOSITIVE/SOCIALPASS-RECONCILE — Bo bao loi nham cho bill Xoa-no-test, cho SUA AN TOAN 1-click loi lech Goi Social — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13092,7 +13117,38 @@ function repairFullyCollectedButOpenBill(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill };
+/* §DATAHEALTH-FIX-SOCIALPASS-RECONCILE — sua issue SOCIAL_PASS_RECONCILE_MISMATCH (usedBeforeImport +
+   appUsed + remainingSessions != totalSessions). Trong 3 thanh phan: usedBeforeImport la hang so Admin
+   tu nhap 1 lan luc import (dang tin cay, khong tu doi), appUsed la SO DEM TRUC TIEP tu
+   state.socialPassUsages (nguon that — moi ban ghi usage tuong ung 1 hanh dong that su tren app, khong
+   the tu "sai" tru khi ban than usage bi xoa/sua tay), CHI CO remainingSessions la 1 bo dem duoc CAC
+   HAM KHAC NHAU tang/giam dan (consumeSocialPassForVisit/reverseSocialPassUsage/dieu chinh so du dau
+   ky...) — day chinh la truong hop de bi lech nhat khi co bug double-write hoac xung dot da thiet bi
+   (da tung xac nhan dung nguyen nhan nay cho gói "Ky"/"A Danh" o §HOTFIX-DOUBLEDECREMENT, v1.38.29).
+   FIX an toan: tinh LAI remainingSessions = totalSessions - usedBeforeImport - appUsed (ket qua 1
+   chieu, xac dinh truoc, khong co truong hop "sai" nao khi appUsed/usedBeforeImport/totalSessions dung)
+   — dong bo lai ca pkg.usedSessions (bo dem redundant, chi dung hien thi) = appUsed cho nhat quan. */
+function repairSocialPassReconcileMismatch(args){
+  const pkg = (state.socialPassPackages||[]).find(p=>p.id===args.packageId);
+  if(!pkg) return { ok:false, reason:'Không tìm thấy gói để sửa (có thể đã bị xoá).' };
+  const usedBeforeImport = pkg.usedBeforeImport || 0;
+  const appUsed = getSocialPassAppUsedSessions(pkg.id);
+  const total = pkg.totalSessions || 0;
+  const sum = usedBeforeImport + appUsed + (pkg.remainingSessions||0);
+  if(sum === total) return { ok:false, reason:'Gói này đã khớp — dữ liệu đã thay đổi, không cần sửa.' };
+  const correctRemaining = Math.max(0, Math.min(total, total - usedBeforeImport - appUsed));
+  const before = { remainingSessions: pkg.remainingSessions, usedSessions: pkg.usedSessions, status: pkg.status };
+  pkg.remainingSessions = correctRemaining;
+  pkg.usedSessions = appUsed;
+  pkg.status = correctRemaining > 0 ? 'ACTIVE' : 'USED_UP';
+  logDataIntegrityRepair('SOCIAL_PASS_RECONCILE_MISMATCH', 'socialPassPackage', pkg.id, before,
+    { remainingSessions: pkg.remainingSessions, usedSessions: pkg.usedSessions, status: pkg.status },
+    'Gói Social của "' + playerName(pkg.playerId) + '" lệch invariant reconcile — tính lại remainingSessions = tổng(' + total + ') − đã dùng trước hệ thống(' + usedBeforeImport + ') − đã dùng trên app(' + appUsed + ', đếm trực tiếp từ lịch sử usage) = ' + correctRemaining + '.');
+  markEntityDirty('socialPassPackages', pkg.id);
+  saveState();
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -31085,16 +31141,34 @@ function runDataIntegrityCheck(){
 
   // ===== SPLIT PAYMENT / CONG NO (§PAYDEBT2026 — §43/44 cua spec) =====
   // 5c) Bill PAID nhung Outstanding vAn > 0 — mau thuan truc tiep voi dinh nghia PAID.
+  // §DATAHEALTH-FIX-WRITEOFF-FALSEPOSITIVE — Admin gui anh chup: bill "Lê Dung"/"Trang (Hùng Trang)"
+  // bi bao ERROR "PAID nhưng vẫn còn Outstanding 30.000đ" NGAY SAU KHI Admin dung dung nut "🗑 Xoá nợ
+  // (dữ liệu test)" (writeOffTestBill()) cho 2 nguoi nay — dung y thiet ke CO CHU DICH cua ham do: dong
+  // bill sang 'paid' de het canh bao/het xuat hien o danh sach no, NHUNG KHONG tao payment/allocation
+  // that (dung ghi nham thanh doanh thu that — xem giai thich day du canh writeOffTestBill()), nen
+  // Outstanding VAN con nguyen la dieu HOAN TOAN CHU DICH, khong phai loi du lieu. Truoc day check nay
+  // khong biet phan biet 2 truong hop, bao nham ca bill Xoa-no-test lan bill THAT SU bi lech (vd do
+  // xung dot da thiet bi — truong hop nay VAN can giu canh bao ERROR). FIX: loai tru rieng
+  // paymentMethod==='WRITE_OFF_TEST' (da duoc Admin xac nhan + ghi audit log ro rang luc xoa no, gio
+  // chi hien lai duoi dang THÔNG TIN de van co the tra cuu neu can, khong con la loi nghiem trong doi
+  // xu ly ngay nua).
   state.bills.forEach(b=>{
     if(b.status !== 'paid') return;
     const outstanding = getBillOutstanding(b);
-    if(outstanding > 0){
-      addIssue('Payment','ERROR','Bill của "' + b.playerName + '" ở trạng thái PAID nhưng vẫn còn Outstanding ' + fmtVnd(outstanding) + '.', {
-        code:'PAID_BILL_HAS_OUTSTANDING', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
-        impact:'Vi phạm nguyên tắc PAID phải có Outstanding=0 — Staff có thể tưởng đã thu đủ trong khi thực tế chưa.',
+    if(outstanding <= 0) return;
+    if(b.paymentMethod === 'WRITE_OFF_TEST'){
+      addIssue('Payment','INFO','Bill của "' + b.playerName + '" đã đóng qua "Xoá nợ (dữ liệu test)" — còn ' + fmtVnd(outstanding) + ' KHÔNG được thu thật (chủ đích, không phải lỗi dữ liệu).', {
+        code:'WRITE_OFF_TEST_BILL_INFO', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
+        impact:'Chỉ để tra cứu — bill này đã được Admin chủ động xoá nợ, không tính vào doanh thu, không cần xử lý gì thêm.',
         repairable:false, repairConfidence:'AMBIGUOUS'
       });
+      return;
     }
+    addIssue('Payment','ERROR','Bill của "' + b.playerName + '" ở trạng thái PAID nhưng vẫn còn Outstanding ' + fmtVnd(outstanding) + '.', {
+      code:'PAID_BILL_HAS_OUTSTANDING', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
+      impact:'Vi phạm nguyên tắc PAID phải có Outstanding=0 — Staff có thể tưởng đã thu đủ trong khi thực tế chưa.',
+      repairable:false, repairConfidence:'AMBIGUOUS'
+    });
   });
   // 5d) Bill co ghi nhan CONG NO (debtCreatedAt) nhung KHONG co playerId/player ho so hop le —
   // §14/§37 khong cho phep no khach vang lai/anonymous.
@@ -31574,7 +31648,20 @@ function runDataIntegrityCheck(){
           addIssue('SocialPass','ERROR','Gói Social "' + pkg.id + '" của "' + pname + '" KHÔNG reconcile được: đã dùng trước hệ thống (' + usedBeforeImport + ') + đã dùng trên app (' + appUsed + ') + còn lại (' + (pkg.remainingSessions||0) + ') = ' + sum + ' ≠ tổng lượt (' + (pkg.totalSessions||0) + ').', {
             code:'SOCIAL_PASS_RECONCILE_MISMATCH', entityType:'socialPassPackage', entityId:pkg.id, entityLabel:pname,
             impact:'Số dư lượt của gói không khớp — có thể do sửa dữ liệu tay hoặc bug — cần Admin đối chiếu lịch sử usage/import.',
-            repairable:false, repairConfidence:'AMBIGUOUS'
+            // §DATAHEALTH-FIX-SOCIALPASS-RECONCILE — Admin gui tiep 2 truong hop moi (A Danh + A San,
+            // ca 2 cung mot trieu chung: sum = total+1) — dung y het bug §HOTFIX-DOUBLEDECREMENT da
+            // tung dieu tra rieng cho "A Danh" (xem CHANGELOG v1.38.29): consumeSocialPassForVisit()
+            // tung co 1 dong ghi Firebase "mu" (markEntityDirty ngay sau khi tru cuc bo) chay SONG SONG
+            // voi 1 Firebase transaction cung tru tren CHINH remainingSessions — gay tru 2 LAN cho DUNG
+            // 1 lan dung that. Bug goc do DA duoc va o v1.38.29 (xoa dong ghi "mu" do), nhung du lieu cac
+            // goi da bi lech TU TRUOC ban va van con nguyen (chua duoc Admin chay lenh console de sua
+            // nhu huong dan luc do) — nay thay vi bat Admin mo console, them 1 REPAIR AN TOAN: trong 3
+            // thanh phan cua invariant, usedBeforeImport la hang so Admin tu nhap 1 lan (dang tin cay),
+            // appUsed la SO DEM TRUC TIEP tu socialPassUsages (nguon that, khong the "tru nham"), CHI CO
+            // remainingSessions la bo dem co the bi tru sai (dung nguyen nhan da xac dinh o v1.38.29) —
+            // nen tinh LAI remainingSessions = totalSessions - usedBeforeImport - appUsed la phep sua
+            // xac dinh 1 chieu, an toan, dung nguyen tac da dung cho FULLY_COLLECTED_BUT_OPEN o tren.
+            repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairSocialPassReconcileMismatch', repairArgs:{ packageId: pkg.id }
           });
         }
       }
