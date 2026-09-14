@@ -2,6 +2,28 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.9 (2026-09-14) — §FIX-DEBT-VISITSTUCK — Admin báo: bấm "CHO NỢ" cho "A Lin (Khối Bia)" (cả hôm
+  qua lẫn hôm nay) đều báo toast thành công, Console không lỗi, nhưng banner "Phiên hôm qua chưa đóng"
+  vẫn không hết — dòng "Visit chưa đóng" của A Lin/Béo không biến mất dù CHO NỢ nhiều lần. Điều tra qua
+  Console (3 lệnh truy vấn state.players/playerVisits/bills lọc theo tên) cho thấy: playerId của A Lin
+  hoàn toàn nhất quán qua 3 bảng (KHÔNG phải lỗi trùng hồ sơ như nghi ngờ ban đầu) — nhưng Visit mới nhất
+  (check-in 13/9) vẫn ở trạng thái ACTIVE trong khi player.status đã là 'paid_and_left'. ROOT CAUSE thật
+  sự nằm ở `allowBillDebt()`: hàm này CHỈ gọi `completePlayerVisit()` (đóng Visit) khi biến `endsSession`
+  = true, và `endsSession` được tính từ p.status TẠI THỜI ĐIỂM BẤM — nếu p.status đã là 'paid_and_left'
+  từ TRƯỚC (do 1 bill/phiên khác của CHÍNH người này đã được xử lý xong trước đó), thì dù khách đã được
+  check-in lại (tạo 1 Visit ACTIVE mới thật sự) và bấm CHO NỢ tiếp cho bill mới, `endsSession` vẫn tính
+  ra false vì chỉ nhìn p.status chứ không nhìn Visit — khiến Visit ACTIVE thật vẫn treo mãi mãi, bấm CHO
+  NỢ bao nhiêu lần cũng vô ích (không có lỗi Console vì hàm vẫn chạy xong, chỉ là rẽ nhánh sai). Việc này
+  đúng y hệt issue Data Integrity đã có sẵn từ trước (ACTIVE_VISIT_BUT_ENDED_STATUS) nhưng trước đây chỉ
+  cảnh báo, chưa có nút tự sửa. FIX: (1) tách rời 2 việc trong `allowBillDebt()` — chuyển p.status sang
+  'paid_and_left' vẫn CHỈ khi endsSession=true (không đổi hành vi cũ), nhưng việc đóng Active Visit giờ
+  chạy MỖI LẦN CHO NỢ nếu phát hiện Visit ACTIVE thật sự đang tồn tại cho playerId đó — không còn phụ
+  thuộc p.status nữa; (2) nâng cấp issue ACTIVE_VISIT_BUT_ENDED_STATUS từ chỉ-cảnh-báo thành có nút "SỬA
+  AN TOÀN" 1-click (hàm mới `repairActiveVisitButEndedStatus()` — chỉ đóng Visit thừa, KHÔNG đụng tới
+  tiền/bill, dùng reason riêng 'DATA_REPAIR' để không vô tình kích hoạt lại các phần thưởng gắn với lý do
+  'PAID'/'DEBT') để Admin tự sửa NGAY các trường hợp đã bị kẹt sẵn (A Lin, Béo) qua "Kiểm tra dữ liệu" mà
+  không cần chờ code fix chạy lại từ đầu.
+
   v1.41.8 (2026-09-14) — §DATAHEALTH-FIX-WRITEOFF-DEBTBADGE — Admin gửi ảnh chụp: sau khi bấm "Xoá nợ
   (dữ liệu test)" cho "Trang (Hùng Trang)" ở modal "Phiên hôm qua chưa đóng" (đúng theo hướng dẫn — bill
   đó là dữ liệu test thật), thẻ của Trang ở tab ĐANG Ở SÂN lại hiện badge "NỢ CŨ 60K" dù Bill hiện tại
@@ -7460,7 +7482,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.8'; // §DATAHEALTH-FIX-WRITEOFF-DEBTBADGE — Sua badge "NỢ CŨ" cong nham no ao tu bill da Xoa-no-test — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.9'; // §FIX-DEBT-VISITSTUCK — Sua CHO NỢ bao thanh cong nhung Visit ACTIVE cu khong dong (A Lin/Béo) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13167,7 +13189,28 @@ function repairSocialPassReconcileMismatch(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch };
+/* §FIX-DEBT-VISITSTUCK — repair cho issue ACTIVE_VISIT_BUT_ENDED_STATUS (p.status da "ket thuc phien"
+   nhung Visit van ACTIVE) — day chinh la trieu chung ma Admin gap voi "A Lin"/"Béo": CHO NỢ bao thanh
+   cong nhung Visit khong dong (xem giai thich day du tai allowBillDebt()). AN TOAN de tu dong sua vi:
+   p.status DA xac nhan phien nay coi nhu "ket thuc" (checked_out/paid_and_left — khong phai dang choi
+   dang do), nen dong not Visit ACTIVE con sot lai CHI la don dep trang thai, KHONG lam mat/thay doi bat
+   ky khoan tien/bill nao (khong dung completePlayerVisit reason='DEBT'/'PAID' o day de tranh vo tinh
+   kich hoat lai reward logic gan voi 2 reason do — dung reason rieng 'DATA_REPAIR' trung tinh). */
+function repairActiveVisitButEndedStatus(args){
+  const v = state.playerVisits.find(x=>x.id===args.visitId);
+  if(!v) return { ok:false, reason:'Không tìm thấy Visit để sửa (có thể đã bị xoá).' };
+  if(v.status !== 'ACTIVE') return { ok:false, reason:'Visit không còn ACTIVE — dữ liệu đã thay đổi, không cần sửa.' };
+  const p = playerById(v.playerId);
+  if(!p || !SESSION_ENDED_STATUSES.includes(p.status)) return { ok:false, reason:'Player không còn ở trạng thái đã kết thúc phiên — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { status: v.status, checkOutAt: v.checkOutAt };
+  completePlayerVisit(v.playerId, 'DATA_REPAIR');
+  logDataIntegrityRepair('ACTIVE_VISIT_BUT_ENDED_STATUS', 'visit', v.id, before, { status: v.status, checkOutAt: v.checkOutAt },
+    'Visit "' + v.id + '" của ' + (v.playerName||v.playerId) + ' vẫn ACTIVE dù player đã ở trạng thái "' + p.status + '" (đã kết thúc phiên) — đóng lại Visit này (không đổi tiền/bill, chỉ dọn trạng thái).');
+  markEntityDirty('playerVisits', v.id);
+  saveState();
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -13649,8 +13692,25 @@ function allowBillDebt(billId){
   bill.debtCreatedBy = currentUser ? currentUser.name : 'staff';
   logOverride('debt_allowed', p.name + ' — cho nợ ' + fmtVnd(outstanding), 'bill', bill.id);
   const endsSession = p.status === 'checked_out' || p.status === 'waiting_payment' || PLAYER_ACTIVE_STATUSES.indexOf(p.status)>=0;
+  // §FIX-DEBT-VISITSTUCK — Admin phat hien "CHO NỢ" bao thanh cong (toast OK, khong loi Console) nhung
+  // Visit van ACTIVE mai, banner "Phiên hôm qua chưa đóng" khong bao gio bien mat du bam CHO NỢ nhieu
+  // lan. ROOT CAUSE: dong nay TRUOC DAY chi goi completePlayerVisit() KHI endsSession=true (tuc p.status
+  // dang la 1 trong cac trang thai "con onsite"). Nhung neu p.status DA la 'paid_and_left' TU 1 lan
+  // CHO NỢ/dong phien TRUOC DO (vi du: cung playerId nay co 1 bill cu khac da duoc xu ly xong), ma sau
+  // do khach lai duoc check-in TIEP (tao 1 Visit ACTIVE MOI) trong khi p.status VI DO NGUYEN NHAN KHAC
+  // (vd 1 thiet bi khac ghi de/loi dong bo) khong duoc cap nhat lai dung ve trang thai "dang choi" —
+  // thi endsSession se tinh RA FALSE (vi p.status van la 'paid_and_left', khong nam trong dieu kien
+  // tren), khien completePlayerVisit() KHONG BAO GIO duoc goi cho Visit ACTIVE thuc su dang treo do —
+  // dung ca khi Admin bam CHO NỢ lai bao nhieu lan cung vay (issue Data Integrity tuong ung, da co san
+  // tu truoc: ACTIVE_VISIT_BUT_ENDED_STATUS). FIX: tach rieng 2 viec — (1) chuyen p.status sang
+  // 'paid_and_left' CHI khi endsSession=true (giu nguyen logic cu, khong doi hanh vi voi cac status
+  // khac nhu 'away'), va (2) DONG BAT KY Active Visit nao dang ton tai cho playerId nay MOI LAN CHO NỢ,
+  // KHONG PHU THUOC p.status hien tai — vi 1 Visit ACTIVE that su luon can duoc dong khi bill cua chinh
+  // no da duoc ghi nhan cong no, du p.status co dang lech hay khong.
+  const hadActiveVisit = !!getActiveVisitForPlayer(bill.playerId);
   removePlayerFromOperationalQueues(bill.playerId);
-  if(endsSession){ p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now(); completePlayerVisit(bill.playerId, 'DEBT'); }
+  if(endsSession){ p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now(); }
+  if(endsSession || hadActiveVisit){ completePlayerVisit(bill.playerId, 'DEBT'); }
   saveState();
   markEntityDirty('bills', bill.id);
   markEntityDirty('players', p.id);
@@ -31484,7 +31544,11 @@ function runDataIntegrityCheck(){
     // B) Active Visit van con nhung status da la 1 trong cac trang thai "ket thuc that su"
     // (checked_out/paid_and_left — waiting_payment/away KHONG tinh, vi theo dung thiet ke Visit VAN
     // phai giu ACTIVE cho 2 trang thai do, xem §PLAYER-7/§SOCIALFIX-15).
-    if(v && SESSION_ENDED_STATUSES.includes(p.status)) addIssue('Visit','WARNING', p.name + ' đang ở trạng thái "' + p.status + '" (đã kết thúc phiên) nhưng Visit vẫn ACTIVE (ACTIVE_VISIT_BUT_ENDED_STATUS).');
+    if(v && SESSION_ENDED_STATUSES.includes(p.status)) addIssue('Visit','WARNING', p.name + ' đang ở trạng thái "' + p.status + '" (đã kết thúc phiên) nhưng Visit vẫn ACTIVE (ACTIVE_VISIT_BUT_ENDED_STATUS).', {
+      code:'ACTIVE_VISIT_BUT_ENDED_STATUS', entityType:'visit', entityId:v.id, entityLabel:p.name,
+      impact:'Visit này sẽ mãi hiện trong cảnh báo "Phiên hôm qua chưa đóng" dù đã CHO NỢ/thu tiền xong (§FIX-DEBT-VISITSTUCK) — không ảnh hưởng tiền/bill.',
+      repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairActiveVisitButEndedStatus', repairArgs:{ visitId:v.id }
+    });
     // D) activeVisitId tro toi 1 Visit khong con ton tai hoac da COMPLETED — tham chieu lech.
     if(p.activeVisitId){
       const refVisit = state.playerVisits.find(x=>x.id===p.activeVisitId);
