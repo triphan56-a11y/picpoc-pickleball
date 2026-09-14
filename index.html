@@ -2,6 +2,23 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.11 (2026-09-14) — §FIX-EMPTYBILL-HASPAYMENT — Ngay sau bản v1.41.10, Admin làm đúng theo hướng
+  dẫn (vào hồ sơ "Trí Phan" → tab LƯỢT CHƠI → bấm "XEM BILL" trên dòng 13/9/2026) nhưng modal Bill chỉ
+  hiện "Chưa phát sinh khoản nào." rồi dừng lại — không có Lịch sử thanh toán, không có nút "Hoàn tác
+  thanh toán" — nên vẫn không thể void khoản 37.000đ test dù bản v1.41.10 đã sửa đúng phần logic void.
+  NGUYÊN NHÂN: `openBillModal()` có 1 guard cũ (§FIX-CRASH-1, thêm từ trước để tránh crash khi bill bị
+  lỗi thiếu hẳn field `items`) chặn ngay từ đầu bất kỳ bill nào có `items` rỗng — guard này gộp chung 2
+  tình huống khác nhau: (a) bill lỗi thật sự thiếu field `items` (undefined) — cần chặn để tránh crash,
+  và (b) bill hợp lệ có 0 sản phẩm nhưng VẪN có payment thật gắn vào (đúng trường hợp bill test "Trí
+  Phan" — đóng qua "ĐÓNG PHIÊN hết nợ" trong khi đã có người chuyển khoản trước đó). Với case (b), guard
+  vẫn chặn y hệt case (a) và return sớm, không bao giờ chạy tới đoạn hiển thị Lịch sử thanh toán/nút Hoàn
+  tác — trong khi `billTotal()`/`billLinesHtml()` đã tự an toàn với `items` rỗng hoặc undefined từ trước
+  (không có rủi ro crash nếu bỏ qua guard cho case này). FIX: guard giờ chỉ chặn khi bill KHÔNG có items
+  VÀ CŨNG không có bất kỳ payment nào từng gắn vào (`state.payments[].allocations[].billId` khớp bill
+  này) — nếu có payment (dù items rỗng), modal render tiếp bình thường tới footer để Admin thấy và void
+  được. Sau bản này, bấm lại "XEM BILL" trên dòng 13/9/2026 của Trí Phan sẽ thấy đúng khoản 37.000đ và
+  nút "↺ Hoàn tác thanh toán" hoạt động.
+
   v1.41.10 (2026-09-14) — §FIX-VOID-PAYMENTID-FALLBACK — Điều tra tiếp lỗi Data Integrity
   COLLECTED_EXCEEDS_GENERATED (bill "Trí Phan" Collected 37.000đ / Generated 0đ) qua Console (Admin xác
   nhận: đây là bill TEST của chính Admin, không phải khách thật). Dò theo đúng payment/bill liên quan cho
@@ -7503,7 +7520,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.10'; // §FIX-VOID-PAYMENTID-FALLBACK — Sua "Hoàn tác thanh toán" khong void duoc payment gan qua reconcile (bill Trí Phan test) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.11'; // §FIX-EMPTYBILL-HASPAYMENT — Sua modal Bill dung lai o "Chưa phát sinh khoản nào" chan khong cho xem/void bill 0 item nhung co payment that — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -28136,7 +28153,18 @@ function openBillModal(playerId, explicitBillId){
     : (getOpenBillForPlayer(playerId) || state.bills.filter(b=>b.playerId===playerId).sort((a,b)=>b.createdAt-a.createdAt)[0]);
   const p = playerById(playerId);
   const box = document.getElementById('matchModalContent');
-  if(!bill || !bill.items || !bill.items.length){ // §FIX-CRASH-1 — guard bill.items (bill loi thieu field khong duoc lam crash modal)
+  // §FIX-EMPTYBILL-HASPAYMENT — Admin bam "XEM BILL" cho dung bill test "Trí Phan" (0đ, khong co item
+  // nao) nhung van co 1 payment 37.000đ that su gan vao (xem §FIX-VOID-PAYMENTID-FALLBACK cung ban nay)
+  // — modal chi hien "Chưa phát sinh khoản nào." roi DUNG LAI, khong bao gio ve toi phan footer/lich su
+  // thanh toan/nut "Hoàn tác thanh toán", khien Admin KHONG CO CACH NAO trong UI de void khoan thu that
+  // do. NGUYEN NHAN: guard §FIX-CRASH-1 (ban dau chi de tranh crash voi bill.items=undefined that su
+  // loi) dang bat NHAM ca truong hop bill.items la mang RONG HOP LE (0 san pham) nhung van co payment —
+  // 2 tinh huong khac nhau bi gop chung 1 dieu kien. billTotal()/billLinesHtml() da tu guard rieng voi
+  // `(bill.items||[])` tu truoc (an toan voi items=undefined), nen thu that guard nay chan la "khong co
+  // items VA CUNG khong co payment nao" — con neu co payment (du items rong) van phai cho render tiep
+  // toi footer de Staff/Admin con thay va void duoc.
+  const hasBillPaymentHistory = bill && (state.payments||[]).some(pay=> (pay.allocations||[]).some(a=>a.billId===bill.id));
+  if(!bill || ((!bill.items || !bill.items.length) && !hasBillPaymentHistory)){ // §FIX-CRASH-1 — guard bill.items (bill loi thieu field khong duoc lam crash modal)
     box.innerHTML = `<h2>🧾 Bill của ${p?p.name:''}</h2><p class="muted">Chưa phát sinh khoản nào.</p><button class="secondary" onclick="closeModal()">Đóng</button>`;
     document.getElementById('matchModal').classList.add('show');
     return;
