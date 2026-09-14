@@ -2,6 +2,27 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.6 (2026-09-14) — §DATAHEALTH-FIX-FULLYCOLLECTED — Admin gửi ảnh chụp màn "Kiểm tra dữ liệu":
+  lỗi "Bill của Phú TP Bank đã thu đủ (45.000đ/45.000đ) nhưng trạng thái vẫn là OPEN" — kiểm tra lại
+  ngay trong Bill modal xác nhận đúng là đã thu đủ thật (lịch sử có 1 lần "Thu Chuyển khoản 45.000đ",
+  "Đã thu 45.000đ · Còn phải thu 0đ"), chỉ có field trạng thái bị lệch, không lệch tiền bạc. NGUYÊN
+  NHÂN CÓ THỂ: bill.status và payment là 2 phần dữ liệu được ghi lên Firebase RIÊNG NHAU (không cùng 1
+  giao dịch nguyên tử tuyệt đối giữa nhiều thiết bị) — 1 bản ghi "bills" cũ hơn tới sau qua mạng chập
+  chờn có thể "đè" lên bản mới hơn, giữ nguyên status='open' cũ dù payment mới đã ghi xong thật. Dù
+  nguyên nhân kỹ thuật cụ thể ra sao, cách sửa LUÔN giống nhau và an toàn 100%: gọi lại
+  `recalculateBillFinancialStatus()` — hàm CANONICAL DUY NHẤT được phép đổi bill.status/paidAt, tự
+  DERIVED lại từ Collected/Generated THỰC TẾ (không đụng tới tiền, không tạo/xoá payment nào, chỉ đồng
+  bộ lại đúng 1 field trạng thái theo con số đã tính đúng sẵn) — đúng y hệt gợi ý có sẵn trong chính
+  thông báo lỗi. Trước đây lỗi này bị đánh dấu "không thể tự sửa an toàn" (phải vào tận Bill mới kích
+  hoạt lại được phép tính), nay thêm hàm `repairFullyCollectedButOpenBill()` (đăng ký vào
+  `DATA_INTEGRITY_REPAIR_FNS` — tự kiểm tra lại điều kiện thu-đủ-nhưng-còn-open ngay tại thời điểm sửa,
+  tránh sửa nhầm nếu dữ liệu đã đổi khác từ lúc quét) và nâng issue `FULLY_COLLECTED_BUT_OPEN` lên
+  `repairable:true, repairConfidence:'DETERMINISTIC'` — màn "Kiểm tra dữ liệu" giờ hiện thẳng nút "SỬA
+  AN TOÀN" cho lỗi này, bấm 1 lần là xong, không cần thao tác vòng qua Bill modal nữa. Không đổi gì các
+  lỗi khác (COLLECTED_EXCEEDS_GENERATED, SocialPass reconcile...) — 2 lỗi đó thật sự cần Admin xem xét
+  vì không xác định được PHẦN NÀO là thừa/sai mà không có phán đoán con người, giữ nguyên "cần Admin
+  kiểm tra" như cũ.
+
   v1.41.5 (2026-09-13) — §FIX-TVMODE-URLSTICK — Admin phản hồi TIẾP sau bản v1.41.3: "f5 lại vẫn bị
   nhảy vô chế độ tivi" — dù đã bấm "✕ Thoát chế độ TV" thủ công trước đó. Đây là 1 NGUYÊN NHÂN KHÁC,
   chưa được xử lý ở bản trước (bản trước chỉ sửa lỗi "ăn theo" GIỮA CÁC TAB qua localStorage — đã xác
@@ -7395,7 +7416,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.5'; // §FIX-TVMODE-URLSTICK — Sua loi F5 van bi keo vao lai TV mode do URL con dinh "?tv=1" sau khi da thoat thu cong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.6'; // §DATAHEALTH-FIX-FULLYCOLLECTED — Cho phep SUA AN TOAN 1-click cho loi bill da thu du nhung con OPEN — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13041,7 +13062,37 @@ function repairOrphanVisitBillRef(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef };
+/* §DATAHEALTH-FIX-FULLYCOLLECTED — Admin phát hiện qua màn "Kiểm tra dữ liệu": bill "Phú TP Bank" đã
+   thu đủ 45.000đ/45.000đ (xác nhận lại qua Lịch sử thanh toán ngay trong Bill modal — đúng 1 lần "Thu
+   Chuyển khoản 45.000đ", "Đã thu 45.000đ · Còn phải thu 0đ") nhưng bill.status vẫn còn 'open' thay vì
+   'paid'. NGUYÊN NHÂN CÓ THỂ: bill.status/payments là 2 field được ghi lên Firebase RIÊNG NHAU (không
+   cùng 1 giao dịch nguyên tử tuyệt đối giữa nhiều thiết bị) — 1 bản ghi 'bills' cũ hơn có thể "đè" lên
+   bản mới hơn nếu tới sau qua mạng chập chờn, giữ nguyên field status='open' cũ dù payment mới đã ghi
+   xong. NHƯNG dù nguyên nhân kỹ thuật cụ thể là gì, cách sửa LUÔN giống nhau và AN TOÀN 100%: gọi lại
+   `recalculateBillFinancialStatus()` — hàm CANONICAL DUY NHẤT được phép đổi bill.status/paidAt, tự
+   DERIVED lại từ Collected/Generated THỰC TẾ (không sửa tiền, không tạo/xoá payment nào cả, chỉ đồng bộ
+   lại đúng 1 field trạng thái với con số đã tính đúng sẵn) — đúng y hệt gợi ý trong chính thông báo lỗi
+   ("cần chạy lại recalculateBillFinancialStatus()"). Vì đây là phép tính 1 chiều, xác định trước, không
+   có khả năng cho ra kết quả "sai" nào khi chạy lại (nếu thực tế chưa thu đủ, hàm sẽ tự trả về 'open'
+   đúng như cũ, không có rủi ro) — nâng cấp issue FULLY_COLLECTED_BUT_OPEN từ `repairable:false` lên
+   `DETERMINISTIC`, cho phép nút "SỬA AN TOÀN" 1-click thay vì bắt Admin phải tự thao tác vòng vo qua
+   Bill modal chỉ để kích hoạt lại phép tính này. */
+function repairFullyCollectedButOpenBill(args){
+  const b = state.bills.find(x=>x.id===args.billId);
+  if(!b) return { ok:false, reason:'Không tìm thấy bill để sửa (có thể đã bị xoá).' };
+  if(b.status !== 'open') return { ok:false, reason:'Bill không còn ở trạng thái OPEN — dữ liệu đã thay đổi, không cần sửa.' };
+  const generated = getBillGenerated(b);
+  const collected = getBillCollected(b);
+  if(!(collected >= generated && generated > 0)) return { ok:false, reason:'Bill không còn thu đủ — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { status: b.status, paidAt: b.paidAt };
+  recalculateBillFinancialStatus(b);
+  logDataIntegrityRepair('FULLY_COLLECTED_BUT_OPEN', 'bill', b.id, before, { status:b.status, paidAt:b.paidAt },
+    'Bill của "' + b.playerName + '" đã thu đủ (' + fmtVnd(collected) + '/' + fmtVnd(generated) + ') — gọi lại recalculateBillFinancialStatus() để chuyển đúng trạng thái PAID.');
+  markEntityDirty('bills', b.id);
+  saveState();
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -30968,7 +31019,10 @@ function runDataIntegrityCheck(){
       addIssue('Payment','ERROR','Bill của "' + b.playerName + '" đã thu đủ (' + fmtVnd(getBillCollected(b)) + '/' + fmtVnd(getBillGenerated(b)) + ') nhưng trạng thái vẫn là OPEN — cần chạy lại recalculateBillFinancialStatus().', {
         code:'FULLY_COLLECTED_BUT_OPEN', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
         impact:'Bill thực tế đã thu đủ nhưng chưa được đánh dấu PAID — có thể gây nhầm lẫn cho Staff hoặc báo cáo.',
-        repairable:false, repairConfidence:'AMBIGUOUS'
+        // §DATAHEALTH-FIX-FULLYCOLLECTED — chi la dong bo lai 1 field status tu Collected/Generated da
+        // tinh dung san (khong dong gi den tien), an toan 100% de tu sua — xem giai thich day du canh
+        // repairFullyCollectedButOpenBill().
+        repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairFullyCollectedButOpenBill', repairArgs:{ billId: b.id }
       });
     }
   });
