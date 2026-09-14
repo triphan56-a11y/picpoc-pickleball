@@ -2,6 +2,20 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.14 (2026-09-14) — §FIX-PURGE-LEGACY-ORPHAN-VISIT — Admin xem tiếp mục "Visit" trong "Kiểm tra dữ
+  liệu": cảnh báo UNRESOLVED_LEGACY_ORPHAN_VISIT cho Visit "QA Test Player" (playerId không còn tồn tại,
+  đã COMPLETED từ lâu, chỉ còn là dữ liệu lịch sử) và yêu cầu dọn sạch. Thiết kế gốc (§DATAHEALTHV3-3) cố
+  ý KHÔNG tự động liên kết lại (relink) loại Visit này khi không xác định được đúng 1 player khớp — tránh
+  gán nhầm cho 1 khách thật khác — nên trước đây chỉ có thể report, không có nút sửa. Nhưng XOÁ HẲN là 1
+  hành động khác bản chất: không đoán/gán cho ai cả, chỉ dọn đi 1 bản ghi lịch sử mồ côi không còn giá
+  trị vận hành (đã COMPLETED, không có Bill/Payment nào phụ thuộc) — an toàn để làm tự động khi Admin xác
+  nhận đây là dữ liệu test/cũ cần dọn. FIX: thêm `repairPurgeLegacyOrphanVisit()` (đăng ký vào
+  `DATA_INTEGRITY_REPAIR_FNS`, dùng `DataService.playerVisits.remove()` để xoá đồng bộ đúng qua Firebase
+  — theo đúng cách `deleteProductHard()` đã làm cho sản phẩm, không dùng `markEntityDirty()` vì hàm đó
+  không xoá được entity dạng mảng) và nâng cấp issue lên `repairable:true, repairConfidence:'DETERMINISTIC'`
+  — nhưng CHỈ áp dụng cho Visit đã COMPLETED (isLegacy); Visit đang ACTIVE vẫn giữ nguyên `repairable:false`
+  như cũ vì xoá 1 phiên đang diễn ra thật có thể ảnh hưởng vận hành sống (Presence/matchmaking/PPR).
+
   v1.41.13 (2026-09-14) — §FIX-TVANN-STUCKPLAYING-REPAIR — Admin xem tiếp mục "Tournament" trong "Kiểm
   tra dữ liệu", thấy cảnh báo TV_ANNOUNCEMENT_STUCK_PLAYING ("Mời cặp Phú TP Bank, Trí Phan và cặp Bu Na
   ... đang kẹt ở PLAYING quá 5 phút") đang bị đánh dấu "Không thể tự sửa an toàn — cần Admin kiểm tra".
@@ -7546,7 +7560,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.13'; // §FIX-TVANN-STUCKPLAYING-REPAIR — Them nut SUA AN TOAN cho TV Announcement ket o PLAYING qua lau — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.14'; // §FIX-PURGE-LEGACY-ORPHAN-VISIT — Them nut SUA AN TOAN xoa han Visit orphan da COMPLETED (QA Test Player) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13290,7 +13304,26 @@ function repairTvAnnouncementStuckPlaying(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying };
+/* §FIX-PURGE-LEGACY-ORPHAN-VISIT — repair XOA HAN cho UNRESOLVED_LEGACY_ORPHAN_VISIT (chi ap dung cho
+   Visit KHONG con ACTIVE — xem giai thich day du tai noi tao issue). Re-validate lai TOAN BO dieu kien
+   tai thoi diem xoa (status, playerId van khong ton tai) truoc khi xoa, dung DataService.playerVisits.
+   remove() (khong dung markEntityDirty — array-entity delete phai qua DataService, xem deleteProductHard()
+   lam mau) de dong bo dung xoa qua Firebase cho cac thiet bi khac. */
+function repairPurgeLegacyOrphanVisit(args){
+  const idx = state.playerVisits.findIndex(x=>x.id===args.visitId);
+  if(idx < 0) return { ok:false, reason:'Không tìm thấy Visit để xoá (có thể đã bị xoá từ trước).' };
+  const v = state.playerVisits[idx];
+  if(v.status === 'ACTIVE') return { ok:false, reason:'Visit này đang ACTIVE trở lại — dữ liệu đã thay đổi, không xoá.' };
+  if(playerById(v.playerId)) return { ok:false, reason:'playerId của Visit này đã tồn tại trở lại — dữ liệu đã thay đổi, không cần xoá.' };
+  const snapshot = { id:v.id, playerId:v.playerId, playerName:v.playerName, status:v.status, checkInAt:v.checkInAt };
+  state.playerVisits.splice(idx, 1);
+  logDataIntegrityRepair('UNRESOLVED_LEGACY_ORPHAN_VISIT', 'visit', v.id, snapshot, null,
+    'Xoá hẳn Visit lịch sử "' + v.id + '" của "' + (v.playerName||v.playerId) + '" — playerId "' + v.playerId + '" không còn tồn tại và không xác định được chủ nhân thật sự (Admin xác nhận đây là dữ liệu test/cũ, Visit đã COMPLETED từ trước, không có Bill/Payment nào phụ thuộc).');
+  saveState();
+  DataService.playerVisits.remove(v.id);
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -31555,12 +31588,23 @@ function runDataIntegrityCheck(){
           isLegacy: !isActive
         });
       } else {
+        // §FIX-PURGE-LEGACY-ORPHAN-VISIT — Admin yeu cau don sach du lieu cu cho truong hop nay ("QA Test
+        // Player"). Visit da COMPLETED tu lau, playerId khong ton tai VA khong tim duoc ung vien DUY
+        // NHAT nao (uniqueCandidate=null o tren) — dung y het dieu kien §DATAHEALTHV3-3 goc. Thiet ke cu
+        // co chu dich KHONG tu dong RELINK (tranh gan nham 1 player that su khac), nhung XOA HAN thi khac
+        // ban chat: khong doan/gan ai ca, chi bo di 1 ban ghi lich su mo coi khong con gia tri van hanh
+        // (da COMPLETED tu truoc, khong con Bill/Payment nao phu thuoc — cac check ORPHAN_VISIT_BILL_REF
+        // rieng da xu ly truong hop billId hong). Chi ap dung repair XOA nay cho Visit KHONG con ACTIVE
+        // (isLegacy=true) — Visit dang ACTIVE van giu nguyen repairable:false/AMBIGUOUS nhu cu, vi xoa 1
+        // Visit dang dien ra that su co the anh huong van hanh song (Presence/matchmaking/PPR).
         addIssue('Visit', severity, 'Visit "' + v.id + '" có playerId "' + v.playerId + '" không tồn tại (orphan visit) — không xác định được chắc chắn player thật sự, cần Admin xem lại.', {
           code:'UNRESOLVED_LEGACY_ORPHAN_VISIT', entityType:'visit', entityId:v.id, entityLabel:v.playerName||v.playerId,
           impact: isActive
             ? 'Visit này đang ACTIVE nhưng không rõ thuộc về player nào — có thể ảnh hưởng Presence/matchmaking/PPR hiện tại, cần Admin xử lý sớm.'
-            : 'Visit này đã COMPLETED, chỉ còn là dữ liệu lịch sử — không ảnh hưởng vận hành hiện tại, có thể để lại xem sau.',
-          repairable:false, repairConfidence:'AMBIGUOUS', isLegacy: !isActive
+            : 'Visit này đã COMPLETED, chỉ còn là dữ liệu lịch sử — không ảnh hưởng vận hành hiện tại. Admin có thể xoá hẳn để dọn sạch dữ liệu cũ.',
+          repairable: !isActive, repairConfidence: isActive ? 'AMBIGUOUS' : 'DETERMINISTIC',
+          repairFn: isActive ? undefined : 'repairPurgeLegacyOrphanVisit', repairArgs: isActive ? undefined : { visitId:v.id },
+          isLegacy: !isActive
         });
       }
     }
