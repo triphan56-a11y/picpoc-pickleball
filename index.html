@@ -2,6 +2,18 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.41.12 (2026-09-14) — §FIX-VOIDED-ALLOC-AMOUNT-MISMATCH — Sau khi Admin void thành công khoản
+  37.000đ test của bill "Trí Phan" (v1.41.10/v1.41.11), chạy lại "Kiểm tra dữ liệu" xác nhận lỗi ERROR
+  COLLECTED_EXCEEDS_GENERATED đã hết (LỖI: 0) — nhưng lộ ra 1 CẢNH BÁO (WARNING) khác đúng từ payment vừa
+  void đó: "allocation của bill 'Trí Phan' (37.000đ) không khớp tổng bill hiện tại (0đ) — có thể bill đã
+  bị sửa sau khi thanh toán." NGUYÊN NHÂN: check phát hiện lệch amount-vs-billTotal này trước giờ không
+  loại trừ allocation đã voided — so sánh a.amount (37.000đ, số tiền GỐC giữ lại làm lịch sử) với
+  billTotal hiện tại (0đ) và luôn thấy lệch, dù allocation đó có còn hiệu lực hay không. Một allocation
+  ĐÃ VOIDED không còn ảnh hưởng Collected nữa (đúng thiết kế) nên việc nó không khớp billTotal hiện tại
+  là BÌNH THƯỜNG, không cần Admin xem lại gì thêm — cảnh báo này chỉ nên áp dụng cho allocation CÒN HIỆU
+  LỰC. FIX: thêm điều kiện loại trừ allocation đã voided khỏi check này (cùng tinh thần với
+  WRITE_OFF_TEST_BILL_INFO/§DATAHEALTH-FIX-WRITEOFF-* đã làm trước đó cho các trường hợp tương tự).
+
   v1.41.11 (2026-09-14) — §FIX-EMPTYBILL-HASPAYMENT — Ngay sau bản v1.41.10, Admin làm đúng theo hướng
   dẫn (vào hồ sơ "Trí Phan" → tab LƯỢT CHƠI → bấm "XEM BILL" trên dòng 13/9/2026) nhưng modal Bill chỉ
   hiện "Chưa phát sinh khoản nào." rồi dừng lại — không có Lịch sử thanh toán, không có nút "Hoàn tác
@@ -7520,7 +7532,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.11'; // §FIX-EMPTYBILL-HASPAYMENT — Sua modal Bill dung lai o "Chưa phát sinh khoản nào" chan khong cho xem/void bill 0 item nhung co payment that — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.41.12'; // §FIX-VOIDED-ALLOC-AMOUNT-MISMATCH — Sua canh bao WARNING sai cho allocation DA VOIDED (bill Trí Phan test) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -31298,7 +31310,17 @@ function runDataIntegrityCheck(){
       // cho payment KHONG di kem tu engine moi (payBill()/payMultipleBills() — 1 payment = 1 bill
       // full amount theo dung thiet ke cu cua chung).
       const isEnginePayment = !!(pay.operationId || pay.paymentGroupId);
-      if(!isEnginePayment && a.amount !== billTotal(b)) addIssue('Payment','WARNING','Payment "' + pay.id + '" — allocation của bill "' + b.playerName + '" (' + fmtVnd(a.amount) + ') không khớp tổng bill hiện tại (' + fmtVnd(billTotal(b)) + ') — có thể bill đã bị sửa sau khi thanh toán.');
+      // §FIX-VOIDED-ALLOC-AMOUNT-MISMATCH — Admin vua void 1 payment test (bill "Trí Phan" 37.000đ) qua
+      // §FIX-VOID-PAYMENTID-FALLBACK, lam bien mat dung 1 loi ERROR (COLLECTED_EXCEEDS_GENERATED) nhung
+      // lo ra 1 canh bao WARNING khac tu CHINH allocation vua bi void do — vi check nay truoc gio KHONG
+      // loai tru allocation da voided: a.amount (37.000đ, so tien GOC luu lai lam lich su) so voi
+      // billTotal(b) hien tai (0đ, vi bill van khong co item nao) chac chan luon LECH NHAU, du allocation
+      // do co con hieu luc hay khong. Nhung 1 allocation DA VOIDED thi viec no khong khop billTotal hien
+      // tai la BINH THUONG/DUNG THIET KE (no khong con anh huong Collected nua — xem getBillCollected(),
+      // chi la dau vet lich su "tung co 1 lan thu X, sau do bi hoan tac"), KHONG can Admin "xem lai co
+      // bi sua bill sau thanh toan hay khong" nhu thong bao goc — chi ap dung canh bao nay cho allocation
+      // CON HIEU LUC (dung y het tinh than voi WRITE_OFF_TEST_BILL_INFO/§DATAHEALTH-FIX-WRITEOFF-*).
+      if(!isEnginePayment && !a.voided && a.amount !== billTotal(b)) addIssue('Payment','WARNING','Payment "' + pay.id + '" — allocation của bill "' + b.playerName + '" (' + fmtVnd(a.amount) + ') không khớp tổng bill hiện tại (' + fmtVnd(billTotal(b)) + ') — có thể bill đã bị sửa sau khi thanh toán.');
     });
   });
 
