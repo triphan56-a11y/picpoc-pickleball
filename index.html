@@ -2,6 +2,30 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.0 (2026-09-15) — §FIX-DEBTCOLLECT-SELFRACE-ROLLBACK — Admin bấm "THU NỢ" cho A Lin (2 bill: 67K
+  nợ cũ hôm qua + 52K bill hôm nay, thu 1 lần cùng lúc). Kết quả bất thường: chỉ 1 khoản (52K) được ghi
+  nhận doanh thu bình thường, khoản còn lại (67K) tự động hiện "ĐÃ HOÀN TÁC" trong Thu & chi — dù Admin
+  không hề bấm hoàn tác, không có ai thao tác trên thiết bị khác cùng lúc, và Console không hề báo lỗi.
+  ĐIỀU TRA sâu vào engine thu-nợ (`collectPlayerDebt()` → `createBillPayment()` cho từng bill) phát hiện
+  đây là 1 lỗi RACE CONDITION có thật, "tự đá chính mình": `createBillPayment()` gọi liên tiếp 2 dòng —
+  (1) `markEntityDirty('bills', bill.id)` ghi bill (đã tăng `payVersion`) thẳng lên Firebase qua `.set()`
+  NGAY LẬP TỨC, rồi (2) `confirmBillPaymentAtomicV2()` mới chạy 1 Firebase `.transaction()` RIÊNG trên
+  ĐÚNG bill đó để kiểm tra OCC (so `payVersion` hiện tại trên server với giá trị TRƯỚC khi thu, nhằm phát
+  hiện xung đột thật từ thiết bị khác). Vì dòng (1) đã ghi payVersion MỚI lên server TRƯỚC, khi dòng (2)
+  đọc lại giá trị trên server để kiểm tra, nó thấy KHÁC với giá trị mong đợi — hiểu NHẦM là "thiết bị khác
+  vừa ghi đè" (trong khi thực ra là CHÍNH mình vừa ghi qua .set() 1 dòng code trước đó) → tự động rollback
+  (xoá payment, đảo ngược dòng tiền) y hệt như gặp xung đột thật. Vì đây là cuộc đua giữa 2 lệnh ghi mạng
+  (độ trễ khác nhau tuỳ thời điểm), nên KHÔNG PHẢI lần nào cũng xảy ra — giải thích vì sao trong cùng 1
+  lần bấm THU NỢ, bill này bị hoàn tác còn bill kia thì không. Đây CHÍNH LÀ nguyên nhân gốc (trước đây
+  chưa xác định được) của bug FULLY_COLLECTED_BUT_OPEN đã từng phát hiện và chỉ vá được PHẦN TRIỆU CHỨNG
+  (thêm nút "SỬA AN TOÀN" ở Kiểm tra dữ liệu) chứ chưa vá tận gốc. FIX TẬN GỐC: bỏ hẳn dòng
+  `markEntityDirty('bills', bill.id)` thừa và có hại đó — `confirmBillPaymentAtomicV2()` đã tự ghi đúng
+  bill (kèm payVersion mới) lên Firebase ngay bên trong chính giao dịch OCC của nó khi thành công, không
+  cần ghi trước qua `.set()` nữa, loại bỏ hoàn toàn cuộc đua tự gây ra này. Áp dụng cho MỌI luồng dùng
+  chung `createBillPayment()`: thu nợ, chia thanh toán, thu nốt phần còn lại.
+  LƯU Ý: khoản 67K của A Lin bị hoàn tác lần trước hiện VẪN đang là nợ chưa thu (bill quay lại đúng trạng
+  thái trước khi thu) — Admin cần bấm lại "THU NỢ" cho khoản này sau khi bản v1.43.0 deploy xong.
+
   v1.42.2 (2026-09-15) — §FIX-DEBTBADGE-MIXES-TODAYBILL — Ngay sau v1.42.1 deploy, Admin thu lai: A Lin
   giờ có đúng 2 bill riêng (67K nợ cũ từ trước + 30K bill hôm nay — tách đúng như thiết kế mới), nhưng
   badge trên card lại hiện "NỢ CŨ 97K" thay vì đúng 67K. NGUYÊN NHÂN: `debtBadgeHtml()` dùng
@@ -7610,7 +7634,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.42.2'; // §FIX-DEBTBADGE-MIXES-TODAYBILL — Sua badge "NỢ CŨ" cong nham ca bill hom nay chua thu vao no cu — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.0'; // §FIX-DEBTCOLLECT-SELFRACE-ROLLBACK — Sua loi race condition tu roll lai chinh minh khien THU NỢ nhieu bill co the mat 1 phan doanh thu — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13854,7 +13878,25 @@ function createBillPayment(bill, amount, method, opts){
   recordFinanceTransactionForPayment({ sourceType: financeSourceTypeForBills([bill]), sourceId: payment.id,
     amount: payment.amount, paymentMethod: payment.paymentMethod, description: bill.playerName || 'Bill', createdAt: payment.createdAt, createdBy: payment.createdBy });
   saveState();
-  markEntityDirty('bills', bill.id);
+  // §FIX-DEBTCOLLECT-SELFRACE-ROLLBACK — Admin bao: bam "THU NỢ" thu 1 lan ca 2 bill cua A Lin (67K nợ
+  // cũ + 52K hôm nay), ket qua CHI 1 trong 2 duoc ghi nhan doanh thu, con lai bi tu dong "ĐÃ HOÀN TÁC"
+  // (rollback) — KHONG phai do thao tac sai, dieu tra sau ra day la 1 loi RACE CONDITION tu gay ra boi
+  // chinh 2 dong code lien tiep nhau NGAY DUOI DAY: `markEntityDirty('bills', bill.id)` ghi bill (kem
+  // payVersion DA TANG) thang len Firebase qua .set() NGAY LAP TUC, ngay SAU DO
+  // `confirmBillPaymentAtomicV2()` moi chay 1 Firebase .transaction() rieng tren CUNG duong dan bill do
+  // de kiem tra OCC (remoteBill.payVersion === expectedVersion — dung de phat hien xung dot THAT SU tu
+  // 1 THIET BI KHAC). Vi .set() o tren da ghi payVersion MOI (expectedVersion+1) LEN TRUOC, khi
+  // .transaction() doc lai gia tri tren server no THAY DA KHAC expectedVersion — hieu NHAM la "thiet bi
+  // khac vua ghi de" (dù thuc ra la CHINH minh vua ghi qua .set() truoc do 1 dong code) -> tu dong goi
+  // rollbackBillPayment() XOA payment vua tao, dao nguoc luon dong tien vua ghi nhan — day chinh la loi
+  // "tu roll lai chinh minh", xay ra khong on dinh (dua theo do tre mang, .set() co the ve truoc hoac
+  // sau .transaction() tuy thoi diem) — giai thich vi sao co lan thanh cong (bill 52K) co lan bi hoan tac
+  // (bill 67K) trong CUNG 1 lan bam THU NỢ. Day cung CHINH LA nguyen nhan chua xac dinh duoc truoc do cua
+  // bug FULLY_COLLECTED_BUT_OPEN (da vá bang repair rieng o Data Integrity, nhung chi vá TRIEU CHUNG,
+  // chua vá goc). FIX TAN GOC: BO han dong markEntityDirty('bills', bill.id) o day — hoan toan du thua va
+  // co hai: confirmBillPaymentAtomicV2() ben duoi da TU GHI dung bill (kem payVersion moi) len Firebase
+  // NGAY BEN TRONG chinh giao dich OCC cua no khi thanh cong (return sanitizeForFirebase(bill) trong
+  // .transaction()) — khong can ghi truoc qua .set() nua, loai bo hoan toan race tu gay ra nay.
   payment._syncPromise = confirmBillPaymentAtomicV2(bill, payment, expectedVersion);
   return { ok:true, payment };
 }
