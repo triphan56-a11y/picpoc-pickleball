@@ -2,6 +2,22 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.2 (2026-09-15) — §FIX-ADJUST-MISSING-STOCKAFTER — Kiểm tra dữ liệu báo WARNING
+  INVENTORY_RECONCILIATION_MISMATCH cho "Nước điện giải Waterboost": tồn hiện tại 180 không khớp giao
+  dịch gần nhất ghi tồn sau là 179 (không tự sửa được — chỉ hiện "cần Admin kiểm tra"). ĐIỀU TRA phát
+  hiện đây là BÁO SAI (false positive): check đối chiếu tồn kho (mục 3d) chỉ nhìn các dòng
+  `state.inventoryLog` có field `stockAfter` để tìm giao dịch gần nhất, nhưng riêng hàm
+  `submitAdjustStock()` (nút "⚖️ Điều chỉnh tồn" — Kiểm kho/Hư hỏng/Mất/Điều chỉnh sai lệch/Khác) từ
+  trước giờ chỉ ghi field `from`/`to`, KHÔNG ghi `stockAfter` như mọi loại giao dịch kho khác (nhập kho,
+  bán lẻ, trừ theo bill, độ nước...). Hậu quả: mỗi khi 1 sản phẩm được "Điều chỉnh tồn" gần đây nhất
+  (đúng, hợp lệ), check lại "nhìn xuyên qua" giao dịch đó (vì thiếu stockAfter) và so sánh nhầm với 1
+  giao dịch CŨ HƠN trước đó — báo sai là lệch dữ liệu dù Admin vừa điều chỉnh đúng. FIX: (1)
+  `submitAdjustStock()` giờ ghi thêm `stockAfter` (giữ nguyên from/to để không phá vỡ hiển thị lịch sử
+  cũ); (2) thêm migration 1 lần trong `normalizeProducts()` backfill `stockAfter` cho các dòng 'adjust'
+  CŨ đã có sẵn (lấy nguyên giá trị `to` đã lưu, không đoán/tính lại) — chạy lại an toàn mỗi lần load
+  (idempotent). Cảnh báo hiện tại của Waterboost sẽ tự biến mất sau khi mở lại app (không cần Admin làm
+  gì thêm, không có sai lệch tồn kho thật nào cả).
+
   v1.43.1 (2026-09-15) — §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — Sau khi chạy "SỬA CÁC LỖI AN TOÀN
   (9)" cho các bill FULLY_COLLECTED_BUT_OPEN ở v1.43.0, Kiểm tra dữ liệu lộ ra thêm các lỗi
   COLLECTED_EXCEEDS_GENERATED MỚI cho "A Lin (Khối Bia)" (Collected 52.000đ / Generated 30.000đ) và "Bim
@@ -7653,7 +7669,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.1'; // §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — Bill da PAID bi Collected>Generated (vet tich bug cu tai su dung bill, da sua goc o v1.42.x) gio co the SUA AN TOAN tu dong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.2'; // §FIX-ADJUST-MISSING-STOCKAFTER — Dieu chinh ton (submitAdjustStock) thieu field stockAfter khien check doi chieu ton kho bao nham mismatch — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -11153,6 +11169,14 @@ function normalizeProducts(){
   });
   if(!Array.isArray(state.sales)) state.sales = [];
   if(!Array.isArray(state.inventoryLog)) state.inventoryLog = [];
+  /* §FIX-ADJUST-MISSING-STOCKAFTER — backfill cho cac ban ghi 'adjust' CU (truoc fix o
+     submitAdjustStock()) con thieu `stockAfter` — chi doi ten field tu `to` (da luu san, chinh xac
+     100%, khong doan/tinh lai gi ca) sang them `stockAfter`, KHONG doi/xoa from/to hien co. An toan
+     100% de chay lai moi lan load (idempotent — chi dong vao ban ghi con thieu field). Giup check doi
+     chieu ton kho (3d) nhan dung giao dich Dieu chinh gan nhat thay vi bo qua no. */
+  state.inventoryLog.forEach(log=>{
+    if(log.type === 'adjust' && typeof log.stockAfter !== 'number' && typeof log.to === 'number') log.stockAfter = log.to;
+  });
   if(!Array.isArray(state.bills)) state.bills = [];
   if(!Array.isArray(state.waterLoss)) state.waterLoss = [];
   state.waterLoss.forEach(w=>{
@@ -29297,7 +29321,12 @@ function submitAdjustStock(productId){
   if(!p) return;
   const before = p.stock;
   p.stock = actual;
-  state.inventoryLog.unshift({ id: uid('inv'), type:'adjust', productId, name:p.name, from:before, to:actual, note:reason, timestamp: Date.now() });
+  // §FIX-ADJUST-MISSING-STOCKAFTER — thieu field `stockAfter` (chi co from/to) khien check doi chieu
+  // ton kho (3d, INVENTORY_RECONCILIATION_MISMATCH) KHONG THAY duoc giao dich Dieu chinh ton gan nhat
+  // (filter yeu cau `typeof l.stockAfter==='number'`), nen no doi chieu nham voi 1 giao dich CU HON
+  // (import/bill_item_edit...) va bao sai la lech du lieu du Dieu chinh vua ghi dung. Them stockAfter
+  // (giu nguyen from/to de khong pha vo hien thi lich su cu dang dung 2 field do).
+  state.inventoryLog.unshift({ id: uid('inv'), type:'adjust', productId, name:p.name, from:before, to:actual, stockAfter:actual, note:reason, timestamp: Date.now() });
   logOverride('stock_adjust', p.name + ' — điều chỉnh tồn ' + before + ' → ' + actual + ' (lý do: ' + reason + ')', 'product', p.id);
   saveState();
   markEntityDirty('products', p.id); // §DATA-ARCH-60 — ghi ngay, khong doi debounce, vi la thay doi ton kho tuong minh cua ADMIN
