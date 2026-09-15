@@ -2,6 +2,19 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.6 (2026-09-15) — §FIX-CANCELOPENBILL — Admin hỏi "làm sao để void 2 bill 30k của Phú TP Bank"
+  (2 bill Vé Social trùng do lỗi §FIX-ENDPLAYING-VISITCLOSED-PREMATURE ở bản trước) — RÀ SOÁT lại toàn
+  bộ Bill modal phát hiện app THỰC SỰ CHƯA CÓ cách nào trong UI để Staff/Admin tự huỷ 1 bill 'open' chưa
+  thu tiền: nút sửa số lượng (editBillProductItem) chỉ áp dụng cho dòng loại 'product', không xử lý được
+  dòng loại 'ticket' (Vé Social) — đây là 1 khoảng trống thật sự của sản phẩm, không phải Admin thao tác
+  sai. FIX: thêm nút mới "🗑 Huỷ bill" ngay trong Bill modal — CHỈ hiện khi bill đang 'open' VÀ chưa thu
+  được đồng nào (Collected=0, tuyệt đối không cho huỷ nếu đã thu đủ/thu 1 phần, tránh xoá mất dấu vết
+  tiền thật đã vào quỹ — trường hợp đó phải dùng "Hoàn tác thanh toán" trước). Bấm sẽ hỏi xác nhận rồi
+  chuyển bill sang status='cancelled' (giá trị đã được TOÀN BỘ hệ thống công nhận sẵn từ trước —
+  getPlayerOutstanding()/getPlayerOutstandingBills() đã tự loại trừ 'cancelled' ra khỏi công nợ, không
+  cần sửa thêm nơi nào khác) — an toàn 100% về tiền vì không đụng đến payment/finance transaction nào cả
+  (vì chưa từng có payment nào cho bill đó). Dùng nút này để dọn 2 bill 30k thừa của Phú TP Bank.
+
   v1.43.5 (2026-09-15) — §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — Admin báo: "Phú TP Bank" ra tới 3 bill
   Vé Social 30.000đ trong 1 buổi chiều dù khách xác nhận KHÔNG hề rời sân, chỉ check-in đúng 1 lần. ĐIỀU
   TRA qua console dump xác nhận: có 2 Visit liên tiếp của khách này bị đóng với `closeReason:'DATA_REPAIR'`
@@ -7735,7 +7748,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.5'; // §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — SỬA AN TOÀN cho ACTIVE_VISIT_BUT_ENDED_STATUS truoc day dong nham Visit dang hop le cho thu tien (endPlaying()), gay tinh trung Vé Social — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.6'; // §FIX-CANCELOPENBILL — Them nut "Huỷ bill" cho bill 'open' chua thu dong nao (truoc day khong co cach nao huy 1 bill tinh nham/trung tu UI) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -28595,6 +28608,7 @@ function openBillModal(playerId, explicitBillId){
           <button class="secondary" style="flex:1;" onclick="openSplitPayModal('${bill.id}')">➗ CHIA THANH TOÁN</button>
           <button class="secondary" style="flex:1;" onclick="confirmAllowBillDebt('${bill.id}')">📒 CHO NỢ</button>
         </div>
+        <button class="secondary" style="width:100%; margin-top:6px; color:var(--color-danger,#d33); border-color:var(--color-danger,#d33);" data-require-permission="PAYMENT_VOID" onclick="cancelOpenBill('${bill.id}')">🗑 Huỷ bill (khoản tính nhầm/trùng)</button>
       `;
     } else {
       footer = `
@@ -28637,6 +28651,39 @@ function openBillModal(playerId, explicitBillId){
     <button class="secondary" onclick="closeModal()">Đóng</button>
   `;
   document.getElementById('matchModal').classList.add('show');
+}
+/* §FIX-CANCELOPENBILL — Admin hoi "làm sao để void 2 bill 30k của Phú TP Bank" sau khi phat hien 3-4
+   bill Vé Social 30k trung nhau cho DUNG 1 lan check-in that (§FIX-ENDPLAYING-VISITCLOSED-PREMATURE) —
+   RA SOAT UI thay KHONG CO cach nao de Staff/Admin tu huy 1 bill 'open' CHUA thu dong nao: nut sua so
+   luong (editBillProductItem/confirmEditBillItem) CHI ap dung cho item.type==='product', khong xu ly
+   duoc item type='ticket' (Vé Social) — day la 1 khoang trong that su cua san pham, khong phai loi thao
+   tac cua Admin. FIX: them 1 nut "🗑 Huỷ bill" MOI ngay trong Bill modal (chi hien khi bill 'open' VA
+   Collected=0 — TUYET DOI khong cho huy neu da thu du hoac thu 1 phan, tranh xoa mat dau vet tien that
+   da vao quy) — dua bill sang status='cancelled' (gia tri da duoc CA HE THONG cong nhan san: getPlayer-
+   Outstanding()/getPlayerOutstandingBills() da tu loai tru 'cancelled' tu truoc, khong can sua gi them
+   o cac noi doc du lieu). An toan 100% ve tien vi KHONG dong den payment/finance transaction nao (vi
+   chua tung co payment nao cho bill nay). */
+function cancelOpenBill(billId){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return; // §33 — hanh dong nhay cam ve tien/bill, dung lai quyen vốn dung cho hoan tien/vô hiệu bill
+  const bill = state.bills.find(b=>b.id===billId);
+  if(!bill) return;
+  if(bill.status !== 'open'){ showToast('Bill không còn ở trạng thái mở.'); return; }
+  const collected = getBillCollected(bill);
+  if(collected > 0){ showToast('Bill này đã thu ' + fmtVnd(collected) + ' — không thể huỷ trực tiếp, cần Hoàn tác thanh toán trước.'); return; }
+  const total = billTotal(bill);
+  if(!confirm('Huỷ bill "' + (bill.playerName||'') + '" (' + fmtVnd(total) + ')? Dùng khi khoản này bị tính nhầm/tính trùng — KHÔNG dùng cho bill khách thật sự còn nợ.')) return;
+  const currentUser = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  bill.status = 'cancelled';
+  bill.cancelledAt = Date.now();
+  bill.cancelledBy = currentUser ? currentUser.name : 'staff';
+  logOverride('bill_cancelled', (bill.playerName||'') + ' — huỷ bill ' + fmtVnd(total) + ' (khoản tính nhầm/trùng, chưa từng thu tiền)', 'bill', bill.id);
+  markEntityDirty('bills', bill.id);
+  saveState();
+  closeModal();
+  showToast('✓ Đã huỷ bill ' + fmtVnd(total));
+  if(typeof renderSalesTab === 'function') renderSalesTab();
+  if(typeof renderMoneyTab === 'function') renderMoneyTab();
+  if(typeof renderPresenceTab === 'function') renderPresenceTab();
 }
 /* §CREDIT2026-39/40/41 — khu vuc PICPOC CREDITS ngay trong man Bill, CHI hien khi bill con MO va co
    it nhat 1 dong eligible con no + khach co Credit kha dung. Phan biet ro TOTAL CREDIT BALANCE (so du
