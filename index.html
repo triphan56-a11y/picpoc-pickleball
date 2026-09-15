@@ -2,6 +2,29 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.4 (2026-09-15) — §FIX-SAVEDEBOUNCE-STARVATION — Admin báo LẠI (sau khi đã bấm "Kết thúc" xử lý
+  xong các sân "đang chơi" từ trước hôm nay theo hướng dẫn trước): "đã bấm kết thúc các trận rồi, giờ
+  lên bản mới nó hiện ra lại" — cùng y hệt các trận đó (đúng timer vẫn chạy tiếp từ lần trước, không
+  phải trận mới). ĐIỀU TRA sâu vào cơ chế đồng bộ phát hiện NGUYÊN NHÂN GỐC nghiêm trọng hơn nhiều so
+  với nghi vấn ban đầu (race với listener `.on('value')`): `saveState()` dùng ĐÚNG 1 biến debounce
+  TOÀN CỤC DUY NHẤT (`saveTimer`) cho MỌI thay đổi trong TOÀN BỘ app — mỗi lần `saveState()` được gọi ở
+  bất kỳ đâu (xảy ra rất thường xuyên: mỗi click, mỗi tick đồng hồ sân, mỗi đồng bộ từ thiết bị khác...)
+  đều `clearTimeout()` bộ đếm 400ms và bắt đầu đếm lại TỪ ĐẦU. Ở 1 club đông khách với nhiều thao tác
+  liên tục từ nhiều thiết bị, khoảng lặng 400ms liên tục gần như KHÔNG BAO GIỜ xảy ra được — khiến
+  `diffAndFlushEntities()` (nơi THẬT SỰ ghi/xoá entity lên Firebase) bị trì hoãn VÔ THỜI HẠN, có thể
+  KHÔNG BAO GIỜ chạy. Hậu quả: bấm "Kết thúc" trận (`delete state.courts[courtId]`) chỉ xoá được CỤC BỘ
+  trên máy đang bấm — nếu app đủ bận, thay đổi này không bao giờ kịp lên tới Firebase trước khi màn hình
+  bị tải lại (F5, cập nhật bản mới, đổi thiết bị...) — kéo trận "ma" quay lại y hệt như cũ. Đây cũng là
+  lời giải thích hợp lý hơn cho các trường hợp tương tự đã gặp trước đó trong ngày (Vé Social không bị
+  gỡ sau khi mua Gói Social, bill không chuyển "paid" dù đã có payment) — cùng 1 gốc rễ: thay đổi cục bộ
+  bị "kẹt" chưa kịp lên server. FIX: thêm "maxWait" cho debounce (đúng pattern debounce-có-giới-hạn-chờ-
+  tối-đa chuẩn, giống `_.debounce(fn, wait, {maxWait})` của lodash) — ghi lại đúng thời điểm có thay đổi
+  ĐẦU TIÊN đang chờ flush; nếu đã quá 1.5 giây kể từ lúc đó mà vẫn chưa flush được (do liên tục bị dời
+  lịch bởi hoạt động khác), FLUSH NGAY LẬP TỨC thay vì đợi thêm — đảm bảo mọi thay đổi luôn lên được
+  server trong tối đa ~1.5 giây bất kể app bận rộn thế nào, không còn trường hợp "chờ mãi không tới lượt"
+  nữa. LƯU Ý: 3 sân "ma" hiện tại (Sân 1/2/3) cần Admin tải lại trang (để nhận bản v1.43.4 mới) rồi bấm
+  "Kết thúc" lại — lần này chắc chắn sẽ lên được server trong ~1.5 giây, không lặp lại nữa.
+
   v1.43.3 (2026-09-15) — §FIX-SOCIALPASS-TICKET-STUCK — Admin báo: "A San mua vé social 15+1 đã thanh
   toán 450k rồi, và app đã trừ 1 lượt chơi luôn rồi" — nhưng card của A San vẫn hiện "Bill: 30.000đ —
   CHƯA THANH TOÁN". ĐIỀU TRA qua 2 lần console dump (bills/payments rồi visits/packages/usages) xác nhận
@@ -7302,6 +7325,7 @@ let dbRef = null;
 let dbRoot = null;
 let isRemoteUpdate = false;
 let saveTimer = null;
+let saveTimerFirstScheduledAt = 0; // §FIX-SAVEDEBOUNCE-STARVATION — xem giai thich day du o saveState()
 /* §DATA-ARCH-58/78 — trang thai ket noi THAT SU (khong phai "da gui request thanh cong"), cap
    nhat boi listener .info/connected o cuoi file. Mac dinh true cho local-only mode (khong
    SYNC_ENABLED) de khong chan nham cac thao tac khi app von di khong can mang. */
@@ -7690,7 +7714,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.3'; // §FIX-SOCIALPASS-TICKET-STUCK — Mua Gói Social nhung Vé Social 30k con sot lai tren bill open, gio co the SUA AN TOAN tu dong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.4'; // §FIX-SAVEDEBOUNCE-STARVATION — saveState() dung 1 debounce toan cuc co the bi doi vo thoi han khi app ban ron, khien thay doi (vd Kết thúc trận) khong bao gio len duoc server — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -14177,12 +14201,37 @@ function saveState(){
      dung tryCacheStateLocally() dung chung (co circuit-breaker, xem giai thich phia tren). */
   tryCacheStateLocally('saveState');
   if(SYNC_ENABLED && dbRoot && !isRemoteUpdate){
-    clearTimeout(saveTimer);
     setSyncStatus('Đang lưu...', 'syncing');
-    saveTimer = setTimeout(()=>{
+    // §FIX-SAVEDEBOUNCE-STARVATION — Admin bao 2 lan: "đã bấm kết thúc các trận rồi, giờ lên bản mới
+    // nó hiện ra lại" — trận đã Kết thúc (delete state.courts[courtId]; saveState()) VAN con nguyen
+    // tren server sau khi tai lai trang. NGUYEN NHAN GOC: saveState() dung 1 BIEN DEBOUNCE TOAN CUC
+    // DUY NHAT (saveTimer) CHO MOI thay doi trong toan bo app — MOI lan saveState() duoc goi (xay ra
+    // RAT thuong xuyen: click bat ky dau, tick dong ho san, sync tu thiet bi khac...) deu clearTimeout()
+    // va doi lai 400ms TU DAU. O 1 club dong khach (nhieu thao tac lien tuc tu nhieu thiet bi), khoang
+    // lang 400ms LIEN TUC khong bao gio xay ra duoc -> diffAndFlushEntities() (noi THAT SU ghi/xoa
+    // entity len Firebase) co the bi TRI HOAN VO THOI HAN, khong bao gio chay — thay doi (vd xoa 1
+    // court) CHI ton tai trong state cuc bo, KHONG BAO GIO len duoc server, roi mat trang khi F5/thiet
+    // bi khac tai lai (nhu Admin gap). FIX: them "maxWait" (dung pattern debounce-with-maxWait chuan,
+    // giong lodash _.debounce({maxWait})) — ghi lai thoi diem CO thay doi dau tien dang cho (chua
+    // flush), neu da qua 1500ms ke tu luc do ma van chua flush duoc (do lien tuc bi doi lich) thi FLUSH
+    // NGAY LAP TUC thay vi doi them, dam bao moi thay doi luon len server trong toi da ~1.5s bat ke app
+    // ban ron the nao — khong con truong hop "cho mai khong bao gio den luot" nua.
+    const now = Date.now();
+    if(!saveTimer) saveTimerFirstScheduledAt = now;
+    const elapsedSinceFirstPending = now - saveTimerFirstScheduledAt;
+    const MAX_WAIT_MS = 1500;
+    clearTimeout(saveTimer);
+    if(elapsedSinceFirstPending >= MAX_WAIT_MS){
+      saveTimer = null;
       diffAndFlushEntities();
       setSyncStatus('Đã đồng bộ', 'ok');
-    }, 400);
+    } else {
+      saveTimer = setTimeout(()=>{
+        saveTimer = null;
+        diffAndFlushEntities();
+        setSyncStatus('Đã đồng bộ', 'ok');
+      }, 400);
+    }
   }
 }
 
