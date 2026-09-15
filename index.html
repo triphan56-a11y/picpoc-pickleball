@@ -2,6 +2,27 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.3 (2026-09-15) — §FIX-SOCIALPASS-TICKET-STUCK — Admin báo: "A San mua vé social 15+1 đã thanh
+  toán 450k rồi, và app đã trừ 1 lượt chơi luôn rồi" — nhưng card của A San vẫn hiện "Bill: 30.000đ —
+  CHƯA THANH TOÁN". ĐIỀU TRA qua 2 lần console dump (bills/payments rồi visits/packages/usages) xác nhận
+  rõ: gói Gói Social 15+1 đã mua đúng (450k, payment hợp lệ), lượt dùng (`socialPassUsage`) đã trừ đúng
+  1/16, đúng visitId của lượt chơi hôm nay — tức `reconcileOpenTicketWithNewPass()` (chạy tự động ngay
+  sau khi mua gói, có nhiệm vụ gỡ khoản "Vé Social" 30k thừa khỏi bill vì đã đổi sang dùng gói) ĐÃ CHẠY
+  ĐÚNG thời điểm mua gói, nhưng item "Vé Social" vẫn còn nguyên trên bill (đúng ID item tạo từ lúc
+  check-in — không phải bị thêm lại). Nghi ngờ nguyên nhân là 1 dạng race đồng bộ: `markEntityDirty()`
+  ghi 1 bill cụ thể lên Firebase, nhưng đúng lúc đó listener `.on('value')` của TOÀN BỘ collection
+  `/bills` (attachEntityListener) nhận 1 snapshot khác về và GHI ĐÈ TOÀN BỘ `state.bills` cục bộ — có
+  thể xoá mất đúng lúc thay đổi vừa splice ra chưa kịp xác nhận lên server. Đây là vấn đề kiến trúc rộng
+  hơn (ảnh hưởng mọi nơi dùng markEntityDirty trên bills, không riêng Social Pass) — CHƯA đủ an toàn để
+  vá tận gốc trong 1 lần sửa này, cần nghiên cứu/kiểm thử kỹ hơn trước khi đổi cơ chế đồng bộ chung. FIX
+  TRƯỚC MẮT (an toàn, đúng nguyên tắc "đủ bằng chứng deterministic thì cho sửa"): nâng cấp Data Integrity
+  check sẵn có SOCIAL_PASS_USED_BUT_TICKET_CHARGED — trước đây LUÔN repairable:false/AMBIGUOUS bất kể
+  bill đã thanh toán hay chưa — thành CÓ THỂ tự sửa AN TOÀN riêng khi bill vẫn đang 'open' (nghĩa là
+  khoản Vé Social đó CHƯA từng được thu tiền thật — xoá đi không đụng đến payment/doanh thu nào cả, chỉ
+  hoàn tất đúng bước mà reconcileOpenTicketWithNewPass() lẽ ra đã làm xong lúc mua gói). Bill ĐÃ 'paid'
+  (khách thật sự bị tính tiền 2 lớp) vẫn giữ nguyên AMBIGUOUS như cũ — cần Admin xem xét hoàn tiền thủ
+  công, không an toàn để tự động xoá khoản đã thu.
+
   v1.43.2 (2026-09-15) — §FIX-ADJUST-MISSING-STOCKAFTER — Kiểm tra dữ liệu báo WARNING
   INVENTORY_RECONCILIATION_MISMATCH cho "Nước điện giải Waterboost": tồn hiện tại 180 không khớp giao
   dịch gần nhất ghi tồn sau là 179 (không tự sửa được — chỉ hiện "cần Admin kiểm tra"). ĐIỀU TRA phát
@@ -7669,7 +7690,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.2'; // §FIX-ADJUST-MISSING-STOCKAFTER — Dieu chinh ton (submitAdjustStock) thieu field stockAfter khien check doi chieu ton kho bao nham mismatch — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.3'; // §FIX-SOCIALPASS-TICKET-STUCK — Mua Gói Social nhung Vé Social 30k con sot lai tren bill open, gio co the SUA AN TOAN tu dong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13446,6 +13467,30 @@ function repairSocialPassReconcileMismatch(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-SOCIALPASS-TICKET-STUCK — sua issue SOCIAL_PASS_USED_BUT_TICKET_CHARGED cho dung TRUONG HOP AN
+   TOAN (bill van 'open' — xem giai thich day du canh addIssue() cua check nay). Chi go DUNG 1 item Ve
+   Social khoi bill, KHONG dong den payment/finance transaction/socialPassUsage nao — day chinh la buoc
+   ma reconcileOpenTicketWithNewPass() le ra da lam xong tu luc mua goi nhung bi 1 loi dong bo lam mat
+   (nghi ngo la race voi listener .on('value') cua /bills — xem comment o addIssue()). Tu kiem tra lai
+   DAY DU dieu kien truoc khi xoa (bill/item con ton tai, bill van 'open', usage cho DUNG visitId nay
+   van con hieu luc) — an toan neu du lieu da doi khac di giua luc phat hien va luc bam SUA. */
+function repairSocialPassUsedButTicketCharged(args){
+  const b = state.bills.find(x=>x.id===args.billId);
+  if(!b) return { ok:false, reason:'Không tìm thấy bill để sửa (có thể đã bị xoá).' };
+  if(b.status !== 'open') return { ok:false, reason:'Bill không còn ở trạng thái OPEN (có thể đã được thu tiền) — dữ liệu đã thay đổi, cần Admin xem lại thủ công, không tự xoá khoản đã thu.' };
+  const itemIdx = (b.items||[]).findIndex(it=>it.id===args.itemId && it.type==='ticket' && it.visitId===args.visitId);
+  if(itemIdx === -1) return { ok:false, reason:'Không tìm thấy đúng khoản Vé Social để sửa (có thể đã bị gỡ hoặc dữ liệu thay đổi).' };
+  const hasActiveUsage = (state.socialPassUsages||[]).some(u=>u.visitId===args.visitId && !u.reversed);
+  if(!hasActiveUsage) return { ok:false, reason:'Lượt dùng Gói Social cho visit này không còn hiệu lực — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { items: b.items.map(it=>({ id:it.id, label:it.label, amount:it.amount })) };
+  const removed = b.items.splice(itemIdx, 1)[0];
+  logDataIntegrityRepair('SOCIAL_PASS_USED_BUT_TICKET_CHARGED', 'bill', b.id, before, { items: b.items.map(it=>({ id:it.id, label:it.label, amount:it.amount })) },
+    'Bill của "' + b.playerName + '" đã dùng Gói Social cho visit "' + args.visitId + '" nhưng vẫn còn khoản "Vé Social" ' + fmtVnd(removed.amount) + 'đ chưa thanh toán — gỡ khoản thừa này (đúng bước reconcileOpenTicketWithNewPass() lẽ ra đã làm lúc mua gói), không đụng đến payment/lượt gói nào.');
+  recalculateBillFinancialStatus(b);
+  markEntityDirty('bills', b.id);
+  saveState();
+  return { ok:true };
+}
 /* §FIX-DEBT-VISITSTUCK — repair cho issue ACTIVE_VISIT_BUT_ENDED_STATUS (p.status da "ket thuc phien"
    nhung Visit van ACTIVE) — day chinh la trieu chung ma Admin gap voi "A Lin"/"Béo": CHO NỢ bao thanh
    cong nhung Visit khong dong (xem giai thich day du tai allowBillDebt()). AN TOAN de tu dong sua vi:
@@ -13502,7 +13547,7 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -32199,15 +32244,33 @@ function runDataIntegrityCheck(){
 
     // 5) Mot Visit da dung Social Pass nhung Bill cua visit do van con khoan Ve Social 30.000d — vi
     // pham thang §10/§31 (KHONG BAO GIO duoc vua dung pass vua bi tinh Ve Social).
+    // §FIX-SOCIALPASS-TICKET-STUCK — Admin bao thuc te: "A San mua vé social 15+1 đã thanh toán 450k
+    // rồi, và app đã trừ 1 lượt chơi luôn rồi" nhung Vé Social 30k van con nguyen tren bill (dang
+    // "CHƯA THANH TOÁN"). DIEU TRA qua console dump xac nhan: reconcileOpenTicketWithNewPass() (goi
+    // NGAY sau purchaseSocialPass15Plus1()) DA chay dung — socialPassUsage duoc tao dung visitId, dung
+    // luc voi lan mua goi — nhung item "Vé Social" tren bill KHONG bi go (van con nguyen id item tao
+    // tu luc check-in). Nghi ngo goc re la 1 loai race dong bo (markEntityDirty ghi 1 phan bill, gan
+    // dung luc listener .on('value') toan bo collection /bills nhan 1 snapshot KHAC de tri ve — xem
+    // attachEntityListener() — ghi de mat 1 phan sua doi local chua kip xac nhan len server) — day la
+    // van de kien truc rong hon (anh huong moi noi dung markEntityDirty), CHUA du an toan de sua tan
+    // goc trong 1 lan nay. FIX TRUOC MAT (an toan, dung yeu cau "neu du bang chung deterministic thi
+    // cho sua"): bill nay VAN dang 'open' (chua ai tung thanh toan khoan Vé Social do — bang chung la
+    // bill.status, KHONG phai gia dinh) => xoa item Vé Social thua nay AN TOAN 100%, KHONG dong den
+    // tien/payment nao (đúng bằng việc go it.visitId nay ra khoi bill nhu reconcileOpenTicketWithNewPass
+    // le ra da lam). Bill DA 'paid' (that su bi tinh tien 2 lop) van giu AMBIGUOUS — can Admin xem xet
+    // hoan tien thu cong, khong an toan de tu dong xoa item khoi 1 bill da thu tien that.
     Object.keys(activeUsagesByVisit).forEach(visitId=>{
       state.bills.forEach(b=>{
         (b.items||[]).forEach(it=>{
           if(it.type === 'ticket' && it.visitId === visitId){
             const pname = playerName(activeUsagesByVisit[visitId][0].playerId);
+            const isUnpaidYet = b.status === 'open';
             addIssue('SocialPass','ERROR','Visit "' + visitId + '" của "' + pname + '" đã dùng Gói Social nhưng Bill "' + b.id + '" vẫn có khoản Vé Social 30.000đ (vi phạm §10 — dùng gói thì KHÔNG được tính vé lẻ).', {
               code:'SOCIAL_PASS_USED_BUT_TICKET_CHARGED', entityType:'bill', entityId:b.id, entityLabel:pname,
               impact:'Khách có thể bị tính tiền 2 lần cho cùng 1 lượt chơi: 1 lượt trong gói đã trả trước + 1 Vé Social 30.000đ.',
-              repairable:false, repairConfidence:'AMBIGUOUS'
+              repairable: isUnpaidYet, repairConfidence: isUnpaidYet ? 'DETERMINISTIC' : 'AMBIGUOUS',
+              repairFn: isUnpaidYet ? 'repairSocialPassUsedButTicketCharged' : undefined,
+              repairArgs: isUnpaidYet ? { billId: b.id, itemId: it.id, visitId } : undefined
             });
           }
         });
