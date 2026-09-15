@@ -2,6 +2,27 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.5 (2026-09-15) — §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — Admin báo: "Phú TP Bank" ra tới 3 bill
+  Vé Social 30.000đ trong 1 buổi chiều dù khách xác nhận KHÔNG hề rời sân, chỉ check-in đúng 1 lần. ĐIỀU
+  TRA qua console dump xác nhận: có 2 Visit liên tiếp của khách này bị đóng với `closeReason:'DATA_REPAIR'`
+  — đúng dấu vết của nút "SỬA AN TOÀN" cho issue ACTIVE_VISIT_BUT_ENDED_STATUS (repairActiveVisitButEndedStatus(),
+  §FIX-DEBT-VISITSTUCK). NGUYÊN NHÂN GỐC: nút "KẾT THÚC" (`endPlaying()`) CÓ CHỦ ĐÍCH set
+  `p.status='checked_out'` NHƯNG GIỮ NGUYÊN Visit ACTIVE khi khách còn nợ thật (bill Vé Social 30k chưa
+  thu) — đây là 1 TRẠNG THÁI TRUNG GIAN HỢP LỆ, chờ Staff thu tiền qua Bill modal tự mở ra ngay sau đó
+  (thu xong thì `markBillPaid()` mới thật sự đóng Visit). Check ACTIVE_VISIT_BUT_ENDED_STATUS trước đây
+  coi MỌI trường hợp "checked_out + Visit ACTIVE" đều là dữ liệu hỏng giống hệt case A Lin/Béo (CHO NỢ
+  quên đóng Visit) — nên "SỬA AN TOÀN" đã ĐÓNG NHẦM Visit đang hợp lệ chờ thu tiền của khách còn tại sân,
+  cắt đứt phiên chơi liên tục giữa chừng khiến lần check-in kế tiếp của CHÍNH khách đó bị hiểu nhầm là 1
+  lượt ghé sân hoàn toàn mới, tính thêm Vé Social 30k — lặp lại 2 lần trong buổi chiều tạo ra 3 bill cho
+  1 lượt chơi thật. FIX: check + hàm sửa giờ tự kiểm tra thêm — nếu Visit vẫn còn 1 bill 'open' có
+  Outstanding>0 (khoản THẬT chưa thu), đây là trạng thái hợp lệ đang chờ thu tiền, KHÔNG còn được liệt
+  vào "SỬA AN TOÀN" nữa (chỉ báo WARNING thông tin, gợi ý Staff thu tiền); chỉ giữ nguyên tự sửa được cho
+  đúng trường hợp gốc (không còn khoản nào chưa thu — an toàn 100% để đóng nốt). LƯU Ý: Phú TP Bank hiện
+  đang có 3 bill Vé Social 30k (2 bill "mồ côi" gắn với 2 Visit bị đóng nhầm + 1 bill của Visit đang hoạt
+  động) cho ĐÚNG 1 lượt chơi thật — Admin cần tự xem lại và chỉ giữ/thu đúng 1 khoản 30k, huỷ 2 khoản
+  trùng còn lại qua thao tác thủ công (không tự động xoá — cần Admin xác nhận đúng số tiền thật sự cần
+  thu).
+
   v1.43.4 (2026-09-15) — §FIX-SAVEDEBOUNCE-STARVATION — Admin báo LẠI (sau khi đã bấm "Kết thúc" xử lý
   xong các sân "đang chơi" từ trước hôm nay theo hướng dẫn trước): "đã bấm kết thúc các trận rồi, giờ
   lên bản mới nó hiện ra lại" — cùng y hệt các trận đó (đúng timer vẫn chạy tiếp từ lần trước, không
@@ -7714,7 +7735,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.4'; // §FIX-SAVEDEBOUNCE-STARVATION — saveState() dung 1 debounce toan cuc co the bi doi vo thoi han khi app ban ron, khien thay doi (vd Kết thúc trận) khong bao gio len duoc server — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.5'; // §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — SỬA AN TOÀN cho ACTIVE_VISIT_BUT_ENDED_STATUS truoc day dong nham Visit dang hop le cho thu tien (endPlaying()), gay tinh trung Vé Social — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13528,6 +13549,13 @@ function repairActiveVisitButEndedStatus(args){
   if(v.status !== 'ACTIVE') return { ok:false, reason:'Visit không còn ACTIVE — dữ liệu đã thay đổi, không cần sửa.' };
   const p = playerById(v.playerId);
   if(!p || !SESSION_ENDED_STATUSES.includes(p.status)) return { ok:false, reason:'Player không còn ở trạng thái đã kết thúc phiên — dữ liệu đã thay đổi, không cần sửa.' };
+  // §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — lop chan thu 2 (phong UI render sai/issue cu con luu tren
+  // client) — tu kiem tra lai NGAY TAI DAY truoc khi dong: neu Visit nay van co 1 bill 'open' con
+  // Outstanding>0, day la trang thai HOP LE endPlaying() dang co y de lai cho Staff thu tien (xem giai
+  // thich day du canh addIssue() cua check nay) — TUYET DOI KHONG dong, tranh cat dut phien dang cho
+  // thu tien that cua khach van con o san.
+  const hasRealUnpaidBillForVisit = state.bills.some(b=> b.visitId === v.id && b.status === 'open' && getBillOutstanding(b) > 0);
+  if(hasRealUnpaidBillForVisit) return { ok:false, reason:'Visit này vẫn còn bill chưa thanh toán — khả năng cao khách đang chờ thu tiền (endPlaying()), không an toàn để tự đóng. Vui lòng thu tiền qua Bill trước.' };
   const before = { status: v.status, checkOutAt: v.checkOutAt };
   completePlayerVisit(v.playerId, 'DATA_REPAIR');
   logDataIntegrityRepair('ACTIVE_VISIT_BUT_ENDED_STATUS', 'visit', v.id, before, { status: v.status, checkOutAt: v.checkOutAt },
@@ -32034,11 +32062,34 @@ function runDataIntegrityCheck(){
     // B) Active Visit van con nhung status da la 1 trong cac trang thai "ket thuc that su"
     // (checked_out/paid_and_left — waiting_payment/away KHONG tinh, vi theo dung thiet ke Visit VAN
     // phai giu ACTIVE cho 2 trang thai do, xem §PLAYER-7/§SOCIALFIX-15).
-    if(v && SESSION_ENDED_STATUSES.includes(p.status)) addIssue('Visit','WARNING', p.name + ' đang ở trạng thái "' + p.status + '" (đã kết thúc phiên) nhưng Visit vẫn ACTIVE (ACTIVE_VISIT_BUT_ENDED_STATUS).', {
-      code:'ACTIVE_VISIT_BUT_ENDED_STATUS', entityType:'visit', entityId:v.id, entityLabel:p.name,
-      impact:'Visit này sẽ mãi hiện trong cảnh báo "Phiên hôm qua chưa đóng" dù đã CHO NỢ/thu tiền xong (§FIX-DEBT-VISITSTUCK) — không ảnh hưởng tiền/bill.',
-      repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairActiveVisitButEndedStatus', repairArgs:{ visitId:v.id }
-    });
+    if(v && SESSION_ENDED_STATUSES.includes(p.status)){
+      // §FIX-ENDPLAYING-VISITCLOSED-PREMATURE — Admin bao: "Phú TP Bank" ra 3 bill Vé Social 30k trong
+      // 1 buoi chieu du khach KHONG he roi san — dieu tra qua console dump xac nhan 2 Visit lien tiep bi
+      // dong voi closeReason:'DATA_REPAIR' (dung la dau vet cua repairActiveVisitButEndedStatus() nay).
+      // NGUYEN NHAN GOC: endPlaying() (nut "KẾT THÚC") CO CHU DICH set p.status='checked_out' MA GIU
+      // NGUYEN Visit ACTIVE khi con no that (openTotal>0 — vd Vé Social 30k chua thu) — dung 1 TRANG
+      // THAI TRUNG GIAN HOP LE, cho Staff thu tien qua Bill modal tu mo ra ngay sau do (markBillPaid() se
+      // tu dong dong not Visit khi thu xong). Check nay TRUOC DAY coi MOI truong hop checked_out+Visit
+      // ACTIVE deu la du lieu hong nhu nhau (dung cho case A Lin/Béo — CHO NỢ that su quen dong Visit,
+      // §FIX-DEBT-VISITSTUCK), nen "SỬA AN TOÀN" đã ĐÓNG NHẦM Visit đang hợp lệ chờ thu tiền của khách
+      // VẪN CÒN Ở SÂN — cắt đứt Visit giữa chừng, khiến check-in lần kế tiếp của CHÍNH khách đó (vẫn đang
+      // chơi liên tục) bị hiểu nhầm là 1 lượt ghé sân HOÀN TOÀN MỚI, tính thêm 1 Vé Social 30k nữa. FIX:
+      // phân biệt rõ 2 trường hợp — nếu Visit này có 1 bill 'open' còn Outstanding>0 (khoản THẬT chưa
+      // thu, đúng chủ đích của endPlaying()), đây là trạng thái HỢP LỆ đang chờ Staff thu tiền — KHÔNG
+      // được liệt vào "SỬA AN TOÀN" (impact ghi rõ khả năng cao là do endPlaying() đang chờ thu tiền,
+      // không phải lỗi CHO NỢ quên đóng); chỉ giữ DETERMINISTIC cho đúng trường hợp KHÔNG còn khoản nào
+      // chưa thu (an toàn để đóng nốt, đúng tinh thần gốc của §FIX-DEBT-VISITSTUCK).
+      const hasRealUnpaidBillForVisit = state.bills.some(b=> b.visitId === v.id && b.status === 'open' && getBillOutstanding(b) > 0);
+      addIssue('Visit','WARNING', p.name + ' đang ở trạng thái "' + p.status + '" (đã kết thúc phiên) nhưng Visit vẫn ACTIVE (ACTIVE_VISIT_BUT_ENDED_STATUS).', {
+        code:'ACTIVE_VISIT_BUT_ENDED_STATUS', entityType:'visit', entityId:v.id, entityLabel:p.name,
+        impact: hasRealUnpaidBillForVisit
+          ? 'Visit này vẫn còn 1 bill CHƯA THANH TOÁN — rất có thể khách vừa bấm "KẾT THÚC" và đang đợi Staff thu tiền (hành vi cố ý của endPlaying(), không phải lỗi), KHÔNG được tự đóng Visit kẻo cắt đứt phiên đang chờ thu tiền của khách đang có mặt tại sân. Staff hãy thu tiền qua Bill bình thường — Visit sẽ tự đóng ngay sau đó.'
+          : 'Visit này sẽ mãi hiện trong cảnh báo "Phiên hôm qua chưa đóng" dù đã CHO NỢ/thu tiền xong (§FIX-DEBT-VISITSTUCK) — không ảnh hưởng tiền/bill.',
+        repairable: !hasRealUnpaidBillForVisit, repairConfidence: hasRealUnpaidBillForVisit ? 'AMBIGUOUS' : 'DETERMINISTIC',
+        repairFn: hasRealUnpaidBillForVisit ? undefined : 'repairActiveVisitButEndedStatus',
+        repairArgs: hasRealUnpaidBillForVisit ? undefined : { visitId:v.id }
+      });
+    }
     // D) activeVisitId tro toi 1 Visit khong con ton tai hoac da COMPLETED — tham chieu lech.
     if(p.activeVisitId){
       const refVisit = state.playerVisits.find(x=>x.id===p.activeVisitId);
