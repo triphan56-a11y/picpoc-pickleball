@@ -2,6 +2,45 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.42.1 (2026-09-15) — §FIX-DEBTBILL-BLOCKS-NEWSESSION-V2 — Ngay sau v1.42.0, Admin làm theo hướng dẫn
+  tạm thời (thêm tay "Khoản khác 30.000đ" vào Bill của A Lin) nhưng kết quả sai: badge đổi thành "NỢ CŨ
+  97K" (67K + 30K CỘNG CHUNG) thay vì tách riêng 67K nợ cũ với 30K của hôm nay. NGUYÊN NHÂN: bản v1.42.0
+  chỉ sửa trường hợp player có SẴN ≥2 bill 'open' cùng lúc (ưu tiên bill không nợ); nhưng A Lin lúc đó chỉ
+  có DUY NHẤT 1 bill 'open' (chính là bill nợ cũ) — không có bill nào khác để "ưu tiên", nên
+  `getOpenBillForPlayer()` vẫn buộc phải trả về đúng bill nợ cũ đó (lựa chọn duy nhất), và "+ Khoản khác"
+  (dùng chung `ensureOpenBillForPlayer()`) tiếp tục cộng dồn vào bill đó y hệt lỗi gốc. FIX SÂU HƠN:
+  `ensureOpenBillForPlayer()` giờ kiểm tra thêm — bill tìm được chỉ được coi là "bill của phiên HIỆN TẠI"
+  nếu `bill.visitId` khớp đúng Visit đang hiệu lực bây giờ; một bill nợ cũ luôn gắn với 1 Visit CŨ đã
+  COMPLETED từ trước (do `allowBillDebt()` luôn đóng Visit kèm theo khi ghi nợ) nên visitId chắc chắn
+  khác Visit mới của lần check-in hôm nay — tự động không còn được coi là "reusable", ép tạo 1 bill hoàn
+  toàn mới cho phiên hiện tại (dù trước đó có bao nhiêu bill 'open' khác hay không).
+  LƯU Ý: khoản 30.000đ Admin vừa thêm tay đã bị gộp nhầm vào bill nợ cũ của A Lin (giờ đang hiện sai
+  thành 97K) — cần dọn tay: xoá dòng "Khoản khác 30.000đ" vừa thêm khỏi bill nợ cũ (đưa về đúng 67K), rồi
+  thêm lại khoản đó vào 1 bill MỚI riêng cho phiên hôm nay (sau khi bản này deploy, thao tác thêm tiếp
+  theo sẽ tự tạo đúng bill mới, không cần can thiệp gì thêm).
+
+  v1.42.0 (2026-09-15) — §FIX-DEBTBILL-BLOCKS-NEWSESSION — Admin hỏi: "A Lin nợ cũ 67k, hôm nay check-in
+  Social lại, sao bill vẫn là 67k chứ không phải 97k?" (tức không thấy cộng thêm 30k Vé Social cho lượt
+  chơi hôm nay). ĐIỀU TRA: đây là lỗi tài chính THẬT SỰ, không phải chỉ hiển thị — bill "NỢ CŨ 67K" của A
+  Lin vẫn ở status='open' (đúng thiết kế của "CHO NỢ" — `allowBillDebt()` cố ý KHÔNG đổi status vì tiền
+  thật vẫn còn thiếu), nên khi A Lin check-in lại hôm nay, `ensureOpenBillForPlayer()` gọi
+  `getOpenBillForPlayer()` và tìm thấy NGAY bill nợ cũ này (vẫn đang 'open') rồi TÁI SỬ DỤNG nó làm "bill
+  hiện tại" của phiên mới — thay vì tạo bill mới. Vì đoạn code cộng Vé Social CHỈ nằm trong nhánh "tạo
+  bill mới" (không chạy lại trên bill có sẵn), hậu quả là phiên chơi hôm nay hoàn toàn KHÔNG được tính Vé
+  Social/trừ Gói Social nào cả — khách chơi "miễn phí" ngoài ý muốn. Đây CHÍNH LÀ lớp lỗi đã từng được ghi
+  nhận một phần ở §HOTFIX-STALEDEBT1 (trường hợp "Nĩn") nhưng lần đó CHỈ sửa phần hiển thị (đổi badge
+  thành "NỢ CŨ" màu đỏ để Staff tự biết mà xử lý tay) — chưa sửa tận gốc phần tính tiền tự động, nên bug
+  vẫn âm thầm lặp lại. FIX TẬN GỐC: `getOpenBillForPlayer()` giờ ưu tiên trả về 1 bill 'open' KHÔNG có
+  `debtCreatedAt` (tức chưa qua CHO NỢ) nếu có; chỉ fallback về bill nợ cũ khi không còn bill mở nào khác
+  — nhờ vậy `ensureOpenBillForPlayer()` sẽ tự tạo đúng 1 bill MỚI cho phiên hôm nay (kèm Vé Social/trừ
+  Gói Social như bình thường), còn bill nợ cũ giữ nguyên 100% không đụng tới, tiếp tục hiện "NỢ CŨ" độc
+  lập tới khi được thu. Đồng thời chỉnh cảnh báo Data Integrity "2 OPEN BILL cùng lúc" để không báo nhầm
+  cho pattern hợp lệ mới này (1 bill nợ cũ + 1 bill phiên đang hoạt động không còn là bất thường).
+  LƯU Ý QUAN TRỌNG: bản sửa này chỉ áp dụng cho các lần CHECK-IN TỪ SAU KHI DEPLOY trở đi — phiên hôm nay
+  của A Lin đã check-in TRƯỚC khi có bản vá này nên vẫn đang thiếu đúng khoản Vé Social/lượt Gói Social
+  của hôm nay, Admin cần vào Bill của A Lin bấm "+ Thêm sản phẩm / dịch vụ khác" để bổ sung tay cho lần
+  này (các lần check-in sau sẽ tự động đúng, không cần làm tay nữa).
+
   v1.41.14 (2026-09-14) — §FIX-PURGE-LEGACY-ORPHAN-VISIT — Admin xem tiếp mục "Visit" trong "Kiểm tra dữ
   liệu": cảnh báo UNRESOLVED_LEGACY_ORPHAN_VISIT cho Visit "QA Test Player" (playerId không còn tồn tại,
   đã COMPLETED từ lâu, chỉ còn là dữ liệu lịch sử) và yêu cầu dọn sạch. Thiết kế gốc (§DATAHEALTHV3-3) cố
@@ -7560,7 +7599,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.41.14'; // §FIX-PURGE-LEGACY-ORPHAN-VISIT — Them nut SUA AN TOAN xoa han Visit orphan da COMPLETED (QA Test Player) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.42.1'; // §FIX-DEBTBILL-BLOCKS-NEWSESSION-V2 — Sua tiep truong hop CHI CON 1 bill mo (bill no cu) van bi gop nham khoan moi vao — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -11359,8 +11398,28 @@ function testNoDuplicateSocialAfterPaidBillNewPurchase(){
 if(typeof window !== 'undefined') window.testNoDuplicateSocialAfterPaidBillNewPurchase = testNoDuplicateSocialAfterPaidBillNewPurchase;
 
 /* ================= BILL (phien Social — gop moi khoan vao 1 bill mo) ================= */
+// §FIX-DEBTBILL-BLOCKS-NEWSESSION — Admin phat hien: "A Lin" co "NỢ CŨ 67K" (tu 1 lan CHO NỢ truoc do —
+// allowBillDebt() CHU DICH KHONG doi bill.status, giu nguyen 'open' vi tien that van con thieu), hom nay
+// check-in lai Social nhung Bill van hien dung 67.000đ CU, KHONG cong them Vé Social moi cua hom nay.
+// NGUYEN NHAN GOC: getOpenBillForPlayer() truoc day chi lay bill 'open' DAU TIEN tim thay bang .find()
+// (khong phan biet loai) — trong khi ensureOpenBillForPlayer() dua theo dung ham nay de quyet dinh "co
+// bill mo san de dung khong hay phai tao bill moi" (1 nguoi CHI co 1 open bill theo thiet ke). Vi bill NỢ
+// CŨ van con status='open' (dung thiet ke cua CHO NỢ — xem allowBillDebt()), no bi hieu NHAM la "bill mo
+// hien tai" cua phien HOM NAY, khien ensureOpenBillForPlayer() TAI SU DUNG bill NỢ CŨ thay vi tao bill
+// moi cho phien check-in moi — hau qua: khong bao gio cong Vé Social cho lan check-in nay (logic them
+// Vé Social chi nam trong nhanh "tao bill moi", khong chay lai tren bill co san). Day CHINH LA loai bug
+// da tung duoc ghi nhan 1 phan o §HOTFIX-STALEDEBT1 (voi "Nĩn") nhung LAN DO CHI SUA HIEN THI (doi badge
+// thanh "NỢ CŨ" mau do de Staff tu biet ma xu ly tay), CHUA sua tan goc phan tinh tien tu dong. FIX tan
+// goc: 1 bill da co `debtCreatedAt` (tuc da qua CHO NỢ, phien cu do THAT SU da ket thuc — allowBillDebt()
+// luon dong Visit kem theo) khong con duoc coi la "bill mo cho phien HIEN TAI" nua — uu tien tra ve 1
+// open bill KHAC (chua CHO NỢ) neu co; neu KHONG co bill open nao khac, fallback ve bill no cu nhu truoc
+// (giu nguyen hanh vi cac noi dang dung ham nay de TRA CUU/hien thi no cu, khong pha vo gi). Nho vay
+// ensureOpenBillForPlayer() se tu dong tao 1 bill MOI rieng cho phien hom nay (kem Vé Social dung), con
+// bill no cu van giu nguyen 100% khong dong cham (van con "NỢ CŨ 67K" doc lap cho toi khi thu that).
 function getOpenBillForPlayer(playerId){
-  return state.bills.find(b => b.playerId === playerId && b.status === 'open');
+  const opens = state.bills.filter(b => b.playerId === playerId && b.status === 'open');
+  if(!opens.length) return null;
+  return opens.find(b => !b.debtCreatedAt) || opens[0];
 }
 function billTotal(bill){
   // §FIX-CRASH-1 — guard `bill.items` co the undefined tren 1 ban ghi loi (xem giai thich day du tai
@@ -12376,7 +12435,6 @@ function payBillWithCredit(billId, amount, operationId){
 }
 function ensureOpenBillForPlayer(player){
   let bill = getOpenBillForPlayer(player.id);
-  if(bill) return bill;
   // §SOCIALFIX-3/12, §SOCIALFIX-V2-2/8/9 — lay Visit HIEU LUC de gan visitId cho bill/Ve Social — day
   // la nguon "entitlement" DUY NHAT cho Ve Social, khong con suy tu "co bill mo hay khong" (§26: BILL
   // MOI != VISIT MOI). Dung getEffectiveVisitForSocialCheck() thay vi goi thang getActiveVisitForPlayer()
@@ -12386,6 +12444,17 @@ function ensureOpenBillForPlayer(player){
   // tien truoc khi Visit duoc tao — hiem, xem reopenPlayerSession() — hoac player khong con onsite).
   const effectiveVisit = (typeof getEffectiveVisitForSocialCheck === 'function') ? getEffectiveVisitForSocialCheck(player.id) : null;
   const visitId = effectiveVisit ? effectiveVisit.id : null;
+  // §FIX-DEBTBILL-BLOCKS-NEWSESSION (tiep) — Admin phat hien: du getOpenBillForPlayer() da uu tien bo
+  // qua bill co debtCreatedAt, truong hop CHI CON DUY NHAT 1 bill 'open' (chinh la bill NỢ CŨ, chua co
+  // bill nao khac) van bi tra ve do la lua chon DUY NHAT — "+ SẢN PHẨM"/"Khoản khác" cho lan check-in
+  // MOI van vo tinh cong don vao dung bill no cu do (thuc te xay ra voi A Lin: 67K no cu + 30K Ve Social
+  // hom nay bi GOP thanh "NỢ CŨ 97K" thay vi tach rieng). Kiem tra CHAT hon: bill tim duoc chi duoc coi
+  // la "cua phien HIEN TAI" neu no thuoc DUNG Visit hieu luc bay gio (bill.visitId === visitId) — 1 bill
+  // NỢ CŨ luon gan voi 1 Visit CU da COMPLETED tu truoc (allowBillDebt() luon dong Visit kem theo), nen
+  // visitId cua no se KHAC voi Visit MOI cua lan check-in nay — tu dong KHONG duoc coi la reusable nua,
+  // ep tao 1 bill hoan toan moi ben duoi (dung cho phien hien tai), giu bill no cu nguyen ven doc lap.
+  if(bill && visitId && bill.visitId !== visitId) bill = null;
+  if(bill) return bill;
   bill = { id: uid('bill'), playerId: player.id, playerName: player.name, status:'open', items: [], openedAt: Date.now(), paidAt: null, visitId };
   /* §SOCIALFIX-2/5/26 — FIX GOC: truoc day chi kiem tra "socialTicketEnabled" roi THEM VE SOCIAL VO
      DIEU KIEN moi khi tao 1 bill moi (vd sau khi bill truoc da PAID, player mua them nuoc) — day la
@@ -31215,9 +31284,15 @@ function runDataIntegrityCheck(){
 
   // ===== PAYMENT / BILL =====
   // 1) Mot player co 2 OPEN BILL
+  // §FIX-DEBTBILL-BLOCKS-NEWSESSION — tu ban co getOpenBillForPlayer() uu tien bo qua bill da CHO NỢ
+  // (debtCreatedAt) khi tim "bill mo cho phien hien tai", 1 player co the HOP LE co 2 bill 'open' cung
+  // luc: 1 bill NỢ CŨ (debtCreatedAt, cho thu sau) + 1 bill dang hoat dong cho phien hom nay — day KHONG
+  // con la bat thuong nua, chi dem cac open bill KHONG co debtCreatedAt (that su cung 1 loai/cung tranh
+  // gianh vai tro "bill hien tai") vao canh bao nay, tranh bao nham hang loat cho cac truong hop CHO NỢ
+  // hop le (dung y het tinh than voi WRITE_OFF_TEST_BILL_INFO/§DATAHEALTH-FIX-WRITEOFF-*).
   const billsByPlayer = {};
   state.bills.forEach(b=>{
-    if(b.status!=='open') return;
+    if(b.status!=='open' || b.debtCreatedAt) return;
     billsByPlayer[b.playerId] = (billsByPlayer[b.playerId]||0) + 1;
   });
   Object.keys(billsByPlayer).forEach(pid=>{
