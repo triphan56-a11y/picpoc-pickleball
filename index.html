@@ -2,6 +2,25 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.1 (2026-09-15) — §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — Sau khi chạy "SỬA CÁC LỖI AN TOÀN
+  (9)" cho các bill FULLY_COLLECTED_BUT_OPEN ở v1.43.0, Kiểm tra dữ liệu lộ ra thêm các lỗi
+  COLLECTED_EXCEEDS_GENERATED MỚI cho "A Lin (Khối Bia)" (Collected 52.000đ / Generated 30.000đ) và "Bim
+  (Khương Duy)" (Collected 51.000đ / Generated 30.000đ). ĐIỀU TRA qua console dump toàn bộ bill/payment
+  của A Lin phát hiện đây KHÔNG PHẢI lỗi mới, mà là VẾT TÍCH CŨ còn sót lại từ bug tái sử dụng nhầm bill
+  (`getOpenBillForPlayer()`/`ensureOpenBillForPlayer()` — đã sửa tận gốc ở v1.42.0/v1.42.1): các bill này
+  đã ĐÓNG (status='paid', tiền đã thu và đã ghi nhận doanh thu đúng lúc thu), nhưng danh sách item hiện
+  tại bị rút gọn hơn so với số tiền đã thu thật (ví dụ bill chỉ còn "Vé Social 30.000đ" nhưng payment gắn
+  với bill đó là 52.000đ — chênh 22.000đ item đã "biến mất" khỏi bill sau khi tiền đã thu, do lúc đó bill
+  bị dùng lẫn giữa 2 lượt ghé sân khác nhau). Vì bug gốc đã được vá từ v1.42.x nên đây chỉ là "sẹo" dữ
+  liệu cũ, không phải lỗi đang tiếp diễn. FIX: nâng cấp COLLECTED_EXCEEDS_GENERATED từ chỗ LUÔN
+  repairable:false/AMBIGUOUS (đúng và cần thiết cho bill 'open' — có thể là xung đột đa thiết bị THẬT sự
+  đang diễn ra, không an toàn để tự sửa) thành CÓ THỂ tự sửa AN TOÀN riêng cho bill đã 'paid' (đã đóng
+  hẳn, không còn nhận thêm allocation mới): `repairCollectedExceedsGeneratedLegacyItem()` thêm 1 item loại
+  "Điều chỉnh dữ liệu lịch sử" đúng bằng phần chênh lệch để billTotal() khớp lại với số tiền đã thu thật —
+  CHỈ đồng bộ lại sổ sách cho khớp tiền ĐÃ có trong quỹ từ trước, KHÔNG tạo thêm 1 đồng doanh thu mới,
+  KHÔNG đụng đến payment/allocation nào. Bill 'open' vẫn giữ nguyên AMBIGUOUS như cũ, cần Admin tự kiểm
+  tra thủ công.
+
   v1.43.0 (2026-09-15) — §FIX-DEBTCOLLECT-SELFRACE-ROLLBACK — Admin bấm "THU NỢ" cho A Lin (2 bill: 67K
   nợ cũ hôm qua + 52K bill hôm nay, thu 1 lần cùng lúc). Kết quả bất thường: chỉ 1 khoản (52K) được ghi
   nhận doanh thu bình thường, khoản còn lại (67K) tự động hiện "ĐÃ HOÀN TÁC" trong Thu & chi — dù Admin
@@ -7634,7 +7653,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.0'; // §FIX-DEBTCOLLECT-SELFRACE-ROLLBACK — Sua loi race condition tu roll lai chinh minh khien THU NỢ nhieu bill co the mat 1 phan doanh thu — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.1'; // §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — Bill da PAID bi Collected>Generated (vet tich bug cu tai su dung bill, da sua goc o v1.42.x) gio co the SUA AN TOAN tu dong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13340,6 +13359,38 @@ function repairFullyCollectedButOpenBill(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — issue COLLECTED_EXCEEDS_GENERATED (Collected > Generated)
+   vốn được thiết kế CỐ Ý để repairable:false/AMBIGUOUS vì trên 1 bill đang 'open' điều này CÓ THỂ là
+   dấu hiệu xung đột đa thiết bị đang diễn ra (double-collect thật) — không an toàn để tự sửa. Nhưng khi
+   bill đã ở trạng thái 'paid' (đã đóng, không còn nhận thêm allocation mới, doanh thu ĐÃ được ghi nhận
+   đúng qua recordFinanceTransactionForPayment() tại đúng thời điểm thu tiền — xem createBillPayment()),
+   phát hiện thực tế trên dữ liệu "A Lin (Khối Bia)" (Admin cung cấp qua console: bill_mu2e98iwttsic,
+   bill_mtttlubmc6g0x, bill_mtsbt1yx19bq6) cho thấy đây là VẾT TÍCH CŨ của bug ensureOpenBillForPlayer()/
+   getOpenBillForPlayer() tái sử dụng nhầm bill (đã sửa tận gốc ở v1.42.0/v1.42.1 — §FIX-DEBTBILL-BLOCKS-
+   NEWSESSION/-V2): danh sách item của bill đã bị ghi đè/rút gọn SAU KHI tiền đã được thu và ghi nhận
+   doanh thu, khiến billTotal() hiện tại thấp hơn số đã thu thật. KHÔNG có cách nào phục hồi lại CHÍNH XÁC
+   item nào đã mất (lịch sử không còn lưu), và KHÔNG được tạo thêm doanh thu mới (tiền đã ghi nhận đủ từ
+   trước) hay đổi payment/allocation nào. FIX an toàn: với bill ĐÃ 'paid', thêm 1 item loại 'other' ghi rõ
+   là "Điều chỉnh dữ liệu lịch sử" đúng bằng phần chênh lệch (Collected − Generated) để billTotal() khớp
+   lại với số đã thu — chỉ đồng bộ SỔ SÁCH cho khớp với tiền THẬT đã vào quỹ từ trước, không phát sinh
+   thêm 1 đồng doanh thu nào, không đụng đến payment/allocation/finance transaction nào cả. */
+function repairCollectedExceedsGeneratedLegacyItem(args){
+  const b = state.bills.find(x=>x.id===args.billId);
+  if(!b) return { ok:false, reason:'Không tìm thấy bill để sửa (có thể đã bị xoá).' };
+  if(b.status !== 'paid') return { ok:false, reason:'Bill không còn ở trạng thái PAID — dữ liệu đã thay đổi, cần Admin xem lại thủ công.' };
+  const generated = getBillGenerated(b);
+  const collected = getBillCollected(b);
+  const diff = collected - generated;
+  if(!(diff > 0)) return { ok:false, reason:'Bill không còn lệch Collected > Generated — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { items: (b.items||[]).map(it=>({ id:it.id, label:it.label, amount:it.amount })) };
+  if(!Array.isArray(b.items)) b.items = [];
+  b.items.push({ id: uid('bi'), type:'other', label:'Điều chỉnh dữ liệu lịch sử (khớp số đã thu trước đó)', amount: diff, qty:1, unitPrice: diff, timestamp: Date.now(), isDataRepairAdjustment:true });
+  logDataIntegrityRepair('COLLECTED_EXCEEDS_GENERATED', 'bill', b.id, before, { items: b.items.map(it=>({ id:it.id, label:it.label, amount:it.amount })) },
+    'Bill của "' + b.playerName + '" đã PAID nhưng Collected (' + fmtVnd(collected) + ') vượt Generated (' + fmtVnd(generated) + ') — vết tích cũ của bug tái sử dụng bill (đã sửa ở v1.42.0/v1.42.1) khiến item bị rút gọn sau khi đã thu tiền. Thêm item "Điều chỉnh dữ liệu lịch sử" ' + fmtVnd(diff) + 'đ để đồng bộ lại sổ sách khớp với tiền đã thu — KHÔNG tạo thêm doanh thu mới, không đụng payment/allocation.');
+  markEntityDirty('bills', b.id);
+  saveState();
+  return { ok:true };
+}
 /* §DATAHEALTH-FIX-SOCIALPASS-RECONCILE — sua issue SOCIAL_PASS_RECONCILE_MISMATCH (usedBeforeImport +
    appUsed + remainingSessions != totalSessions). Trong 3 thanh phan: usedBeforeImport la hang so Admin
    tu nhap 1 lan luc import (dang tin cay, khong tu doi), appUsed la SO DEM TRUC TIEP tu
@@ -13427,7 +13478,7 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -31474,10 +31525,17 @@ function runDataIntegrityCheck(){
     if(!b) return;
     const generated = getBillGenerated(b);
     if(billActiveAllocSum[bid] > generated){
+      // §FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM — bill 'open' van giu AMBIGUOUS (co the la xung dot
+      // da thiet bi dang dien ra, khong an toan tu sua). Bill DA 'paid' (dong hoan toan, khong con nhan
+      // allocation moi) thi day la vet tich cu cua bug tai su dung bill (da sua goc o v1.42.0/v1.42.1) —
+      // an toan de tu dong dong bo lai item cho khop tien da thu, xem repairCollectedExceedsGeneratedLegacyItem().
+      const isPaidBill = b.status === 'paid';
       addIssue('Payment','ERROR','Bill của "' + b.playerName + '" có tổng Collected (' + fmtVnd(billActiveAllocSum[bid]) + ') VƯỢT QUÁ Generated (' + fmtVnd(generated) + ') — vi phạm nguyên tắc Collected ≤ Generated.', {
         code:'COLLECTED_EXCEEDS_GENERATED', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
         impact:'Có thể do 2 thiết bị cùng thu tiền 1 lúc hoặc lỗi cộng dồn allocation — cần Admin kiểm tra và void bớt 1 phần thanh toán thừa.',
-        repairable:false, repairConfidence:'AMBIGUOUS'
+        repairable: isPaidBill, repairConfidence: isPaidBill ? 'DETERMINISTIC' : 'AMBIGUOUS',
+        repairFn: isPaidBill ? 'repairCollectedExceedsGeneratedLegacyItem' : undefined,
+        repairArgs: isPaidBill ? { billId: b.id } : undefined
       });
     }
   });
