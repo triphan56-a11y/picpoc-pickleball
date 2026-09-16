@@ -2,6 +2,26 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.7 (2026-09-16) — §FIX-FINISHMATCH-GHOST-COURT — Admin báo LẦN 2 (sau cả bản v1.43.4 sửa debounce
+  hôm qua): đã tải lại trang nhận bản mới, bấm "Kết thúc" hẳn hoi cho Sân 1/2/3, nhưng qua ngày hôm sau
+  y hệt 3 trận "ma" đó (cùng đúng những cặp đấu cũ, đồng hồ vẫn chạy tiếp — không phải trận mới) lại xuất
+  hiện. Bản v1.43.4 chỉ sửa được 1 nửa vấn đề (đảm bảo THAY ĐỔI CỦA app luôn kịp lên server trong ~1.5s)
+  — LẦN NÀY điều tra sâu vào chính hàm `finishMatch()` (nút "Kết thúc") phát hiện 1 BUG LOGIC RIÊNG,
+  KHÔNG liên quan debounce: hàm này xác nhận việc xoá qua 1 Firebase `.transaction()` trên
+  `/courts/{courtId}` — nếu giá trị hiện tại trên SERVER là `null` (không có gì), code CŨ giả định NGAY
+  đây luôn là do "1 thiết bị khác vừa kết thúc trận này trước ta" (đúng với 1 xung đột 2-thiết-bị THẬT),
+  chỉ hiện toast thông báo rồi DỪNG LẠI — hoàn toàn bỏ qua khả năng `null` đơn giản là vì bản ghi trận
+  này CHƯA TỪNG được ghi lên server thật (di sản từ đúng lỗi debounce §FIX-SAVEDEBOUNCE-STARVATION TRƯỚC
+  KHI có bản v1.43.4 — lúc đó 1 trận được tạo ra có thể chỉ tồn tại trong bộ nhớ cache cục bộ của 1 máy,
+  không bao giờ lên được Firebase). Hậu quả: `state.courts[courtId]` cục bộ KHÔNG BAO GIỜ bị xoá trong
+  trường hợp này — bấm "Kết thúc" bao nhiêu lần cũng vô tác dụng, và sau F5 (đọc lại từ cache cục bộ)
+  trận "ma" lại "sống lại" y hệt. FIX: khi transaction bị huỷ, ĐỐI CHIẾU lại `state.courts[courtId]` cục
+  bộ THEO ĐÚNG giá trị THẬT SỰ trên server (Firebase luôn trả về snapshot hiện tại ngay cả khi transaction
+  bị huỷ) — nếu server thật sự có 1 trận KHÁC thì đồng bộ theo đúng trận đó; nếu server KHÔNG có gì cả
+  (đúng trường hợp "ma" cục bộ) thì XOÁ HẲN local ngay lập tức (không tạo lịch sử/gamesPlayed/PPR giả,
+  vì server chưa từng xác nhận trận này tồn tại thật). Sau bản này, bấm "Kết thúc" trên 3 sân hiện tại sẽ
+  dọn sạch dứt điểm, không còn tái diễn.
+
   v1.43.6 (2026-09-15) — §FIX-CANCELOPENBILL — Admin hỏi "làm sao để void 2 bill 30k của Phú TP Bank"
   (2 bill Vé Social trùng do lỗi §FIX-ENDPLAYING-VISITCLOSED-PREMATURE ở bản trước) — RÀ SOÁT lại toàn
   bộ Bill modal phát hiện app THỰC SỰ CHƯA CÓ cách nào trong UI để Staff/Admin tự huỷ 1 bill 'open' chưa
@@ -7748,7 +7768,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.6'; // §FIX-CANCELOPENBILL — Them nut "Huỷ bill" cho bill 'open' chua thu dong nao (truoc day khong co cach nao huy 1 bill tinh nham/trung tu UI) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.7'; // §FIX-FINISHMATCH-GHOST-COURT — "Kết thúc" tran khong xoa duoc san "ma" chi ton tai cuc bo (server khong co gi) — gio tu don dung local theo su that server — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -15001,10 +15021,37 @@ function finishMatch(courtId, matchResult){
     if(result && result.committed){
       applyFinishMatchLocally(courtId, m, matchResult);
     } else {
-      // Thiet bi khac da ket thuc (hoac bat dau tran moi) tran nay truoc -> KHONG tao history
-      // trung lap; chi dong bo lai local theo trang thai server (scoped listener se tu cap nhat
-      // /courts sau do), bao nhe cho Staff biet vi sao khong thay gi xay ra khi bam nut.
-      showToast('Trận này vừa được kết thúc trên thiết bị khác.');
+      // §FIX-FINISHMATCH-GHOST-COURT — Admin bao 2 lan (kem sau ca v1.43.4): bấm "Kết thúc" xong, sân
+      // "ma" vẫn quay lại y hệt sau khi tải lại trang. NGUYEN NHAN GOC: khi transaction o tren bi HUY vi
+      // `!remoteCourt` (server KHONG co gi tai /courts/{courtId} — remoteCourt=null), code CU o day GIA
+      // DINH day luon la "thiet bi khac vua ket thuc truoc ta" (dung that voi 1 xung dot 2-thiet-bi
+      // THAT), roi CHI hien toast + KHONG lam gi voi state.courts[courtId] cuc bo ca — bo qua hoan toan
+      // kha nang server null la vi ban ghi nay CHUA TUNG duoc ghi len server (vd bi ket qua cua chinh
+      // §FIX-SAVEDEBOUNCE-STARVATION tu TRUOC ban v1.43.4, luc do 1 tran duoc tao ra CHI ton tai o local
+      // localStorage cua CHINH thiet bi nay, khong bao gio len duoc Firebase). Ket qua: local
+      // state.courts[courtId] KHONG BAO GIO bi xoa, nen sau F5/tai lai (doc lai localStorage) no "song
+      // lai" y het, "Kết thúc" bao nhieu lan cung vo tac dung — dung trieu chung Admin gap phai. FIX:
+      // thay vi CHI hien toast suong, DOI CHIEU lai state.courts[courtId] cuc bo THEO DUNG gia tri THAT
+      // SU tren server (result.snapshot — Firebase tra ve gia tri hien tai ngay ca khi transaction bi
+      // huy) — neu server that su co 1 tran KHAC (matchId khac) thi cap nhat local theo dung tran do;
+      // neu server KHONG co gi ca (null — dung truong hop ban ghi "ma" chi ton tai cuc bo) thi XOA HAN
+      // ghost nay khoi local NGAY TAI DAY (KHONG goi applyFinishMatchLocally — khong tao history/gamesPlayed/
+      // PPR gia cho 1 tran ma server chua bao gio xac nhan la co that). Chi dong vao neu chua co code
+      // nao khac (vd 1 tran moi vua duoc gan) ghi de state.courts[courtId] ngay giua luc cho transaction.
+      if(state.courts[courtId] === m){
+        const serverVal = result ? result.snapshot : null;
+        if(serverVal && serverVal.matchId && serverVal.matchId !== matchId){
+          state.courts[courtId] = serverVal;
+          showToast('Sân này vừa được dùng cho trận khác trên thiết bị khác — đã cập nhật lại đúng trận hiện tại.');
+        } else {
+          delete state.courts[courtId];
+          showToast('Sân trống này không còn tồn tại trên máy chủ (dữ liệu cũ chỉ có ở máy này) — đã dọn lại.');
+        }
+        saveState();
+        renderLiveTab();
+      } else {
+        showToast('Trận này vừa được kết thúc trên thiết bị khác.');
+      }
     }
   }).catch(err=>{ console.error('[match] finish confirm error', err); handleWriteError('courts','transaction',err); applyFinishMatchLocally(courtId, m, matchResult); });
 }
