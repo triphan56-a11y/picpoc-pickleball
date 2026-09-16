@@ -2,6 +2,27 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.8 (2026-09-16) — §FIX-LISTENER-OVERWRITE-PENDING-WRITE — Admin báo: ~9 khách đã thanh toán và đã
+  bấm "KẾT THÚC" xong xuôi, nhưng bill + số tiền vẫn hiện lại y hệt trên màn "ĐANG Ở SÂN". Kiểm tra bằng 2
+  lần dump console CÁCH NHAU VÀI PHÚT trên cùng 1 bill của "A Hùng (Hùng Trang)": lần 1 (trước khi tải lại
+  trang) bill có status:"paid" với payment hợp lệ đã gắn đúng; lần 2 (sau khi tải lại trang) CHÍNH bill đó
+  — cùng id, cùng item, cùng visit — lại quay về status:"open", không hề có bill mới nào được tạo ra. Tức
+  là dữ liệu ĐÃ THANH TOÁN THẬT SỰ bị mất/ghi đè, không phải lỗi hiển thị. Root cause: mỗi node dữ liệu
+  (bills, players, courts...) có 1 "listener" lắng nghe Firebase và mỗi khi có bất kỳ thay đổi nào (từ máy
+  nào cũng vậy, kể cả chính máy này) sẽ THAY THẾ TOÀN BỘ danh sách local bằng đúng bản snapshot nhận được —
+  không phân biệt bản đó mới hay cũ. Khi Staff bấm thanh toán, app dùng 1 "transaction" riêng để ghi
+  status:'paid' lên server — nhưng đúng lúc transaction đó đang chạy, listener nói trên có thể nhận được 1
+  snapshot 'value' CHỤP TRƯỚC khi transaction ghi xong (do cách Firebase gom nhiều sự kiện lại), và listener
+  vô tình "hoàn tác ngược" bill về trạng thái cũ ngay sau khi vừa thanh toán xong — y hệt bằng chứng thu
+  được trên bill của A Hùng. Đây rất có thể cũng là nguyên nhân sâu xa của 2 lỗi trước đó trong phiên này:
+  vé Social không tự gỡ sau khi mua Gói Social (v1.43.3) và một phần lỗi sân "ma" (v1.43.7) — dù 2 bản đó
+  đã có cách vá khác cho từng trường hợp cụ thể. Sửa tận gốc: thêm cơ chế "đánh dấu đang ghi" — ngay trước
+  khi 1 transaction thanh toán bắt đầu, bill đó được đánh dấu "đang có giao dịch riêng chạy"; trong lúc đó,
+  nếu listener nhận được snapshot mới, nó sẽ GIỮ NGUYÊN bản dữ liệu LOCAL hiện tại cho đúng bill đó (bỏ qua
+  bản snapshot có thể bị cũ) thay vì ghi đè; ngay khi transaction kết thúc (thành công hay thất bại) đánh
+  dấu được gỡ, listener lần kế tiếp sẽ lấy đúng bản mới nhất như bình thường. Áp dụng cho cả 3 đường thanh
+  toán: thanh toán 1 bill, thanh toán nhiều bill cùng lúc, và thanh toán chia nhỏ/cho nợ.
+
   v1.43.7 (2026-09-16) — §FIX-FINISHMATCH-GHOST-COURT — Admin báo LẦN 2 (sau cả bản v1.43.4 sửa debounce
   hôm qua): đã tải lại trang nhận bản mới, bấm "Kết thúc" hẳn hoi cho Sân 1/2/3, nhưng qua ngày hôm sau
   y hệt 3 trận "ma" đó (cùng đúng những cặp đấu cũ, đồng hồ vẫn chạy tiếp — không phải trận mới) lại xuất
@@ -7528,6 +7549,19 @@ const DataServiceSettings = {
    duoc ghi RIENG vao dung path /<node>/<id>, hoan toan tach biet voi cac entity/collection khac,
    nen 2 thiet bi sua 2 thu khac nhau se KHONG con de ghi de nhau nhu co che cu §1). */
 let lastSyncedSnapshot = {}; // node -> { id: JSON string cua entity da day gan nhat }
+/* §FIX-LISTENER-OVERWRITE-PENDING-WRITE — xem giai thich day du tai attachEntityListener(). Theo doi
+   entity nao dang co 1 Firebase .transaction() RIENG CHUA XONG (confirmBillPaymentAtomic/V2/Group...) —
+   trong luc do, listener .on('value') toan cuc PHAI GIU NGUYEN gia tri local (thay vi lay snapshot moi
+   nhan duoc, co the la ban CU HON transaction dang cho commit), tranh mat trang thay doi local dung dan
+   (vd bill vua chuyen 'paid' bi listener ghi de lai thanh 'open' do snapshot toi som hon transaction). */
+let pendingEntityWrites = {}; // node -> Set(id)
+function markEntityPendingWrite(node, id){
+  if(!pendingEntityWrites[node]) pendingEntityWrites[node] = new Set();
+  pendingEntityWrites[node].add(id);
+}
+function clearEntityPendingWrite(node, id){
+  if(pendingEntityWrites[node]) pendingEntityWrites[node].delete(id);
+}
 function markEntityDirty(node, id){
   if(!SYNC_ENABLED || !dbRoot) return;
   const fb = fbNodeNameFor(node);
@@ -7768,7 +7802,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.7'; // §FIX-FINISHMATCH-GHOST-COURT — "Kết thúc" tran khong xoa duoc san "ma" chi ton tai cuc bo (server khong co gi) — gio tu don dung local theo su that server — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.8'; // §FIX-LISTENER-OVERWRITE-PENDING-WRITE — bill.status bi "hoan tac nguoc" ve open sau khi da paid, do listener Firebase ghi de bang snapshot cu trong luc transaction thanh toan rieng dang chay — gio giu du lieu local cho id dang co transaction cho toi khi xong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13689,10 +13723,12 @@ function payBill(billId, paymentMethod){
    phia tren da la du bao ve cho 1 thiet bi don le. */
 function confirmBillPaymentAtomic(bill, payment){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve();
+  markEntityPendingWrite('bills', bill.id); // §FIX-LISTENER-OVERWRITE-PENDING-WRITE
   return DataService.bills.transaction(bill.id, remoteBill=>{
     if(remoteBill && remoteBill.status === 'paid' && remoteBill.paymentId !== payment.id) return undefined;
     return sanitizeForFirebase(bill);
   }).then(result=>{
+    clearEntityPendingWrite('bills', bill.id);
     if(!result || !result.committed){
       handlePaymentConflict(bill, payment);
     } else {
@@ -13700,7 +13736,7 @@ function confirmBillPaymentAtomic(bill, payment){
       const p = playerById(bill.playerId);
       if(p) markEntityDirty('players', p.id);
     }
-  }).catch(err=>{ console.error('[payment] confirm error', err); handleWriteError('bills','transaction',err); });
+  }).catch(err=>{ clearEntityPendingWrite('bills', bill.id); console.error('[payment] confirm error', err); handleWriteError('bills','transaction',err); });
 }
 /* Bill VUA duoc thanh toan tren mot thiet bi khac giua luc ta xu ly local va luc request toi
    server toi noi (§61 test case). Rollback: xoa payment "ma" vua tao o buoc local-first, tra
@@ -13758,18 +13794,21 @@ function payMultipleBills(billIds, paymentMethod){
 function confirmGroupPaymentAtomic(bills, payment){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve();
   const fb = fbNodeNameFor('bills');
+  bills.forEach(b=> markEntityPendingWrite('bills', b.id) ); // §FIX-LISTENER-OVERWRITE-PENDING-WRITE
+  const clearAllPending = ()=> bills.forEach(b=> clearEntityPendingWrite('bills', b.id) );
   return Promise.all(bills.map(b=> dbRoot.child(fb).child(b.id).once('value').then(s=>s.val()) )).then(remoteVals=>{
     const earlyConflict = bills.some((b,i)=>{
       const rv = remoteVals[i];
       return rv && rv.status === 'paid' && rv.paymentId !== payment.id;
     });
-    if(earlyConflict){ handleGroupPaymentConflict(bills, payment); return; }
+    if(earlyConflict){ clearAllPending(); handleGroupPaymentConflict(bills, payment); return; }
     Promise.all(bills.map(b=>
       DataService.bills.transaction(b.id, remoteBill=>{
         if(remoteBill && remoteBill.status === 'paid' && remoteBill.paymentId !== payment.id) return undefined;
         return sanitizeForFirebase(b);
       })
     )).then(results=>{
+      clearAllPending();
       if(results.some(r=>!r || !r.committed)){
         handleGroupPaymentConflict(bills, payment);
       } else {
@@ -13777,7 +13816,7 @@ function confirmGroupPaymentAtomic(bills, payment){
         bills.forEach(b=>{ const p = playerById(b.playerId); if(p) markEntityDirty('players', p.id); });
       }
     });
-  }).catch(err=>{ console.error('[group payment] confirm error', err); handleWriteError('bills','transaction',err); });
+  }).catch(err=>{ clearAllPending(); console.error('[group payment] confirm error', err); handleWriteError('bills','transaction',err); });
 }
 /* Mot hoac nhieu bill trong nhom VUA bi thanh toan tren thiet bi khac -> huy TOAN BO nhom
    (khong duoc 1 phan PAID mot phan khong — §16), tra tat ca bill lien quan ve OPEN, xoa payment
@@ -13998,10 +14037,12 @@ function findPaymentByOperationId(operationId){
    lam Collected vuot Generated (§21 test 2 thiet bi). */
 function confirmBillPaymentAtomicV2(bill, payment, expectedVersion){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve();
+  markEntityPendingWrite('bills', bill.id); // §FIX-LISTENER-OVERWRITE-PENDING-WRITE
   return DataService.bills.transaction(bill.id, remoteBill=>{
     if(remoteBill && (remoteBill.payVersion||0) !== expectedVersion) return undefined; // nguoi khac vua ghi bill nay truoc ta
     return sanitizeForFirebase(bill);
   }).then(result=>{
+    clearEntityPendingWrite('bills', bill.id);
     if(!result || !result.committed){
       rollbackBillPayment(bill, payment, 'Bill này vừa được cập nhật thanh toán trên máy khác — vui lòng kiểm tra lại số tiền còn phải thu.');
     } else {
@@ -14009,7 +14050,7 @@ function confirmBillPaymentAtomicV2(bill, payment, expectedVersion){
       const p = playerById(bill.playerId);
       if(p) markEntityDirty('players', p.id);
     }
-  }).catch(err=>{ console.error('[split/debt payment] confirm error', err); handleWriteError('bills','transaction',err); });
+  }).catch(err=>{ clearEntityPendingWrite('bills', bill.id); console.error('[split/debt payment] confirm error', err); handleWriteError('bills','transaction',err); });
 }
 
 /* Rollback 1 payment cua engine moi (split-part hoac thu no) khi bi xung dot
@@ -37463,10 +37504,38 @@ function attachEntityListener(node){
   dbRoot.child(fb).on('value', snapshot=>{
     const val = snapshot.val() || {};
     isRemoteUpdate = true;
+    // §FIX-LISTENER-OVERWRITE-PENDING-WRITE — listener nay ghi de TOAN BO collection moi lan Firebase
+    // ban bat ky thay doi nao (cua BAT KY thiet bi nao), kem ca cua CHINH thiet bi nay. Neu dung luc
+    // nay co 1 transaction rieng (vd xac nhan thanh toan bill) VUA ghi xong len server nhung ban
+    // snapshot 'value' nay lai la ban CHUP TRUOC do (do cach Firebase gom nhieu su kien), thi state
+    // local se bi "hoan tac nguoc" ve du lieu cu — VI DU DA XAC NHAN: bill.status='paid' bi doi lai
+    // thanh 'open' sau khi F5, dung 2 ban console-dump lien tiep tren cung 1 bill. Cach sua: voi cac id
+    // dang co 1 transaction rieng CHUA hoan tat (markEntityPendingWrite da danh dau), GIU NGUYEN gia tri
+    // LOCAL hien tai thay vi lay tu snapshot — cho toi khi transaction do tu ket thuc (thanh cong hay
+    // that bai) va tu goi clearEntityPendingWrite, luc do listener lan ke tiep se lay dung ban moi nhat.
+    const pendingIds = pendingEntityWrites[node];
     if(ARRAY_ENTITY_NODES.includes(node)){
-      state[node] = Object.keys(val).map(id=>val[id]).filter(Boolean);
+      const incoming = Object.keys(val).map(id=>val[id]).filter(Boolean);
+      if(pendingIds && pendingIds.size){
+        const localById = {};
+        (state[node]||[]).forEach(e=>{ if(e && e.id) localById[e.id] = e; });
+        state[node] = incoming.map(e=> (e && pendingIds.has(e.id) && localById[e.id]) ? localById[e.id] : e);
+        // Neu 1 id dang pending nhung KHONG con trong incoming (vd bi xoa tren server truoc khi
+        // transaction cuc bo hoan tat), van giu ban local de tranh mat du lieu giua chung.
+        pendingIds.forEach(id=>{
+          if(!incoming.some(e=>e && e.id===id) && localById[id]) state[node].push(localById[id]);
+        });
+      } else {
+        state[node] = incoming;
+      }
     } else if(OBJECT_ENTITY_NODES.includes(node)){
-      state[node] = val;
+      if(pendingIds && pendingIds.size){
+        const merged = Object.assign({}, val);
+        pendingIds.forEach(id=>{ if(state[node] && state[node][id] !== undefined) merged[id] = state[node][id]; });
+        state[node] = merged;
+      } else {
+        state[node] = val;
+      }
     }
     lastSyncedSnapshot[node] = {};
     Object.keys(val).forEach(id=>{ lastSyncedSnapshot[node][id] = JSON.stringify(val[id]); });
