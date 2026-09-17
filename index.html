@@ -2,6 +2,28 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.9 (2026-09-17) — §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — Admin báo: sau khi đã sửa ĐÚNG hàng
+  loạt bill hôm qua (v1.43.8, chuyển 9 bill FULLY_COLLECTED_BUT_OPEN về "paid") và đã bấm "KẾT THÚC"
+  cho từng khách trước khi tắt app, SANG NGÀY HÔM SAU toàn bộ 9 khách đó lại hiện y hệt trạng thái
+  NGAY LÚC MỚI CHECK-IN hôm trước — bill mở lại 30.000đ, Visit về "ACTIVE", Player về "waiting" — như
+  thể mọi việc sửa hôm qua chưa từng xảy ra. Dump console xác nhận: đúng ID bill/visit của hôm qua,
+  chỉ có duy nhất mục "Vé Social" (không có gì thêm) — tức là bản dữ liệu NGUYÊN THUỶ lúc vừa check-in,
+  chưa qua bất kỳ sửa chữa nào. Admin xác nhận CÓ 1 thiết bị/tab khác (máy quầy) mở liên tục từ hôm
+  qua, CHƯA TỪNG được tải lại (F5). NGUYÊN NHÂN GỐC (khác — và nghiêm trọng hơn — race mili-giây mà
+  v1.43.8 đã vá): "lưới an toàn" diffAndFlushEntities() (chạy định kỳ trong saveState(), quét toàn bộ
+  entity và ghi lại bất kỳ cái nào "khác" so với bản ghi nhớ riêng của THIẾT BỊ ĐÓ) trước đây dùng
+  .set() THẲNG — kiểu ghi "ai ghi sau thắng" tuyệt đối, không hề kiểm tra xem dữ liệu trên server đã
+  bị người khác đổi hay chưa. Khi 1 thiết bị bị mất mạng hoặc bị hệ điều hành "đóng băng" tab (máy tính
+  ngủ, điện thoại khoá màn hình lâu) trong lúc các thiết bị khác vẫn tiếp tục sửa đúng dữ liệu, Firebase
+  giữ lại lệnh ghi CŨ của thiết bị đó trong hàng đợi ngoại tuyến và tự động gửi lên NGUYÊN VẸN ngay khi
+  có mạng trở lại — đè thẳng lên bản mới hơn mà không có cảnh báo gì. FIX TẬN GỐC: viết lại
+  diffAndFlushEntities() để dùng transaction() có kiểm tra OCC (optimistic concurrency — cùng nguyên
+  tắc payVersion đã dùng ở confirmBillPaymentAtomicV2): mỗi lần ghi/xoá 1 entity, CHỈ thực hiện nếu
+  giá trị hiện có trên server vẫn khớp đúng với giá trị mà THIẾT BỊ NÀY từng biết lúc đồng bộ lần cuối
+  — nếu server đã có bản mới hơn (thiết bị khác vừa ghi), HUỶ NGAY lệnh ghi cũ và tự cập nhật lại đúng
+  theo bản server, không còn cơ hội ghi đè ngược nữa. Áp dụng cho mọi entity (players/visits/bills/...)
+  ở cả 2 chiều thay đổi và xoá.
+
   v1.43.8 (2026-09-16) — §FIX-LISTENER-OVERWRITE-PENDING-WRITE — Admin báo: ~9 khách đã thanh toán và đã
   bấm "KẾT THÚC" xong xuôi, nhưng bill + số tiền vẫn hiện lại y hệt trên màn "ĐANG Ở SÂN". Kiểm tra bằng 2
   lần dump console CÁCH NHAU VÀI PHÚT trên cùng 1 bill của "A Hùng (Hùng Trang)": lần 1 (trước khi tải lại
@@ -7737,6 +7759,61 @@ function releaseBookingSlotAtomic(date, courtId, bookingId){
    moi entity la 1 lan .set() RIENG vao dung path cua no, khong phai 1 lan .set()/.update() cho
    ca cay. Bat ky mutation nao (kho ca cu hoac tinh nang sau nay) quen goi markEntityDirty() van
    duoc dong bo dung entity-level qua vong quet nay, khong bao gio quay lai kieu ghi de toan bo. */
+/* §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — Admin bao: sau khi da SỬA ĐÚNG hàng loạt bill hôm qua
+   (FULLY_COLLECTED_BUT_OPEN -> paid) và bấm KẾT THÚC cho ~9 khách, SANG NGÀY HÔM SAU toàn bộ 9
+   khách đó lại hiện y hệt trạng thái NGAY LÚC MỚI CHECK-IN hôm trước (bill mở lại 30k, visit
+   "ACTIVE", player "waiting") — như bị 1 bản chụp CŨ đè ngược lên. XÁC NHẬN qua console dump +
+   Admin xác nhận có 1 thiết bị/tab KHÁC (vd máy quầy) mở liên tục từ hôm qua, CHƯA TỪNG F5. NGUYÊN
+   NHÂN GỐC: diffAndFlushEntities() (lưới an toàn debounce của saveState()) trước đây dùng .set()
+   THẲNG cho MỌI entity "khác" so với lastSyncedSnapshot CỦA RIÊNG THIẾT BỊ ĐÓ — nhưng .set() là
+   "last-write-wins" TUYỆT ĐỐI, không kiểm tra remote đã đổi hay chưa. Nếu 1 thiết bị bị MẤT MẠNG
+   hoặc tab bị hệ điều hành "đóng băng" (mobile/laptop ngủ) một thời gian dài trong khi các thiết bị
+   khác vẫn tiếp tục sửa dữ liệu đúng, Firebase SDK sẽ GIỮ LẠI các lệnh ghi cục bộ của thiết bị đó
+   trong hàng đợi offline và gửi lên NGUYÊN VẸN (theo đúng giá trị CŨ) ngay khi có mạng trở lại — ghi
+   đè thẳng lên dữ liệu mới hơn đã được các thiết bị khác sửa đúng trong lúc nó "ngủ", mà không có
+   bất kỳ xung đột nào được phát hiện. Đây CHÍNH LÀ cơ chế làm hồi sinh dữ liệu cũ, khác hẳn (và
+   nghiêm trọng hơn) race mili-giây mà v1.43.8 đã vá (transaction thanh toán riêng vs listener). FIX:
+   chuyển toàn bộ ghi trong lưới an toàn này sang occFlushEntity() — dùng transaction() có kiểm tra
+   OCC (optimistic concurrency control, cùng nguyên tắc payVersion đã dùng ở confirmBillPaymentAtomicV2):
+   CHỈ ghi đè nếu giá trị remote HIỆN TẠI vẫn khớp đúng với giá trị remote MÀ THIẾT BỊ NÀY từng biết
+   lúc đồng bộ lần cuối (lastSyncedSnapshot) — nếu remote đã đổi khác (thiết bị khác vừa ghi mới hơn),
+   HUỶ ghi đè, nhường cho bản mới hơn và tự cập nhật lại local theo đúng bản đó. Áp dụng cho cả ghi
+   thay đổi VÀ xoá entity (tránh trường hợp thiết bị "ngủ" tưởng 1 entity cần xoá theo bản cũ trong
+   khi thiết bị khác đã cập nhật nó thành giá trị mới thật sự). */
+function applyRemoteEntityLocally(node, id, remoteVal){
+  if(ARRAY_ENTITY_NODES.includes(node)){
+    const arr = state[node];
+    if(!Array.isArray(arr)) return;
+    const idx = arr.findIndex(e=>e && e.id===id);
+    if(remoteVal === null || remoteVal === undefined){ if(idx>=0) arr.splice(idx,1); }
+    else if(idx>=0){ arr[idx] = remoteVal; } else { arr.push(remoteVal); }
+  } else if(OBJECT_ENTITY_NODES.includes(node)){
+    if(!state[node] || typeof state[node] !== 'object') state[node] = {};
+    if(remoteVal === null || remoteVal === undefined) delete state[node][id];
+    else state[node][id] = remoteVal;
+  } else { return; }
+  if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
+  if(remoteVal === null || remoteVal === undefined) delete lastSyncedSnapshot[node][id];
+  else lastSyncedSnapshot[node][id] = JSON.stringify(remoteVal);
+  if(typeof tryCacheStateLocally === 'function') tryCacheStateLocally('applyRemoteEntityLocally');
+  if(typeof scopedRenderFor === 'function') scopedRenderFor(node);
+}
+function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
+  if(!SYNC_ENABLED || !dbRoot) return;
+  dbRoot.child(fb).child(id).transaction(remote=>{
+    const remoteJson = (remote === null || remote === undefined) ? null : JSON.stringify(remote);
+    if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — remote da doi khac tu lan dong bo cuoi cua thiet bi nay, huy
+    return desiredEntityOrNull === null ? null : sanitizeForFirebase(desiredEntityOrNull);
+  }).then(result=>{
+    if(!result || !result.committed){
+      applyRemoteEntityLocally(node, id, result ? result.snapshot : null);
+      return;
+    }
+    if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
+    if(desiredEntityOrNull === null) delete lastSyncedSnapshot[node][id];
+    else lastSyncedSnapshot[node][id] = JSON.stringify(desiredEntityOrNull);
+  }).catch(err=>{ console.error('[diffFlush] occ error', node, id, err); handleWriteError(node,'transaction',err); });
+}
 function diffAndFlushEntities(){
   if(!SYNC_ENABLED || !dbRoot) return;
   ARRAY_ENTITY_NODES.forEach(node=>{
@@ -7750,11 +7827,11 @@ function diffAndFlushEntities(){
       const json = JSON.stringify(entity);
       nextMap[entity.id] = json;
       if(prevMap[entity.id] !== json){
-        dbRoot.child(fb).child(entity.id).set(sanitizeForFirebase(entity)).catch(err=>handleWriteError(node,'sync',err));
+        occFlushEntity(node, fb, entity.id, entity, prevMap[entity.id]);
       }
     });
     Object.keys(prevMap).forEach(id=>{
-      if(!(id in nextMap)) dbRoot.child(fb).child(id).remove().catch(()=>{});
+      if(!(id in nextMap)) occFlushEntity(node, fb, id, null, prevMap[id]);
     });
     lastSyncedSnapshot[node] = nextMap;
   });
@@ -7768,11 +7845,11 @@ function diffAndFlushEntities(){
       const json = JSON.stringify(obj[id]);
       nextMap[id] = json;
       if(prevMap[id] !== json){
-        dbRoot.child(fb).child(id).set(sanitizeForFirebase(obj[id])).catch(err=>handleWriteError(node,'sync',err));
+        occFlushEntity(node, fb, id, obj[id], prevMap[id]);
       }
     });
     Object.keys(prevMap).forEach(id=>{
-      if(!(id in nextMap)) dbRoot.child(fb).child(id).remove().catch(()=>{});
+      if(!(id in nextMap)) occFlushEntity(node, fb, id, null, prevMap[id]);
     });
     lastSyncedSnapshot[node] = nextMap;
   });
@@ -7802,7 +7879,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.8'; // §FIX-LISTENER-OVERWRITE-PENDING-WRITE — bill.status bi "hoan tac nguoc" ve open sau khi da paid, do listener Firebase ghi de bang snapshot cu trong luc transaction thanh toan rieng dang chay — gio giu du lieu local cho id dang co transaction cho toi khi xong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.9'; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — thiet bi "ngu"/mat mang lau ngay co the ghi de nguoc du lieu cu len tren du lieu moi da sua dung, do luoi an toan diffAndFlushEntities() dung .set() thang khong kiem tra xung dot — gio dung transaction() kem OCC (giong payVersion), huy ghi neu remote da doi khac tu lan dong bo cuoi — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
