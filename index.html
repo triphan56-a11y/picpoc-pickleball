@@ -2,6 +2,23 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.11 (2026-09-17) — §FIX-COMPLETEDVISIT-STALESTATUS — Sau khi chạy "Kiểm tra dữ liệu" toàn bộ
+  app (theo yêu cầu Admin) để rà soát hậu quả vụ máy quầy ghi đè dữ liệu, phát hiện 12 lỗi "Visit —
+  COMPLETED_VISIT_BUT_OPERATIONAL_STATUS": Visit đã đóng xong (status COMPLETED) nhưng player.status
+  vẫn kẹt ở "waiting/ready/playing", khiến khách đã rời/thanh toán xong vẫn hiện trên tab ĐANG Ở SÂN.
+  NGUYÊN NHÂN: Visit và Player là 2 entity RIÊNG BIỆT trên 2 node Firebase khác nhau — sau khi cơ chế
+  OCC (v1.43.9) tự động đồng bộ lại đúng field Visit.status theo server, field Player.status (bị máy
+  quầy ghi đè trước đó) không tự "kéo theo" vì không có ràng buộc chéo giữa 2 node. Check này TỪ TRƯỚC
+  đã tồn tại (§DATAHEALTHV3, chỉ báo — không tự sửa theo đúng nguyên tắc an toàn của
+  runDataIntegrityCheck()), nay được nâng lên có thể SỬA AN TOÀN cho ĐÚNG trường hợp hẹp đã xác nhận
+  chắc chắn vô hại: Visit thật sự COMPLETED, VÀ getActiveVisitForPlayer() xác nhận KHÔNG còn Visit
+  ACTIVE nào khác cho player này (chắc chắn khách không còn thật sự ở sân) — chỉ đồng bộ lại đúng 1
+  field player.status về "paid_and_left" (giá trị canonical dùng để lọc khỏi tab ĐANG Ở SÂN), KHÔNG
+  đụng đến tiền/bill/lịch sử trận đấu nào. Riêng loại lỗi "Player — ... đang ở trạng thái đã kết
+  thúc/rời phiên nhưng vẫn nằm trên 1 sân ĐANG THI ĐẤU" (23 lỗi Admin thấy) là 1 check KHÁC, CỐ TÌNH
+  giữ nguyên "không tự sửa" vì cần Staff đối chiếu trận đấu thật trước khi quyết định — không đổi ở
+  bản này.
+
   v1.43.10 (2026-09-17) — §HOTFIX-OCCSNAPSHOT — Ngay sau khi lên v1.43.9, Admin báo trên máy quầy
   (đúng thiết bị vừa bị OCC từ chối ghi đè dữ liệu cũ) xuất hiện các thẻ "người chơi" lỗi trên tab
   ĐANG Ở SÂN: tên hiện "undefined", trạng thái hiện "○ ?", Bill: 0đ — không có trên máy Admin. NGUYÊN
@@ -7903,7 +7920,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.10'; // §HOTFIX-OCCSNAPSHOT — occFlushEntity() (them o v1.43.9) quen goi .val() tren Firebase DataSnapshot khi ghi bi tu choi, day thang snapshot object vao state gay ra the "undefined"/"○ ?" tren ĐANG Ở SÂN — da sua, chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.11'; // §FIX-COMPLETEDVISIT-STALESTATUS — them nut SỬA AN TOÀN cho loi COMPLETED_VISIT_BUT_OPERATIONAL_STATUS (Visit da COMPLETED nhung player.status con ket o waiting/ready/playing, vet tich vu may quay ghi de) — chi dong bo lai 1 field trang thai, khong dung tien/lich su tran dau — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13732,6 +13749,27 @@ function repairActiveVisitButEndedStatus(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-COMPLETEDVISIT-STALESTATUS — xem giai thich day du tai check COMPLETED_VISIT_BUT_OPERATIONAL_STATUS
+   (huong tu Visit). Chi dong bo lai DUNG 1 field p.status ve 'paid_and_left' (cung gia tri canonical dung
+   de loc khoi tab ĐANG Ở SÂN — xem renderPresenceTab()) — khong dong den bill/payment/lich su tran dau
+   nao. Tu kiem tra lai dieu kien NGAY TAI THOI DIEM sua (phong UI render sai/issue cu con luu tren client
+   tu lan quet truoc). */
+function repairCompletedVisitStaleStatus(args){
+  const v = state.playerVisits.find(x=>x.id===args.visitId);
+  if(!v) return { ok:false, reason:'Không tìm thấy Visit để sửa (có thể đã bị xoá).' };
+  if(v.status !== 'COMPLETED') return { ok:false, reason:'Visit không còn COMPLETED — dữ liệu đã thay đổi, không cần sửa.' };
+  const p = playerById(args.playerId);
+  if(!p) return { ok:false, reason:'Không tìm thấy Player để sửa (có thể đã bị xoá).' };
+  if(!['waiting','ready','playing'].includes(p.status)) return { ok:false, reason:'Player không còn ở trạng thái "đang hoạt động" — dữ liệu đã thay đổi, không cần sửa.' };
+  if(getActiveVisitForPlayer(p.id) !== null) return { ok:false, reason:'Player này hiện đang có 1 Visit ACTIVE khác — không an toàn để tự đóng, cần Admin xem lại thủ công.' };
+  const before = { status: p.status };
+  p.status = 'paid_and_left';
+  logDataIntegrityRepair('COMPLETED_VISIT_BUT_OPERATIONAL_STATUS', 'player', p.id, before, { status: p.status },
+    'Visit "' + v.id + '" của ' + p.name + ' đã COMPLETED nhưng player.status vẫn kẹt ở trạng thái cũ (hậu quả của vụ máy quầy ghi đè dữ liệu, §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE) — đồng bộ lại đúng field trạng thái, không đổi tiền/lịch sử trận đấu.');
+  markEntityDirty('players', p.id);
+  saveState();
+  return { ok:true };
+}
 /* §FIX-TVANN-STUCKPLAYING-REPAIR — repair cho TV_ANNOUNCEMENT_STUCK_PLAYING (xem giai thich day du tai
    noi tao issue). An toan vi dung DUNG terminal state ('PLAYED') ma finish() trong speakTvAnnouncement()
    se tu gan neu TV khong bi crash — khong dung/xoa du lieu tien/bill, chi don trang thai TTS. */
@@ -13767,7 +13805,7 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 function runSafeRepairForIssue(issue){
@@ -32340,7 +32378,19 @@ function runDataIntegrityCheck(){
     if(v.status !== 'COMPLETED') return;
     const p = playerById(v.playerId);
     if(p && ['waiting','ready','playing'].includes(p.status) && getActiveVisitForPlayer(p.id) === null){
-      addIssue('Visit','ERROR', 'Visit "' + v.id + '" (' + (p.name||v.playerId) + ') đã COMPLETED nhưng player.status vẫn là "' + p.status + '" (COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).');
+      // §FIX-COMPLETEDVISIT-STALESTATUS — day la vet tich con lai cua vu may quay ghi de du lieu cu
+      // (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE, v1.43.9): sau khi OCC tu dong dong bo lai DUNG field
+      // Visit.status ve 'COMPLETED' theo server, field Player.status (1 entity RIENG, node khac) van
+      // con ket qua bi ghi de truoc do — 2 field khong tu dong "keo theo nhau" vi la 2 ban ghi Firebase
+      // doc lap. AN TOAN de tu sua 1 chieu: da xac nhan Visit that su COMPLETED (khong con o trang thai
+      // nao khac) VA getActiveVisitForPlayer() tra ve null (KHONG co Visit ACTIVE nao khac cho player
+      // nay) — nghia la chac chan player nay KHONG con o san/dang choi that su, chi la 1 field hien thi
+      // bi ket lai, khong dung tien/lich su tran dau nao ca.
+      addIssue('Visit','ERROR', 'Visit "' + v.id + '" (' + (p.name||v.playerId) + ') đã COMPLETED nhưng player.status vẫn là "' + p.status + '" (COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).', {
+        code:'COMPLETED_VISIT_BUT_OPERATIONAL_STATUS', entityType:'player', entityId:p.id, entityLabel:p.name,
+        impact:'Player này bị kẹt hiện trên tab ĐANG Ở SÂN dù Visit đã đóng xong thật sự — không ảnh hưởng tiền/lịch sử trận đấu, chỉ là 1 field trạng thái hiển thị bị lệch.',
+        repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairCompletedVisitStaleStatus', repairArgs:{ visitId:v.id, playerId:p.id }
+      });
     }
   });
   // E) 1 san dang 'playing' co chua 1 player da chuyen sang trang thai "ket thuc/roi phien" GIUA luc
