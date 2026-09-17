@@ -2,6 +2,24 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.10 (2026-09-17) — §HOTFIX-OCCSNAPSHOT — Ngay sau khi lên v1.43.9, Admin báo trên máy quầy
+  (đúng thiết bị vừa bị OCC từ chối ghi đè dữ liệu cũ) xuất hiện các thẻ "người chơi" lỗi trên tab
+  ĐANG Ở SÂN: tên hiện "undefined", trạng thái hiện "○ ?", Bill: 0đ — không có trên máy Admin. NGUYÊN
+  NHÂN: lỗi do chính em gây ra khi viết occFlushEntity() ở bản v1.43.9 — khi 1 lệnh ghi bị OCC từ chối
+  (remote đã đổi khác), code lấy "giá trị đúng nhất từ server" qua `result.snapshot`, nhưng quên rằng
+  đây là gọi transaction() trực tiếp (không qua DataService wrapper) nên `result.snapshot` là 1
+  DataSnapshot THẬT của Firebase SDK (object nội bộ có hàm riêng), KHÔNG PHẢI dữ liệu thuần — phải gọi
+  thêm `.val()` mới lấy đúng object entity. Thiếu bước đó khiến cả object DataSnapshot bị đẩy thẳng vào
+  state.players (không có field .name/.status nào cả) mỗi khi máy quầy cố ghi đè dữ liệu cũ và bị OCC
+  chặn lại — đúng lúc tính năng OCC mới hoạt động thì lộ ra lỗi phụ này. FIX: thêm `.val()` khi đọc
+  result.snapshot trong occFlushEntity(). Đã rà lại toàn bộ các chỗ khác trong file có gọi
+  transaction() trực tiếp lên Firebase (confirmStockDeductionsAtomic, confirmStockImportAtomic,
+  claimBookingSlotAtomic, releaseBookingSlotAtomic, syncPprChangesAtomic, finishMatch qua
+  DataService.courts.transaction) — tất cả đều ĐÃ dùng đúng .val() hoặc không đọc giá trị snapshot,
+  không có lỗi tương tự nào khác. Các bản ghi "ma" đã lỡ tạo ra chỉ tồn tại CỤC BỘ trên máy quầy (chưa
+  từng ghi lên Firebase vì đường ghi đó đã bị OCC huỷ) — chỉ cần tải lại (F5) máy quầy sau khi lên bản
+  này là sạch hoàn toàn, không ảnh hưởng dữ liệu trên server.
+
   v1.43.9 (2026-09-17) — §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — Admin báo: sau khi đã sửa ĐÚNG hàng
   loạt bill hôm qua (v1.43.8, chuyển 9 bill FULLY_COLLECTED_BUT_OPEN về "paid") và đã bấm "KẾT THÚC"
   cho từng khách trước khi tắt app, SANG NGÀY HÔM SAU toàn bộ 9 khách đó lại hiện y hệt trạng thái
@@ -7806,7 +7824,13 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
     return desiredEntityOrNull === null ? null : sanitizeForFirebase(desiredEntityOrNull);
   }).then(result=>{
     if(!result || !result.committed){
-      applyRemoteEntityLocally(node, id, result ? result.snapshot : null);
+      // §HOTFIX-OCCSNAPSHOT — result.snapshot la 1 Firebase DataSnapshot THAT (object noi bo cua SDK,
+      // co cac ham/thuoc tinh rieng), KHONG PHAI gia tri du lieu thuan — phai goi .val() de lay dung
+      // object entity that su. Ban dau quen goi .val(), day thang snapshot object vao state[node] khi
+      // bi tu choi ghi (remote da doi khac) — sinh ra ban ghi "ma" khong co field nao ca (ten hien
+      // "undefined", trang thai hien "○ ?" tren the ĐANG Ở SÂN, dung y het trieu chung Admin bao lai
+      // ngay sau khi len v1.43.9).
+      applyRemoteEntityLocally(node, id, result && result.snapshot ? result.snapshot.val() : null);
       return;
     }
     if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
@@ -7879,7 +7903,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.9'; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — thiet bi "ngu"/mat mang lau ngay co the ghi de nguoc du lieu cu len tren du lieu moi da sua dung, do luoi an toan diffAndFlushEntities() dung .set() thang khong kiem tra xung dot — gio dung transaction() kem OCC (giong payVersion), huy ghi neu remote da doi khac tu lan dong bo cuoi — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.10'; // §HOTFIX-OCCSNAPSHOT — occFlushEntity() (them o v1.43.9) quen goi .val() tren Firebase DataSnapshot khi ghi bi tu choi, day thang snapshot object vao state gay ra the "undefined"/"○ ?" tren ĐANG Ở SÂN — da sua, chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
