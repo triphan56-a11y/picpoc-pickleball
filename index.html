@@ -2,6 +2,18 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.14 (2026-09-17) — §FIX-ORPHAN-ACTIVEVISITID — Sau khi chạy lại Kiểm tra dữ liệu, Admin báo vẫn
+  còn 15 lỗi, trong đó 10 lỗi "Player — X có activeVisitId trỏ tới Visit không tồn tại". Đây là check
+  ĐÃ CÓ TỪ TRƯỚC (cùng nhóm với COMPLETED_VISIT_BUT_OPERATIONAL_STATUS đã sửa ở v1.43.11) nhưng ở nhánh
+  KHÁC: field p.activeVisitId trỏ tới 1 Visit ĐÃ KHÔNG CÒN trong state.playerVisits (mất hẳn, không
+  phải chỉ đổi status) — cùng gốc với vụ máy quầy ghi đè dữ liệu cũ
+  (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE). Nâng lên SỬA AN TOÀN: gỡ tham chiếu "ma" này về null (không
+  đụng tiền/bill/lịch sử trận đấu), và nếu sau đó player vẫn kẹt ở trạng thái hoạt động
+  (waiting/ready/playing) mà không còn Visit ACTIVE nào khác, đồng bộ luôn về "paid_and_left" — cùng
+  tinh thần với repairCompletedVisitStaleStatus (v1.43.11). Riêng lỗi Bill — DEFINITE_DUPLICATE_SOCIAL_TICKET
+  (1 lỗi, "A Vũ Xe") vẫn CỐ TÌNH giữ "không tự sửa" vì cần Admin xác nhận có tính tiền trùng thật hay
+  không trước khi huỷ bớt 1 khoản.
+
   v1.43.13 (2026-09-17) — §FULLAUDIT-2026-09-17 — FULL APP AUDIT + BUG FIXES. Theo yêu cầu rà soát toàn
   bộ app (Club/Giải đấu/Academy, tiền, kho, Credit, Social, Booking, Tournament, TV, Auth, đa thiết bị).
   Audit bằng đọc source + xác minh thủ công (MANUAL VERIFIED) từng khu vực P0/P1/P2, không giả PASS khi
@@ -7957,7 +7969,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.13'; // §FULLAUDIT-2026-09-17 — FULL APP AUDIT: ra soat P0-P2 (tien/kho/Credit/Social Pass/Auth/TV/Tournament/Booking), tim va sua 1 loi that (Thue may ban bong thieu chong double-click gay nguy co cong tien 2 lan) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.14'; // §FIX-ORPHAN-ACTIVEVISITID — them check + nut SỬA AN TOÀN cho p.activeVisitId tro toi Visit khong con ton tai (vet tich vu may quay ghi de du lieu cu) — go tham chieu "ma", dong bo lai trang thai neu can, khong dung tien/bill — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13807,6 +13819,27 @@ function repairCompletedVisitStaleStatus(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-ORPHAN-ACTIVEVISITID — xem giai thich day du tai check ORPHAN_ACTIVE_VISIT_ID. Chi go field
+   tham chieu p.activeVisitId ve null (khong dung tien/bill/lich su tran dau); neu sau khi go, player
+   van con ket o status hoat dong ma khong con Visit ACTIVE nao khac, dong bo luon status ve
+   'paid_and_left' (cung tinh than voi repairCompletedVisitStaleStatus o tren). */
+function repairOrphanActiveVisitId(args){
+  const p = playerById(args.playerId);
+  if(!p) return { ok:false, reason:'Không tìm thấy Player để sửa (có thể đã bị xoá).' };
+  if(p.activeVisitId !== args.expectedVisitId) return { ok:false, reason:'Dữ liệu đã thay đổi (activeVisitId khác lúc quét) — không cần sửa.' };
+  const refVisit = state.playerVisits.find(x=>x.id===p.activeVisitId);
+  if(refVisit) return { ok:false, reason:'Visit này đã xuất hiện trở lại — dữ liệu đã thay đổi, không cần sửa.' };
+  const before = { activeVisitId: p.activeVisitId, status: p.status };
+  p.activeVisitId = null;
+  if(['waiting','ready','playing'].includes(p.status) && getActiveVisitForPlayer(p.id) === null){
+    p.status = 'paid_and_left';
+  }
+  logDataIntegrityRepair('ORPHAN_ACTIVE_VISIT_ID', 'player', p.id, before, { activeVisitId: p.activeVisitId, status: p.status },
+    p.name + ' có activeVisitId trỏ tới Visit không còn tồn tại (hậu quả vụ máy quầy ghi đè dữ liệu, §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE) — gỡ tham chiếu "ma", đồng bộ lại trạng thái nếu cần, không đổi tiền/bill.');
+  markEntityDirty('players', p.id);
+  saveState();
+  return { ok:true };
+}
 /* §FIX-TVANN-STUCKPLAYING-REPAIR — repair cho TV_ANNOUNCEMENT_STUCK_PLAYING (xem giai thich day du tai
    noi tao issue). An toan vi dung DUNG terminal state ('PLAYED') ma finish() trong speakTvAnnouncement()
    se tu gan neu TV khong bi crash — khong dung/xoa du lieu tien/bill, chi don trang thai TTS. */
@@ -13842,7 +13875,7 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 /* §FIX-GHOSTCOURT-ALLENDED — xem giai thich day du tai check GHOST_COURT_ALL_PLAYERS_ENDED. Dung LAI
@@ -32437,7 +32470,18 @@ function runDataIntegrityCheck(){
     // D) activeVisitId tro toi 1 Visit khong con ton tai hoac da COMPLETED — tham chieu lech.
     if(p.activeVisitId){
       const refVisit = state.playerVisits.find(x=>x.id===p.activeVisitId);
-      if(!refVisit) addIssue('Player','ERROR', p.name + ' có activeVisitId trỏ tới Visit không tồn tại.');
+      if(!refVisit){
+        // §FIX-ORPHAN-ACTIVEVISITID — vet tich khac cua vu may quay ghi de du lieu cu
+        // (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE): p.activeVisitId tro toi 1 Visit da khong con trong
+        // state.playerVisits (bi mat/ghi de) — an toan de tu don: chi go tham chieu "ma" nay ve null,
+        // KHONG dung tien/bill. Neu player dang ket ke o status hoat dong ma khong con Visit ACTIVE
+        // nao khac, dong bo luon ve paid_and_left (cung logic voi COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).
+        addIssue('Player','ERROR', p.name + ' có activeVisitId trỏ tới Visit không tồn tại.', {
+          code:'ORPHAN_ACTIVE_VISIT_ID', entityType:'player', entityId:p.id, entityLabel:p.name,
+          impact:'Field tham chiếu Visit bị lệch — có thể khiến player này không check-in lại được bình thường. Không ảnh hưởng tiền/bill.',
+          repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairOrphanActiveVisitId', repairArgs:{ playerId:p.id, expectedVisitId:p.activeVisitId }
+        });
+      }
       else if(refVisit.status !== 'ACTIVE') addIssue('Player','ERROR', p.name + ' có activeVisitId trỏ tới Visit đã "' + refVisit.status + '" (COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).');
     }
   });
