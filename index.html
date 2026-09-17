@@ -2,6 +2,43 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.13 (2026-09-17) — §FULLAUDIT-2026-09-17 — FULL APP AUDIT + BUG FIXES. Theo yêu cầu rà soát toàn
+  bộ app (Club/Giải đấu/Academy, tiền, kho, Credit, Social, Booking, Tournament, TV, Auth, đa thiết bị).
+  Audit bằng đọc source + xác minh thủ công (MANUAL VERIFIED) từng khu vực P0/P1/P2, không giả PASS khi
+  chưa kiểm chứng. Nhóm lỗi đã sửa TRONG PHIÊN NÀY (bao gồm cả các bản trước v1.43.9-12, liệt kê gộp cho
+  đợt audit): (1) đồng bộ Firebase đa thiết bị — thiết bị "ngủ"/mất mạng lâu ghi đè dữ liệu cũ lên dữ liệu
+  mới (OCC transaction thay cho .set() thẳng), (2) lỗi phụ tự gây ra ngay sau đó (thiếu .val() trên
+  DataSnapshot), (3) field trạng thái Player kẹt sau khi Visit đồng bộ lại đúng, (4) sân "ma" còn sót hiện
+  sai "ĐANG CHƠI", (5) Thuê máy bắn bóng — nút "THÊM VÀO BILL" thiếu chặn double-click (khác với mọi nút
+  xác nhận tiền khác trong app đều đã có) — bấm nhanh 2 lần có thể cộng tiền thuê máy 2 lần vào bill thật,
+  đã thêm khoá nút đúng pattern nhất quán sẵn có. Các khu vực đã audit và XÁC NHẬN ĐÚNG (không có lỗi):
+  Bill Engine/Split Payment/Debt (single source of truth, OCC payVersion), Inventory (idempotent qua
+  lastStockOpId, không double-increment), Picpoc Credits (expiry 60/7/20 ngày đúng, eligible whitelist
+  đúng, Milestone issue theo delta đúng), Social Pass/Ticket (chặn dùng 2 lần qua visitId), Auth/Role (2
+  lớp permission), TV (privacy không lộ dữ liệu nhạy cảm, announcer chặn stale/replay F5, tvMode tách
+  session riêng tab từ v1.41.3), Tournament ranking/bracket (Wins→Diff→Head-to-head đúng, block bracket
+  khi unresolved), Tournament Reward Credit (operationId theo player+placement, double confirm không
+  trùng), Series (không tự tạo Super Cup), Court Pricing (tính đúng khi booking cắt qua nhiều khung giờ),
+  Group Payment (không có Credit nên không có rủi ro vượt eligible), phone normalize (null-safe, đúng
+  format 10 số). CHƯA audit đầy đủ (không tự nhận PASS): Academy, UI/UX toàn app, performance, Social
+  Voucher từ giải (tính năng CHƯA TỒN TẠI trong code, không phải lỗi).
+
+  v1.43.12 (2026-09-17) — §FIX-GHOSTCOURT-ALLENDED — Admin báo tab LIVE vẫn hiện Sân 1/2/3 "ĐANG CHƠI"
+  với đồng hồ vô lý (13078 phút ≈ 9 ngày liền), đúng những người chơi (Thảo Hương, A Vũ Sữa, A Võ Kỳ,
+  A San, Tường Apple, A Nhựt Zeno, Quốc Hội, Bim, A Danh, Trang...) đã có trong danh sách "Player — đã
+  kết thúc/rời phiên nhưng vẫn nằm trên sân" của Kiểm tra dữ liệu. Admin xác nhận: KHÔNG ai trong số
+  họ thật sự đang ở sân — đây là 3 trận "ma" còn sót từ vụ máy quầy ghi đè dữ liệu cũ
+  (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE): startedAt của cả 3 trận gần như trùng khớp tuyệt đối (chỉ
+  lệch nhau ~160ms), khớp đúng thời điểm dữ liệu gốc bị "đóng băng" trên thiết bị đó. Check
+  ACTIVE_MATCH_WITH_ENDED_PLAYER (đã có từ trước) chỉ báo TỪNG người 1 (WARNING, cố tình không tự sửa
+  vì còn mơ hồ — có thể 1 người vừa bấm KẾT THÚC giữa trận đang diễn ra thật). Bổ sung check MỚI, hẹp
+  và KHÔNG mơ hồ hơn: GHOST_COURT_ALL_PLAYERS_ENDED — chỉ kích hoạt khi CẢ 4 người trên 1 sân 'playing'
+  ĐỀU đã ở trạng thái kết thúc/rời phiên CÙNG LÚC (không còn khả năng là trận thật đang diễn ra) — nâng
+  lên SỬA AN TOÀN: xoá hẳn bản ghi sân "ma" đó (dùng lại đúng cơ chế "delete + saveState()" đã dùng ở
+  §FIX-FINISHMATCH-GHOST-COURT v1.43.7, được lưới an toàn diffAndFlushEntities() có OCC (v1.43.9) bảo
+  vệ khỏi xoá nhầm nếu có trận MỚI thật vừa bắt đầu đúng sân đó ngay lúc sửa) — KHÔNG tạo lịch sử trận
+  đấu/cộng gamesPlayed/đổi PPR giả vì không có tỷ số thật để ghi nhận.
+
   v1.43.11 (2026-09-17) — §FIX-COMPLETEDVISIT-STALESTATUS — Sau khi chạy "Kiểm tra dữ liệu" toàn bộ
   app (theo yêu cầu Admin) để rà soát hậu quả vụ máy quầy ghi đè dữ liệu, phát hiện 12 lỗi "Visit —
   COMPLETED_VISIT_BUT_OPERATIONAL_STATUS": Visit đã đóng xong (status COMPLETED) nhưng player.status
@@ -7920,7 +7957,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.11'; // §FIX-COMPLETEDVISIT-STALESTATUS — them nut SỬA AN TOÀN cho loi COMPLETED_VISIT_BUT_OPERATIONAL_STATUS (Visit da COMPLETED nhung player.status con ket o waiting/ready/playing, vet tich vu may quay ghi de) — chi dong bo lai 1 field trang thai, khong dung tien/lich su tran dau — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.13'; // §FULLAUDIT-2026-09-17 — FULL APP AUDIT: ra soat P0-P2 (tien/kho/Credit/Social Pass/Auth/TV/Tournament/Booking), tim va sua 1 loi that (Thue may ban bong thieu chong double-click gay nguy co cong tien 2 lan) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13805,9 +13842,33 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
+/* §FIX-GHOSTCOURT-ALLENDED — xem giai thich day du tai check GHOST_COURT_ALL_PLAYERS_ENDED. Dung LAI
+   dung pattern "delete state.courts[courtId]; saveState();" da dung o §FIX-FINISHMATCH-GHOST-COURT
+   (v1.43.7) — de debounced diffAndFlushEntities()/occFlushEntity() (v1.43.9, co OCC) tu lo phan xoa
+   THAT SU tren Firebase mot cach an toan (huy neu 1 thiet bi khac VUA ghi 1 tran moi that len dung
+   courtId nay tu luc quet den luc bam sua), khong can tu viet 1 transaction rieng o day. KHONG tao
+   history/gamesPlayed/PPR gia — khong co ty so that de ghi nhan cho 1 tran chua bao gio duoc "Kết
+   thúc" dung cach. */
+function repairGhostCourtAllPlayersEnded(args){
+  const c = state.courts[args.courtId];
+  if(!c) return { ok:false, reason:'Không tìm thấy sân để dọn (có thể đã được kết thúc/dọn từ trước).' };
+  if(c.status !== 'playing') return { ok:false, reason:'Sân không còn ở trạng thái đang chơi — dữ liệu đã thay đổi, không cần sửa.' };
+  if(args.matchId && c.matchId !== args.matchId) return { ok:false, reason:'Sân này đã có 1 trận KHÁC bắt đầu — dữ liệu đã thay đổi, không tự dọn để tránh xoá nhầm trận thật.' };
+  const allPlayers = [...(c.team1||[]), ...(c.team2||[])].map(pid=>playerById(pid));
+  if(allPlayers.length !== 4 || !allPlayers.every(p=> p && (SESSION_ENDED_STATUSES.includes(p.status) || p.status === 'waiting_payment' || p.status === 'away'))){
+    return { ok:false, reason:'Không còn đủ 4 người trên sân đều ở trạng thái đã kết thúc phiên — dữ liệu đã thay đổi, không cần sửa.' };
+  }
+  const names = allPlayers.map(p=>p.name).join(', ');
+  const before = { status:c.status, team1:c.team1, team2:c.team2, matchId:c.matchId, startedAt:c.startedAt };
+  delete state.courts[args.courtId];
+  logDataIntegrityRepair('GHOST_COURT_ALL_PLAYERS_ENDED', 'court', args.courtId, before, null,
+    'Sân ' + args.courtId + ' hiện "ĐANG CHƠI" nhưng cả 4 người (' + names + ') đều đã kết thúc/rời phiên từ lâu — xoá bản ghi sân "ma" này, KHÔNG tạo lịch sử trận đấu/PPR giả vì không có tỷ số thật.');
+  saveState();
+  return { ok:true };
+}
 function runSafeRepairForIssue(issue){
   if(!issue || !issue.repairable || issue.repairConfidence !== 'DETERMINISTIC' || !issue.repairFn) return { ok:false, reason:'Issue này không đủ điều kiện tự sửa an toàn.' };
   const fn = DATA_INTEGRITY_REPAIR_FNS[issue.repairFn];
@@ -28960,16 +29021,25 @@ function openAddBallMachineRentalModal(playerId){
     <h2 style="display:flex; align-items:center; gap:8px;">🎱 Thuê máy bắn bóng — ${p.name}</h2>
     <label>Số tiền</label>
     <input type="number" id="ballMachineAmountInput" min="0" step="1000" value="${defaultPrice}">
-    <button style="margin-top:10px;" onclick="confirmAddBallMachineRental('${playerId}')">THÊM VÀO BILL</button>
+    <button id="ballMachineConfirmBtn" style="margin-top:10px;" onclick="confirmAddBallMachineRental('${playerId}')">THÊM VÀO BILL</button>
     <button class="secondary" onclick="openAddProductToBillModal('${playerId}')">← Quay lại</button>
     <button class="secondary" onclick="closeModal()">Đóng</button>
   `;
   document.getElementById('matchModal').classList.add('show');
 }
+/* §FIX-BALLMACHINE-DOUBLECLICK — audit toan app phat hien: khac voi TAT CA cac nut xac nhan tien khac
+   trong file nay (thanh toan, thu no, group pay...) deu co "btn.disabled = true" ngay luc bam de chong
+   double-click/double-tap tao trung giao dich, rieng nut "THÊM VÀO BILL" cua Thuê máy bắn bóng KHONG co
+   — va addBillItem()/ensureOpenBillForPlayer() ben duoi khong tu chan trung (moi lan goi la 1 dong item
+   moi, khong idempotency). Bam nhanh 2 lan (rat de xay ra tren man hinh cam ung POS) se cong 2 lan tien
+   thue may vao bill that. Them dung pattern khoa nut da dung nhat quan o cac cho khac trong file. */
 function confirmAddBallMachineRental(playerId){
+  const btn = document.getElementById('ballMachineConfirmBtn');
+  if(btn && btn.disabled) return;
   const input = document.getElementById('ballMachineAmountInput');
   const amount = Math.max(0, Math.round(Number(input?input.value:0)||0));
   if(amount<=0){ showToast('Nhập số tiền hợp lệ'); return; }
+  if(btn){ btn.disabled = true; btn.textContent = 'ĐANG THÊM...'; } // chong double-click tao trung khoan thue may
   const bill = addBillItem(playerId, { type:'ball_machine_rental', label:'Thuê máy bắn bóng', amount, qty:1, unitPrice:amount });
   if(!bill) return;
   markEntityDirty('bills', bill.id);
@@ -32405,6 +32475,25 @@ function runDataIntegrityCheck(){
       const endedMidMatch = SESSION_ENDED_STATUSES.includes(p.status) || p.status === 'waiting_payment' || p.status === 'away';
       if(endedMidMatch) addIssue('Court','WARNING', 'Sân ' + cid + ' đang thi đấu nhưng "' + p.name + '" đã chuyển trạng thái "' + p.status + '" (ACTIVE_MATCH_WITH_ENDED_PLAYER) — khi trận này kết thúc sẽ KHÔNG bị đưa lại vào hàng chờ (đã fix ở applyFinishMatchLocally()).');
     });
+    // F) CA 4 nguoi tren san 'playing' deu da ket thuc/roi phien — khac voi check E o tren (tung nguoi
+    // rieng le, con mo ho vi co the tran that su dang dien ra ma 1 nguoi vua bam KẾT THÚC giua chung),
+    // day la truong hop KHONG CON MO HO: neu TOAN BO 4 nguoi cung luc deu da "ket thuc phien" thi chac
+    // chan khong con ai thuc su dang danh o san nay nua — day chinh la dang "san ma" da gap nhieu lan
+    // trong su co may quay ghi de du lieu cu (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE) — dong ho hien thi
+    // thuong rat vo ly (vd hang nghin phut) vi startedAt la thoi diem THAT tu luc tran do bat dau that
+    // su tu lau, chi la chua bao gio duoc dong dung cach do loi dong bo. AN TOAN de tu don: KHONG tao
+    // history/cong gamesPlayed/doi PPR gia (khac finishMatch() binh thuong, vi khong co ty so that de
+    // ghi nhan) — chi xoa han ban ghi san "ma" nay, dung tinh than "dọn ghost, không tạo dữ liệu giả"
+    // da dung o §FIX-FINISHMATCH-GHOST-COURT (v1.43.7).
+    const allPlayers = [...(c.team1||[]), ...(c.team2||[])].map(pid=>playerById(pid));
+    if(allPlayers.length === 4 && allPlayers.every(p=> p && (SESSION_ENDED_STATUSES.includes(p.status) || p.status === 'waiting_payment' || p.status === 'away'))){
+      const names = allPlayers.map(p=>p.name).join(', ');
+      addIssue('Court','ERROR', 'Sân ' + cid + ' vẫn hiện "ĐANG CHƠI" nhưng CẢ 4 người (' + names + ') đều đã kết thúc/rời phiên từ lâu — gần như chắc chắn là sân "ma" còn sót lại (GHOST_COURT_ALL_PLAYERS_ENDED).', {
+        code:'GHOST_COURT_ALL_PLAYERS_ENDED', entityType:'court', entityId:cid, entityLabel:'Sân ' + cid,
+        impact:'Sân hiện sai là đang có người chơi, có thể gây nhầm lẫn khi xếp trận mới — không ảnh hưởng tiền, không có tỷ số thật để ghi nhận nên không tạo lịch sử trận đấu giả khi dọn.',
+        repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairGhostCourtAllPlayersEnded', repairArgs:{ courtId:cid, matchId:c.matchId||null }
+      });
+    }
   });
 
   // ===== SOCIAL MODE (§SOCIALMODEV2-2026 — CHI BAO CAO, khong tu sua, dung tinh than chung cua ham nay) =====
