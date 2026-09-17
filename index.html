@@ -2,6 +2,16 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.17 (2026-09-17) — §FIX-ORPHANEDCREDITLOT-REPAIR — Sau khi hết 11 lỗi activeVisitId, Kiểm tra dữ
+  liệu còn 4 lỗi "Lot Credit trỏ tới playerId không tồn tại" — mục Credit này vốn thiết kế CHỈ BÁO CÁO,
+  không tự sửa (đúng nguyên tắc: tình huống này "không được phép xảy ra qua đường code chuẩn", cần Admin
+  tự điều tra). Admin đã yêu cầu tra Console: xác nhận đúng là 3 khách hàng đã bị XOÁ HỒ SƠ sau khi được
+  cấp thưởng Credit tự động (Ưu đãi quay lại sớm + 1 mốc lượt ghé, tổng 90.000đ), không phải lỗi tạm thời/
+  race condition. Vì Lot Credit lọc theo playerId còn tồn tại mới dùng được (getUsableCreditLotsForPlayer),
+  3 khoản này đã VĨNH VIỄN không ai dùng được — an toàn tuyệt đối để đưa remainingAmount về 0 (đánh dấu
+  EXPIRED), không mất tiền thật, không xoá lot/lịch sử giao dịch (giữ nguyên audit trail). Thêm
+  repairOrphanedCreditLot() + gắn vào check, nút SỬA AN TOÀN giờ hiện cho các lỗi Credit loại này.
+
   v1.43.16 (2026-09-17) — §FIX-COMPLETEDVISIT-STALEREF-V2 — Admin reload lên v1.43.15, chạy lại Kiểm tra
   dữ liệu nhưng 5 lỗi "X có activeVisitId trỏ tới Visit đã COMPLETED" (A Vũ Xe, A Hậu Dương, Thảo Hương,
   Chính, Trâm) VẪN không hiện nút SỬA AN TOÀN. Điều tra qua Console xác nhận: p.status của cả 5 người này
@@ -7992,7 +8002,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.16'; // §FIX-COMPLETEDVISIT-STALEREF-V2 — repairCompletedVisitStaleStatus doi hoi p.status con ket o waiting/ready/playing, nhung nhieu player da co status DUNG SAN (paid_and_left) chi con activeVisitId la tham chieu "ma" toi Visit da COMPLETED — them repairStaleCompletedActiveVisitRef() rieng cho truong hop nay, nut SỬA AN TOÀN gio hien dung — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.17'; // §FIX-ORPHANEDCREDITLOT-REPAIR — them nut SỬA AN TOÀN cho Lot Credit tro toi playerId da bi xoa ho so (Admin da xac nhan qua Console la du lieu that, khong phai loi tam thoi) — dua remainingAmount ve 0, khong mat tien that, giu nguyen lich su — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13891,6 +13901,26 @@ function repairStaleCompletedActiveVisitRef(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-ORPHANEDCREDITLOT-REPAIR — Admin xac nhan qua Console: 3 playerId cua cac Lot Credit "ma" nay
+   THAT SU khong con ton tai (khach da bi xoa ho so), khong phai loi tam thoi/dang xu ly — cac Lot nay
+   khong ai dung duoc nua (redeemCreditsFEFO/getUsableCreditLotsForPlayer deu loc theo dung playerId con
+   ton tai truoc), nen dua remainingAmount ve 0 la AN TOAN TUYET DOI: khong mat tien that (Credit chua
+   tung va se khong bao gio duoc quy doi thanh tien/hang), chi don sach "no ao" khoi Data Integrity. GIU
+   NGUYEN lot + creditTransactions ISSUE cu trong lich su (khong xoa) de giu dau vet audit day du. */
+function repairOrphanedCreditLot(args){
+  const lot = (state.creditLots||[]).find(l=>l.id===args.lotId);
+  if(!lot) return { ok:false, reason:'Không tìm thấy Lot Credit để sửa (có thể đã bị xoá).' };
+  if(playerById(lot.playerId)) return { ok:false, reason:'Player này đã xuất hiện trở lại — dữ liệu đã thay đổi, không cần sửa.' };
+  if(!((lot.remainingAmount||0) > 0)) return { ok:false, reason:'Lot Credit đã hết số dư — không cần sửa.' };
+  const before = { remainingAmount: lot.remainingAmount, status: lot.status };
+  lot.remainingAmount = 0;
+  lot.status = 'EXPIRED';
+  logDataIntegrityRepair('ORPHANED_CREDIT_LOT_PLAYER', 'creditLot', lot.id, before, { remainingAmount: lot.remainingAmount, status: lot.status },
+    'Lot Credit "' + lot.id + '" thuộc playerId "' + lot.playerId + '" đã bị xoá hồ sơ — đưa remainingAmount về 0 (đánh dấu hết hạn), không ai dùng được nữa, không mất tiền thật, giữ nguyên lịch sử.');
+  markEntityDirty('creditLots', lot.id);
+  saveState();
+  return { ok:true };
+}
 /* §FIX-TVANN-STUCKPLAYING-REPAIR — repair cho TV_ANNOUNCEMENT_STUCK_PLAYING (xem giai thich day du tai
    noi tao issue). An toan vi dung DUNG terminal state ('PLAYED') ma finish() trong speakTvAnnouncement()
    se tu gan neu TV khong bi crash — khong dung/xoa du lieu tien/bill, chi don trang thai TTS. */
@@ -13926,7 +13956,7 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef, repairOrphanedCreditLot };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 /* §FIX-GHOSTCOURT-ALLENDED — xem giai thich day du tai check GHOST_COURT_ALL_PLAYERS_ENDED. Dung LAI
@@ -33131,7 +33161,12 @@ function runDataIntegrityCheck(){
     (state.creditLots||[]).forEach(lot=>{
       if((lot.remainingAmount||0) < 0) addIssue('Credit','ERROR','Lot Credit "' + lot.id + '" của ' + (playerName(lot.playerId)||lot.playerId) + ' có remainingAmount âm (' + lot.remainingAmount + ').');
       if((lot.remainingAmount||0) > (lot.originalAmount||0)) addIssue('Credit','ERROR','Lot Credit "' + lot.id + '" của ' + (playerName(lot.playerId)||lot.playerId) + ' có remainingAmount (' + lot.remainingAmount + ') vượt originalAmount (' + lot.originalAmount + ').');
-      if(!playerById(lot.playerId)) addIssue('Credit','ERROR','Lot Credit "' + lot.id + '" trỏ tới playerId "' + lot.playerId + '" không tồn tại.');
+      if(!playerById(lot.playerId)) addIssue('Credit','ERROR','Lot Credit "' + lot.id + '" trỏ tới playerId "' + lot.playerId + '" không tồn tại.', {
+        code:'ORPHANED_CREDIT_LOT_PLAYER', entityType:'creditLot', entityId:lot.id, entityLabel:lot.id,
+        impact:'Khách hàng sở hữu Credit này đã bị xoá hồ sơ — Credit không còn ai dùng được (không mất tiền/không ảnh hưởng doanh thu), chỉ còn là dữ liệu rác. SỬA AN TOÀN sẽ đưa remainingAmount về 0 (đánh dấu hết hạn), KHÔNG xoá lot khỏi lịch sử.',
+        repairable: (lot.remainingAmount||0) > 0, repairConfidence: (lot.remainingAmount||0) > 0 ? 'DETERMINISTIC' : null,
+        repairFn:'repairOrphanedCreditLot', repairArgs:{ lotId: lot.id }
+      });
     });
     // duplicate source reward (§10/§66-68) — 2+ ISSUE cung operationId lam ra 2 lot rieng (khong duoc
     // xay ra vi issueCreditLot() da idempotent qua operationId — check nay la luoi an toan).
