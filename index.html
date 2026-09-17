@@ -2,6 +2,18 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.15 (2026-09-17) — §FIX-COMPLETEDVISIT-PLAYERSIDE-REPAIR — Admin chạy lại Kiểm tra dữ liệu sau
+  v1.43.14, thấy 11 lỗi "X có activeVisitId trỏ tới Visit đã COMPLETED" (COMPLETED_VISIT_BUT_OPERATIONAL_
+  STATUS) vẫn hiện "Không — cần Admin kiểm tra" dù đây CHÍNH LÀ tình huống đã được nâng cấp SỬA AN TOÀN ở
+  v1.43.11. NGUYÊN NHÂN: check này được quét từ 2 phía độc lập cho CÙNG 1 tình huống thật — (C) quét từ
+  Visit.status==='COMPLETED' tìm player còn kẹt status hoạt động (đã gắn repairFn ở v1.43.11), và (D) quét
+  từ Player.activeVisitId trỏ tới 1 Visit không còn ACTIVE (branch này VẪN LÀ addIssue() trần, không có
+  code/repairable, nên luôn báo "cần Admin kiểm tra" dù an toàn y hệt branch C). FIX: gắn cùng 1 repairFn
+  repairCompletedVisitStaleStatus (v1.43.11, đã tự re-kiểm tra đủ điều kiện an toàn bên trong trước khi
+  sửa) cho branch D — chỉ set repairable=true khi player thực sự đang kẹt status hoạt động VÀ không còn
+  Visit ACTIVE nào khác (đúng điều kiện gốc), các trường hợp còn lại (vd Visit COMPLETED nhưng player đã
+  paid_and_left đúng) vẫn giữ nguyên "cần Admin kiểm tra" như cũ, không nới lỏng điều kiện an toàn.
+
   v1.43.14 (2026-09-17) — §FIX-ORPHAN-ACTIVEVISITID — Sau khi chạy lại Kiểm tra dữ liệu, Admin báo vẫn
   còn 15 lỗi, trong đó 10 lỗi "Player — X có activeVisitId trỏ tới Visit không tồn tại". Đây là check
   ĐÃ CÓ TỪ TRƯỚC (cùng nhóm với COMPLETED_VISIT_BUT_OPERATIONAL_STATUS đã sửa ở v1.43.11) nhưng ở nhánh
@@ -7969,7 +7981,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.14'; // §FIX-ORPHAN-ACTIVEVISITID — them check + nut SỬA AN TOÀN cho p.activeVisitId tro toi Visit khong con ton tai (vet tich vu may quay ghi de du lieu cu) — go tham chieu "ma", dong bo lai trang thai neu can, khong dung tien/bill — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.15'; // §FIX-COMPLETEDVISIT-PLAYERSIDE-REPAIR — nhanh quet Player.activeVisitId cua check COMPLETED_VISIT_BUT_OPERATIONAL_STATUS (D) chua duoc gan repairFn nhu nhanh Visit (C) da lam o v1.43.11 — gio SỬA AN TOÀN hoat dong dung ca 2 nhanh — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -32482,7 +32494,22 @@ function runDataIntegrityCheck(){
           repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairOrphanActiveVisitId', repairArgs:{ playerId:p.id, expectedVisitId:p.activeVisitId }
         });
       }
-      else if(refVisit.status !== 'ACTIVE') addIssue('Player','ERROR', p.name + ' có activeVisitId trỏ tới Visit đã "' + refVisit.status + '" (COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).');
+      else if(refVisit.status !== 'ACTIVE'){
+        // §FIX-COMPLETEDVISIT-PLAYERSIDE-REPAIR — nhanh nay (quet tu phia Player.activeVisitId) la
+        // CUNG 1 tinh huong that su voi check C ben duoi (quet tu phia Visit.status==='COMPLETED'),
+        // chi khac goc nhin quet — nhung truoc day CHI branch C duoc nang cap SUA AN TOAN o v1.43.11,
+        // branch nay van la addIssue() 3-tham-so tran (khong code/repairable) nen luon hien "Không —
+        // cần Admin kiểm tra" du dieu kien an toan 100% giong het. FIX: gan chung 1 repairFn
+        // repairCompletedVisitStaleStatus (ham nay da tu kiem tra lai đầy đủ đieu kien an toan ben
+        // trong truoc khi sua, dung goi lai duoc tu ca 2 nhanh quet).
+        addIssue('Player','ERROR', p.name + ' có activeVisitId trỏ tới Visit đã "' + refVisit.status + '" (COMPLETED_VISIT_BUT_OPERATIONAL_STATUS).', {
+          code:'COMPLETED_VISIT_BUT_OPERATIONAL_STATUS', entityType:'player', entityId:p.id, entityLabel:p.name,
+          impact:'Player này bị kẹt hiện trên tab ĐANG Ở SÂN dù Visit đã đóng xong thật sự — không ảnh hưởng tiền/lịch sử trận đấu, chỉ là 1 field trạng thái hiển thị bị lệch.',
+          repairable: ['waiting','ready','playing'].includes(p.status) && getActiveVisitForPlayer(p.id) === null,
+          repairConfidence: (['waiting','ready','playing'].includes(p.status) && getActiveVisitForPlayer(p.id) === null) ? 'DETERMINISTIC' : null,
+          repairFn:'repairCompletedVisitStaleStatus', repairArgs:{ visitId:refVisit.id, playerId:p.id }
+        });
+      }
     }
   });
   // C) Visit COMPLETED nhung player.status van la 1 trong cac status "con hoat dong" (waiting/ready/
