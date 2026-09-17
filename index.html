@@ -2,6 +2,19 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.19 (2026-09-17) — §FIX-EOD-WATERDETAIL — Admin báo the "KẾT THÚC NGÀY" cảnh báo "1 độ nước chưa
+  xuất" nhưng bấm "XEM CHI TIẾT" thì không hiện khách nào. ĐIỀU TRA qua Console xác nhận: khoản độ nước
+  đó (A Vũ Sữa, Aquafina) có player.status = "paid_and_left" (đã rời sân từ trước) — root cause là từ bản
+  §WATERREMOVE (v1.7.0-RC1) gỡ hẳn tab "NƯỚC" riêng, nút Xuất hàng/Huỷ cho 1 khoản độ nước chỉ còn nằm
+  trên chính thẻ khách ở tab ĐANG Ở SÂN; nhưng nếu khách đó đã rời sân thì thẻ không còn hiện ở đó nữa —
+  khoản nợ nước bị "mắc kẹt" vĩnh viễn, hoàn toàn không còn đường nào trong UI để xử lý (dù hàm nghiệp vụ
+  openFulfillModal()/cancelWaterLoss() vẫn hoạt động bình thường, chỉ thiếu điểm vào). Nút "XEM CHI TIẾT"
+  của thẻ Kết thúc ngày cũng luôn điều hướng cứng sang Công nợ (chỉ đúng cho trường hợp bill chưa thu),
+  không liên quan gì đến độ nước — càng khiến vấn đề như "biến mất". FIX: thêm openEodWaterModal() liệt
+  kê TẤT CẢ khoản độ nước chưa xuất (kể cả khách đã rời sân) với nút Xuất hàng/Huỷ dùng lại nguyên vẹn
+  hàm nghiệp vụ có sẵn; nút "XEM CHI TIẾT" giờ tự kiểm tra đúng loại vấn đề đang tồn tại trước khi điều
+  hướng (openEodDetailModal()).
+
   v1.43.18 (2026-09-17) — §FIX-ORPHANEDCREDITLOT-RECHECK — Admin bấm SỬA AN TOÀN cho lỗi Credit ở
   v1.43.17, banner báo xanh "Đã sửa an toàn" nhưng lỗi vẫn còn nguyên trong danh sách — lặp lại vô hạn.
   NGUYÊN NHÂN: hàm repairOrphanedCreditLot() chạy ĐÚNG (đưa remainingAmount về 0 thành công), nhưng điều
@@ -6263,7 +6276,7 @@
         <h3 style="display:flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>KẾT THÚC NGÀY</h3>
         <div id="financeEodBox"></div>
         <div style="display:flex; gap:8px; margin-top:10px;">
-          <button class="secondary" onclick="goToBillsTab()">XEM CHI TIẾT</button>
+          <button class="secondary" onclick="openEodDetailModal()">XEM CHI TIẾT</button>
           <button class="danger" onclick="openEndOfDayModal()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>KẾT THÚC NGÀY</button>
         </div>
       </div>
@@ -8011,7 +8024,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.18'; // §FIX-ORPHANEDCREDITLOT-RECHECK — v1.43.17 sua remainingAmount ve 0 nhung dieu kien bao loi khong nhin remainingAmount nen bi bao lai ngay lap tuc (vong lap "sua thanh cong ma loi khong het") — gio chi bao loi khi remainingAmount>0, da sua roi thi thoi — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.19'; // §FIX-EOD-WATERDETAIL — nut "XEM CHI TIẾT" o the Kết thúc ngày luon dieu huong sang Công nợ du dang canh bao do nuoc (khach da roi san thi khong con the nao o Đang Ở Sân de xu ly) — them modal rieng liet ke ca khach da roi, dung lai openFulfillModal()/cancelWaterLoss() co san — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -28672,6 +28685,42 @@ function goToBillsTab(){
   const financeBtn = document.querySelector('.tab-btn[data-tab="finance"]');
   if(financeBtn) financeBtn.click();
   setFinanceSubtab('debt');
+}
+/* §FIX-EOD-WATERDETAIL — Admin bao: the "KẾT THÚC NGÀY" canh bao "1 độ nước chưa xuất" nhung bam
+   "XEM CHI TIẾT" thi khong hien khach nao (dieu huong thang sang Công nợ — chi dung cho truong hop bill
+   chua thu, KHONG lien quan gi den do nuoc). ROOT CAUSE: tu ban §WATERREMOVE (v1.7.0-RC1) go han tab
+   "NƯỚC" rieng, nut Xuat hang/Huy cho 1 khoan do nuoc chi con nam tren THE CUA KHACH o tab ĐANG Ở SÂN —
+   nhung neu khach do DA RỜI SÂN (p.status khac waiting/ready/playing) thi the cua ho KHONG CON HIEN tren
+   Đang Ở Sân nua -> hoan toan khong con duong nao trong UI de xu ly khoan no nuoc con treo lai (du ham
+   nghiep vu openFulfillModal()/cancelWaterLoss() van hoat dong binh thuong, chi thieu diem vao). FIX:
+   nut "XEM CHI TIẾT" cua the Kết thúc ngày gio kiem tra dung loai van de dang ton tai truoc khi dieu
+   huong — neu con do nuoc chua xu ly thi mo modal rieng liet ke TAT CA (ke ca khach da roi san), tai
+   dung nguyen ven openFulfillModal()/cancelWaterLoss() da co san (khong viet lai logic nghiep vu). */
+function openEodWaterModal(){
+  const box = document.getElementById('matchModalContent');
+  const modal = document.getElementById('matchModal');
+  if(!box || !modal) return;
+  const pending = state.waterLoss.filter(w=>!w.canceled && w.fulfillmentStatus!=='FULFILLED');
+  box.innerHTML = `
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>Độ nước chưa xuất (${pending.length})</h2>
+    <p class="muted">Gồm cả khách đã rời sân (thẻ của họ không còn hiện ở ĐANG Ở SÂN) — bấm Xuất hàng/Huỷ để xử lý dứt điểm trước khi kết thúc ngày.</p>
+    ${pending.length ? pending.map(w=>`
+      <div class="water-pending-row">
+        <div class="wp-info"><b>${playerName(w.playerId)}</b> — ${w.productName} ×${w.quantity} = ${fmtVnd((w.quantity||0)*(w.unitPrice||0))}</div>
+        <div>
+          <button class="small" onclick="openFulfillModal('${w.id}')">Xuất hàng</button>
+          <button class="small danger" onclick="cancelWaterLoss('${w.id}'); openEodWaterModal();">Huỷ</button>
+        </div>
+      </div>
+    `).join('') : '<div class="empty-state"><div class="empty-title">Không còn khoản nào đang chờ xuất</div></div>'}
+    <button class="secondary" onclick="closeModal()" style="margin-top:10px;">Đóng</button>
+  `;
+  modal.classList.add('show');
+}
+function openEodDetailModal(){
+  const eod = (typeof getEndOfDayIssues === 'function') ? getEndOfDayIssues() : null;
+  if(eod && eod.unresolvedWater && eod.unresolvedWater.length){ openEodWaterModal(); return; }
+  goToBillsTab();
 }
 
 let cart = {};
