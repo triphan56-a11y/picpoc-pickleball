@@ -2,6 +2,24 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.4 (2026-09-18) — §FEATURE-AUDITLOG-SHOWMORE — Theo yêu cầu Admin: "trong phần nhật ký thao tác,
+  tôi muốn xem tất cả lịch sử thao tác của tất cả mọi người luôn". Kiểm tra source xác nhận: nhật ký
+  (state.overrideLog) VỐN ĐÃ ghi thao tác của TẤT CẢ người dùng (cột "Người thực hiện" chỉ là hiển thị,
+  không phải bộ lọc theo 1 người), và nút "Tất cả" (khoảng thời gian) VỐN ĐÃ lấy từ đầu (minTs=0, không
+  giới hạn thời gian). VẤN ĐỀ THẬT: dòng renderAuditLog() cũ `rows.slice(0,300)` CẮT CỨNG tối đa 300
+  dòng dù đã chọn "Tất cả", KHÔNG báo cho biết còn bao nhiêu dòng bị ẩn — trên 1 club đã hoạt động lâu
+  (đặc biệt sau đợt Data Health tự động sửa hàng trăm bill trùng lặp) bấm "Tất cả" vẫn chỉ thấy 300 dòng
+  mới nhất, không xem được phần còn lại. FIX: giữ nguyên việc chỉ render 1 lô (300 dòng/lần, đúng tinh
+  thần tối ưu hiệu năng vừa làm ở §PERF-PASS-2026-09-18 — không load hết hàng nghìn dòng cùng lúc gây
+  chậm), nhưng thêm nút "Xem thêm" tải thêm 300 dòng tiếp theo mỗi lần bấm (không giới hạn cứng, không
+  ẩn luôn phần còn lại), kèm dòng chữ "Đang hiện X / Y dòng" để biết còn bao nhiêu dòng chưa xem — bấm
+  Xem thêm nhiều lần là xem được HẾT toàn bộ lịch sử thật của tất cả mọi người. Đồng thời sửa luôn 1 lỗi
+  phụ phát hiện khi đọc code: rows trước đây không sắp xếp gì (giữ nguyên thứ tự push cũ→mới của
+  overrideLog), nên 300 dòng đầu tiên thực ra là 300 dòng CŨ NHẤT chứ không phải mới nhất — đã thêm sort
+  giảm dần theo thời gian (mới nhất lên đầu) trước khi cắt, đúng kỳ vọng thông thường của 1 nhật ký thao
+  tác. Reset lại về lô đầu tiên (300 dòng) mỗi khi đổi bộ lọc khoảng thời gian/loại hành động. Đã verify
+  14/9 thẻ script và chạy syntax-check (new Function trên từng script block) — 0 lỗi.
+
   v1.44.3 (2026-09-18) — §PERF-PASS-2026-09-18 — Theo yêu cầu Admin: "kiểm tra lại app và làm cho app
   chạy mượt hơn". Dùng 1 subagent quét toàn bộ file tìm bottleneck hiệu năng cụ thể (file:line, không
   đoán), tự đọc lại source xác nhận từng điểm trước khi sửa (không tin mù báo cáo agent). 4 nhóm vấn đề
@@ -7445,6 +7463,11 @@
             <tbody id="auditLogTbody"></tbody>
           </table>
           <p class="muted" id="auditLogEmptyMsg" style="display:none;">Không có nhật ký nào trong khoảng đã chọn.</p>
+          <!-- §FEATURE-AUDITLOG-SHOWMORE — xem ghi chu tai renderAuditLog() -->
+          <div style="text-align:center; margin-top:10px;">
+            <button class="secondary" id="auditLogShowMoreBtn" style="display:none;" onclick="showMoreAuditLog()">Xem thêm</button>
+            <p class="muted" id="auditLogCountNote" style="margin-top:6px;"></p>
+          </div>
         </div>
       </div>
       <div class="card settings-card-full" data-require-permission="RESET_ALL" style="border:2px solid var(--danger); background:#fef2f2;">
@@ -8314,7 +8337,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.3'; // §PERF-PASS-2026-09-18 — throttle cache local + debounce ô tìm kiếm + fix mất focus khi gõ + tối ưu O(n²) render Bill/Đang ở sân — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.4'; // §FEATURE-AUDITLOG-SHOWMORE — bỏ cắt cứng 300 dòng, thêm nút Xem thêm + sort mới nhất trước cho Nhật ký thao tác — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -27814,14 +27837,35 @@ function categorizeAuditAction(action){
   }
   return 'other';
 }
+/* §FEATURE-AUDITLOG-SHOWMORE (2026-09-18) — Theo yeu cau Admin: "trong phần nhật ký thao tác, tôi
+   muốn xem tất cả lịch sử thao tác của tất cả mọi người luôn". Nhat ky (state.overrideLog) VON DA ghi
+   thao tac cua TAT CA nguoi dung (khong loc theo 1 nguoi cu the — cot "Người thực hiện" chi la hien
+   thi, khong phai bo loc), va filter "Tất cả" (range='all') VON DA lay tu minTs=0 (khong gioi han thoi
+   gian) — 2 phan nay da dung san. VAN DE THAT: dong cu tbody.innerHTML = rows.slice(0,300).map(...) CAT
+   CUNG toi da 300 dong MA KHONG BAO cho nguoi dung biet con bao nhieu dong nua bi an — bam "Tất cả" tren
+   1 club da hoat dong lau (vd sau dot Data Health tu dong sua hang tram bill trung lap) van chi thay
+   300 dong moi nhat, KHONG THE xem duoc phan con lai => dung dung y "xem tất cả" cua Admin. FIX: giu
+   nguyen viec chi render 1 lo (300 dong/lan) de KHONG lam cham trinh duyet neu nhat ky co hang nghin
+   dong (dung tinh than dot toi uu hieu nang §PERF-PASS-2026-09-18), nhung them nut "Xem thêm" de tai
+   THEM 300 dong tiep theo moi lan bam (khong phai gioi han cung 1 lan roi an luon), va 1 dong chu ro
+   "Đang hiện X / Y dòng" de Admin biet con bao nhieu dong chua xem — bam Xem thêm nhieu lan la xem duoc
+   HET toan bo lich su that cua TAT CA moi nguoi, dung y muon. */
+let auditLogVisibleCount = 300;
+const AUDIT_LOG_PAGE_SIZE = 300;
 function setAuditFilterRange(key){
   localUi.auditFilterRange = key;
+  auditLogVisibleCount = AUDIT_LOG_PAGE_SIZE; // §FEATURE-AUDITLOG-SHOWMORE — doi bo loc thi reset lai ve lo dau tien
   saveLocalUiState();
   renderAuditLog();
 }
 function onAuditActionFilterChange(){
   localUi.auditFilterAction = document.getElementById('auditActionFilterSelect').value;
+  auditLogVisibleCount = AUDIT_LOG_PAGE_SIZE; // §FEATURE-AUDITLOG-SHOWMORE
   saveLocalUiState();
+  renderAuditLog();
+}
+function showMoreAuditLog(){
+  auditLogVisibleCount += AUDIT_LOG_PAGE_SIZE;
   renderAuditLog();
 }
 function renderAuditLog(){
@@ -27840,12 +27884,17 @@ function renderAuditLog(){
   else if(range === '7d') minTs = now - 7*86400000;
   else if(range === '30d') minTs = now - 30*86400000;
 
-  let rows = state.overrideLog.filter(o=>(o.createdAt||o.timestamp||0) >= minTs);
+  // §FEATURE-AUDITLOG-SHOWMORE — sap xep MOI NHAT truoc (truoc day dua nguyen thu tu push cua
+  // overrideLog, thuong la CU truoc — cat 300 dong dau se ra 300 dong CU NHAT thay vi moi nhat,
+  // khong dung y "xem gan day nhat" thong thuong cua 1 nhat ky thao tac).
+  let rows = state.overrideLog.filter(o=>(o.createdAt||o.timestamp||0) >= minTs)
+    .slice().sort((a,b)=> (b.createdAt||b.timestamp||0) - (a.createdAt||a.timestamp||0));
   const actionFilter = localUi.auditFilterAction || 'all';
   if(actionFilter !== 'all') rows = rows.filter(o=>categorizeAuditAction(o.action)===actionFilter);
 
   document.getElementById('auditLogEmptyMsg').style.display = rows.length ? 'none' : 'block';
-  tbody.innerHTML = rows.slice(0,300).map(o=>`
+  const visibleRows = rows.slice(0, auditLogVisibleCount);
+  tbody.innerHTML = visibleRows.map(o=>`
     <tr>
       <td>${new Date(o.createdAt||o.timestamp).toLocaleString('vi-VN')}</td>
       <td>${o.createdBy || '—'}</td>
@@ -27854,6 +27903,10 @@ function renderAuditLog(){
       <td>${o.detail || ''}</td>
     </tr>
   `).join('');
+  const showMoreBtn = document.getElementById('auditLogShowMoreBtn');
+  const countNote = document.getElementById('auditLogCountNote');
+  if(showMoreBtn) showMoreBtn.style.display = rows.length > visibleRows.length ? 'inline-block' : 'none';
+  if(countNote) countNote.textContent = rows.length ? ('Đang hiện ' + visibleRows.length + ' / ' + rows.length + ' dòng') : '';
 }
 
 
