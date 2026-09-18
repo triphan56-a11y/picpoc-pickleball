@@ -2,6 +2,30 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.25 (2026-09-18) — §FIX-ENDPLAYING-LISTENEROVERWRITE — Admin báo cáo NGHIÊM TRỌNG: "đã bấm kết
+  thúc toàn bộ 11 người, họ đã về hết rồi" nhưng bấm xong màn ĐANG Ở SÂN vẫn hiện lại y như cũ. Đã hỏi rõ
+  và xác nhận qua trả lời của Admin (không đoán): bấm xong nhưng vẫn còn hiện lại — nghĩa là 1 bug thật,
+  không phải do khách còn ở sân thật. Đọc lại code endPlaying() (hàm gán cho nút "🚪 KẾT THÚC") xác nhận
+  CHÍNH XÁC nguyên nhân: hàm này đổi p.status ('checked_out'/'paid_and_left'), p.finishedPlayingAt, và
+  v.finishedPlayingAt/completePlayerVisit() nhưng CHỈ gọi saveState() (localStorage cục bộ) — KHÔNG HỀ
+  gọi markEntityDirty('players', id) hay markEntityDirty('playerVisits', v.id) — CÙNG 1 LỚP LỖI với
+  markEntityDirty-listener-overwrite đã vá ở v1.43.20-22 (check-in/bookings/payments/...) nhưng endPlaying()
+  bị bỏ sót trong đợt rà soát đó (không nằm trong danh sách "điểm push() entity mới" nên không được quét
+  tới — đợt này là ĐỔI TRẠNG THÁI của entity đã có sẵn, không phải TẠO MỚI). Hậu quả: khi Staff bấm KẾT
+  THÚC liên tiếp cho nhiều người (giờ đông khách), mỗi lần có 1 thay đổi KHÁC trên node 'players' từ 1
+  thiết bị/thao tác khác gần như đồng thời sẽ khiến attachEntityListener('players') ghi đè TOÀN BỘ
+  state.players bằng snapshot remote — id nào CHƯA được markEntityDirty() (chưa nằm trong
+  pendingEntityWrites) bị "hồi sinh" lại giá trị REMOTE CŨ (vẫn 'waiting'), xoá mất thao tác KẾT THÚC vừa
+  bấm — đúng khớp triệu chứng "bấm xong nhưng vẫn còn hiện lại". FIX: thêm markEntityDirty('players', id)
+  + markEntityDirty('playerVisits', v.id) ngay sau khi đổi trạng thái, ở CẢ nhánh chính lẫn nhánh Hoàn tác
+  của endPlaying(). Nhân dịp phát hiện lớp lỗi này, đã RÀ SOÁT LUÔN toàn bộ nhóm hàm đổi trạng thái khác
+  trên thẻ Điểm danh (cùng 1 khu vực code, cùng rủi ro) và vá cùng 1 kiểu: toggleRestOneRound() (NGHỈ 1
+  LƯỢT, cả nhánh Hoàn tác), markNotReady(), markReadyAgain(), markWaitingForPayment() (CHỜ TÍNH TIỀN),
+  markTempAway() (TẠM RỜI SÂN, cả nhánh Hoàn tác), returnFromAway() (ĐÃ QUAY LẠI) — tất cả giờ đều đẩy
+  markEntityDirty('players', id) ngay khi đổi status, không còn phụ thuộc lưới an toàn debounce nữa.
+  KHÔNG đổi bất kỳ logic nghiệp vụ/tiền nào — chỉ thêm đồng bộ Firebase ngay lập tức cho đúng những gì đã
+  đổi cục bộ.
+
   v1.43.24 (2026-09-18) — §FIX-BILLMODAL-STALEFALLBACK — Admin chụp ảnh "A Hộ" (card ngoài đúng "Bill: 0đ"
   — ĐÚNG, cả 3 bill của A Hộ đều 'paid', kể cả bill 52.000đ của phiên ACTIVE hiện tại) nhưng bấm vào "BILL"
   lại hiện 1 bill CŨ 45.000đ từ phiên 8 ngày trước (10/9), gây hiểu lầm mâu thuẫn với số 0đ ngoài thẻ. Đã
@@ -8124,7 +8148,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.24'; // §FIX-BILLMODAL-STALEFALLBACK — modal XEM BILL hien nham bill CU nhat (thay vi gan nhat) khi player khong con bill open, do fallback dua vao field createdAt hay bi null — fix uu tien bill cua Active Visit hien tai + fallback theo vi tri mang thay vi createdAt — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.25'; // §FIX-ENDPLAYING-LISTENEROVERWRITE — bam KET THUC (va cac nut doi trang thai khac tren the Diem danh: NGHI 1 LUOT/CHO TINH TIEN/TAM ROI SAN/DA QUAY LAI/chua san sang) khong day markEntityDirty('players') ngay, bi Firebase listener ghi de mat trong luc dong khach thao tac lien tuc — da vá toan bo nhom ham nay — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -17504,16 +17528,23 @@ function renderQueueTable(){
   if(countEl) countEl.textContent = visible.length || '';
 }
 
+/* §FIX-ENDPLAYING-LISTENEROVERWRITE — toggleRestOneRound/markNotReady/markReadyAgain/markWaitingForPayment/
+   markTempAway/returnFromAway deu doi p.status nhung TRUOC DAY khong goi markEntityDirty('players', id) —
+   CUNG 1 lo hong vua tim thay va va o endPlaying() (xem giai thich day du tai do). Da grep quet toan bo
+   nhom ham doi status tren the Diem danh, them markEntityDirty('players', id) cho tung ham ngay sau khi
+   doi status, tranh bi Firebase listener ghi de mat trong luc dong khach thao tac lien tuc. */
 function toggleRestOneRound(id){
   const p = playerById(id); if(!p) return;
   const wasRest = p.restOneRound;
   p.restOneRound = !p.restOneRound;
   p.restClearRound = p.restOneRound ? (state.roundCounter||0) + 1 : null;
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
   if(p.restOneRound){
     showUndoToast('✓ ' + p.name + ' nghỉ 1 lượt', function(){
       p.restOneRound = wasRest; p.restClearRound = null;
+      markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
       saveState(); renderLiveTab();
       if(typeof renderPresenceTab === 'function') renderPresenceTab();
       showToast('Đã hoàn tác');
@@ -17529,12 +17560,14 @@ function markNotReady(id){
   p.status = 'not_ready';
   p.notReadyStrikes = (p.notReadyStrikes||0) + 1;
   logOverride('mark_not_ready', p.name);
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
   showToast(p.name + ' chưa sẵn sàng — đã chọn người khác thay thế nếu có.');
 }
 function markReadyAgain(id){
   const p = playerById(id); if(!p) return;
   p.status = 'waiting'; // giu nguyen waitSince cu -> khong mat uu tien
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
 }
 /* KET THUC CHOI: chi roi khoi hang cho/san dang xep — KHONG dung toi bill.
@@ -17619,6 +17652,22 @@ function endPlaying(id){
   } else {
     p.status = 'checked_out';
   }
+  /* §FIX-ENDPLAYING-LISTENEROVERWRITE — Admin bao "bấm KẾT THÚC cho cả 11 người, họ đã về hết rồi mà app
+     vẫn hiện lại y như cũ" trong luc dong khach (11 nguoi bam KET THUC lien tiep trong vai phut). Doc lai
+     code xac nhan (khong doan): TOAN BO ham endPlaying() nay TRUOC DAY chi doi p.status/p.finishedPlayingAt
+     (o tren) va v.finishedPlayingAt/completePlayerVisit() (o tren) CUC BO qua saveState() (localStorage) —
+     KHONG HE goi markEntityDirty('players', id) hay markEntityDirty('playerVisits', v.id) o day, du day
+     la nut duy nhat dung de "roi san" — CUNG 1 LOP LOI voi markEntityDirty listener-overwrite da vá o
+     v1.43.20-22 (check-in/bookings/payments/...) nhung ham nay bi bo sot trong dot ra soat do (endPlaying
+     khong nam trong danh sach cac diem push() entity MOI nen khong duoc quet toi). Hau qua: khi Staff bam
+     KET THUC lien tiep cho nhieu nguoi (gio dong khach), moi lan co 1 thay doi KHAC tren node 'players' tu
+     Firebase (vd 1 luot KET THUC/check-in khac gan nhu dong thoi) se khien attachEntityListener('players')
+     GHI DE TOAN BO state.players bang snapshot remote — id nao CHUA duoc markEntityDirty() (chua nam trong
+     pendingEntityWrites) se bi "hoi sinh" lai gia tri REMOTE CU (van 'waiting'), xoa mat thay doi cuc bo
+     vua bam, dung khop trieu chung "bấm xong nhưng vẫn còn hiện lại". FIX: day ngay ca 2 node ('players'
+     va 'playerVisits' neu co Visit) NGAY SAU KHI doi status, khong con phu thuoc luoi an toan debounce. */
+  markEntityDirty('players', id);
+  if(v) markEntityDirty('playerVisits', v.id);
   saveState(); renderLiveTab();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
   // §FIX-STALE-10 — con no that (khong tu dong dong duoc) -> mo THANG Bill ngay tai day de thu tien lien
@@ -17635,6 +17684,11 @@ function endPlaying(id){
         markEntityDirty('bills', openBill.id);
       }
     }
+    // §FIX-ENDPLAYING-LISTENEROVERWRITE — nhanh Hoàn tác cũng phải đẩy ngay, cùng lý do với nhánh chính
+    // ở trên (nếu không, giá trị hoàn tác cục bộ có thể bị listener 'players' ghi đè mất trước khi kịp
+    // đồng bộ, khiến bấm Hoàn tác xong nhưng thiết bị khác vẫn thấy trạng thái CŨ đã kết thúc).
+    markEntityDirty('players', id);
+    if(v) markEntityDirty('playerVisits', v.id);
     saveState(); renderLiveTab();
     if(typeof renderPresenceTab === 'function') renderPresenceTab();
     showToast('Đã hoàn tác');
@@ -17651,6 +17705,7 @@ function markWaitingForPayment(id){
   p.socialParticipation = false; // §SOCIALMODE2026 — cho tinh tien = roi khoi matchmaking
   p.status = 'waiting_payment';
   p.waitingForPaymentAt = Date.now();
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
   if(typeof renderMoneyTab === 'function') renderMoneyTab();
@@ -17665,10 +17720,12 @@ function markTempAway(id){
   removePlayerFromOperationalQueues(id, 'AWAY'); // §SOCIAL4-29 / §RF11 — 'AWAY': neu dang giu cho boi 1 Requested Four PENDING_PLAYERS thi GIU NGUYEN (spec muc 11), khac voi cac ly do khac (checked_out/waiting_payment...) se lam request NEEDS_ATTENTION
   p.status = 'away';
   p.awayAt = Date.now();
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
   showUndoToast('✓ ' + p.name + ' tạm rời sân', function(){
     p.status = prevStatus; p.awayAt = null;
+    markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
     saveState(); renderLiveTab();
     if(typeof renderPresenceTab === 'function') renderPresenceTab();
     showToast('Đã hoàn tác');
@@ -17679,6 +17736,7 @@ function returnFromAway(id){
   p.status = 'waiting';
   p.waitSince = Date.now(); // quay lai hang cho nhu 1 lan cho moi, khong check-in lai
   p.awayAt = null;
+  markEntityDirty('players', id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
   saveState(); renderLiveTab();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
   showToast('✓ ' + p.name + ' đã quay lại');
