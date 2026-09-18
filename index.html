@@ -2,6 +2,39 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.3 (2026-09-18) — §PERF-PASS-2026-09-18 — Theo yêu cầu Admin: "kiểm tra lại app và làm cho app
+  chạy mượt hơn". Dùng 1 subagent quét toàn bộ file tìm bottleneck hiệu năng cụ thể (file:line, không
+  đoán), tự đọc lại source xác nhận từng điểm trước khi sửa (không tin mù báo cáo agent). 4 nhóm vấn đề
+  THẬT đã xác nhận và fix:
+  1) tryCacheStateLocally() (L14923 cũ) — TRƯỚC ĐÂY: được gọi từ saveState() MỖI thao tác VÀ từ
+  attachEntityListener()/attachSettingsListener() cho TỪNG node Firebase riêng (~55 node
+  ARRAY_ENTITY_NODES+ACADEMY_ENTITY_NODES+OBJECT_ENTITY_NODES) — mỗi lần gọi JSON.stringify(state) +
+  localStorage.setItem() TOÀN BỘ state NGAY LẬP TỨC. Lúc app vừa load/reconnect, ~55 listener bùng nổ
+  gần như cùng lúc → ~55 lần stringify+ghi liên tiếp trong vài chục ms, tốn CPU thật gây giật/lag không
+  cần thiết (đây chỉ là cache offline-first, Firebase mới là nguồn dữ liệu chính — trễ vài trăm ms không
+  ảnh hưởng tính đúng đắn, xem §DATA-ARCH-5). FIX: throttle ghi thực tế tối đa 1 lần/800ms bằng 1 timer
+  dùng chung — không xếp chồng nhiều timer, lần ghi luôn lấy state MỚI NHẤT tại thời điểm chạy.
+  2) NHIỀU ô tìm kiếm gọi render TOÀN BỘ danh sách trực tiếp trên MỖI KÝ TỰ GÕ, không debounce (Bán
+  hàng/POS, Người mua, Bill khách, Kho sản phẩm, Quản lý Gói Social, Đang ở sân, Công nợ Tài chính, Sổ
+  quỹ Tài chính, Phí tham gia giải, chọn 4 người): thêm debounce (~180-220ms) dùng chung debounce() đã
+  có sẵn (trước đây chỉ áp dụng cho 1 ô tìm Check-in — §PROD-33).
+  3) PHÁT HIỆN THÊM khi kiểm tra kỹ: renderFinanceDebt()/renderFinanceLedger()/renderTournamentTab() (ô
+  tìm phí giải)/renderSelectFourModal() dùng box.innerHTML=`...` MÀ ô tìm kiếm nằm NGAY BÊN TRONG chuỗi
+  HTML đó (khác kiểu với các ô tìm kiếm khác) — mỗi lần render (trước đây là mỗi ký tự gõ) sẽ PHÁ HUỶ
+  rồi TẠO LẠI đúng DOM node của chính ô đang gõ → MẤT FOCUS, người dùng gõ 1 ký tự phải bấm chuột lại
+  vào ô mới gõ tiếp được — đây mới là nguyên nhân THẬT của cảm giác "giật/không mượt" khi tìm kiếm ở các
+  màn này, không chỉ là vấn đề CPU. Thêm hàm preserveFocusAcrossRender() dùng chung: lưu id+vị trí con
+  trỏ của phần tử đang focus trước khi render, khôi phục lại ngay sau đó nếu 1 phần tử cùng id xuất hiện
+  lại trong DOM — không đổi cấu trúc HTML/logic từng hàm render.
+  4) O(n²) trong renderPresenceTab()/renderMoneyTab(): trước đây MỖI người chơi/MỖI bill tự gọi
+  state.bills.filter(...)/playerById() (quét tuyến tính) RIÊNG trong vòng lặp .map() → O(số người ×
+  số bill) hoặc O(số bill × số người) mỗi lần render. Fix: gom nhóm/lập chỉ mục 1 LẦN bằng Map (playerId
+  -> bill mở / playerId -> Player) TRƯỚC vòng lặp, dùng .get() O(1) bên trong — giữ NGUYÊN kết quả/logic
+  hiện có (kể cả §FIX-PRESENCECARD-MULTIBILL cộng tất cả bill mở), chỉ đổi cách truy xuất.
+  Đã kiểm tra: các setInterval hiện có (tickCourtTimers 1s, TV announcer queue 1s, TV heartbeat 5s...)
+  không đáng ngại — phạm vi nhỏ, không cần sửa. Không có ảnh base64 lớn đáng kể. Đã verify 14/9 thẻ
+  script và chạy syntax-check (new Function trên từng script block) — 0 lỗi.
+
   v1.44.2 (2026-09-18) — §FEATURE-PAIRPICKER — Theo yêu cầu Admin: "trong phần thêm cặp hoặc thêm danh
   sách vận động viên, làm sao để chọn người chơi đã có trong hệ thống". Bước 02 CẶP ĐẤU của Tournament
   Setup vốn chỉ là 2 ô nhập text tự do (data model t.pairs = [{id, label:"Tên1 & Tên2", manualGroup}],
@@ -6386,7 +6419,7 @@
       </div>
       <div class="pos-layout">
         <div class="card">
-          <input type="text" id="posSearchInput" placeholder="🔍 Tìm sản phẩm..." style="width:100%; margin-bottom:var(--space-3);" oninput="setPosProductSearch(this.value)">
+          <input type="text" id="posSearchInput" placeholder="🔍 Tìm sản phẩm..." style="width:100%; margin-bottom:var(--space-3);" oninput="debouncedSetPosProductSearch(this.value)">
           <div id="posProductGrid" class="product-grid"></div>
         </div>
         <div class="cart-panel no-print">
@@ -6397,7 +6430,7 @@
             <span class="buyer-caret">▾</span>
           </div>
           <div id="buyerListPanel" class="buyer-list-panel" style="display:none;">
-            <input type="text" id="buyerSearchInput" placeholder="Tìm tên..." oninput="renderBuyerList()">
+            <input type="text" id="buyerSearchInput" placeholder="Tìm tên..." oninput="debouncedRenderBuyerList()">
             <div id="buyerListItems"></div>
           </div>
           <div id="buyerBillPreview"></div>
@@ -6415,7 +6448,7 @@
     <!-- ---- BILL KHACH (gop tu Tinh Tien cu — cung ID, cung ham renderMoneyTab) ---- -->
     <div id="sales-bills" class="sales-subtab-content">
       <div class="list-toolbar no-print">
-        <div class="lt-search"><input type="text" id="moneySearchInput" placeholder="Tìm người chơi..." oninput="renderMoneyTab()"></div>
+        <div class="lt-search"><input type="text" id="moneySearchInput" placeholder="Tìm người chơi..." oninput="debouncedRenderMoneyTab()"></div>
         <div class="lt-filters">
           <select id="moneyStatusFilterSelect" onchange="setMoneyStatusFilterFromSelect(this.value)">
             <option value="all">Tất cả trạng thái</option>
@@ -6448,7 +6481,7 @@
       <div class="stats-strip" id="productsSummaryStrip"></div>
       <div class="card">
         <div class="flex-between" style="flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-          <input type="text" id="productSearchInput" placeholder="Tìm sản phẩm..." style="max-width:220px;" oninput="setProductSearch(this.value)">
+          <input type="text" id="productSearchInput" placeholder="Tìm sản phẩm..." style="max-width:220px;" oninput="debouncedSetProductSearch(this.value)">
           <div class="subtabs" style="margin:0;">
             <button class="subtab-btn product-filter-btn active" data-pf="ALL" onclick="setProductFilterBtn('ALL', this)">Tất cả</button>
             <button class="subtab-btn product-filter-btn" data-pf="ACTIVE" onclick="setProductFilterBtn('ACTIVE', this)">Đang bán</button>
@@ -6992,7 +7025,7 @@
     <div class="card no-print">
       <div class="flex-between">
         <h2 id="presenceCountHeader">ĐANG Ở SÂN — 0 NGƯỜI</h2>
-        <input type="text" id="presenceSearchInput" placeholder="Tìm người chơi..." style="max-width:240px;" oninput="renderPresenceTab()">
+        <input type="text" id="presenceSearchInput" placeholder="Tìm người chơi..." style="max-width:240px;" oninput="debouncedRenderPresenceTab()">
       </div>
       <div class="subtabs" style="margin-top:10px;">
         <button class="subtab-btn presence-filter-btn active" data-presencefilter="all" aria-pressed="true">Tất cả</button>
@@ -8281,7 +8314,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.2'; // §FEATURE-PAIRPICKER — thêm gợi ý/chọn nhanh VĐV có sẵn khi Thêm cặp/Nhập danh sách giải đấu — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.3'; // §PERF-PASS-2026-09-18 — throttle cache local + debounce ô tìm kiếm + fix mất focus khi gõ + tối ưu O(n²) render Bill/Đang ở sân — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -12718,9 +12751,10 @@ function submitAdjustSocialPassOpeningBalance(packageId){
 }
 /* ---------- TAB QUẢN LÝ GÓI SOCIAL (trong ĐẶT SÂN) — §SOCIALPASSMOVE2026/§1-4/§14 ---------- */
 let socialPassMgmtUi = { search:'', filter:'active' }; // local UI, KHONG sync Firebase (giong financeUiState)
+const debouncedRenderSocialPassManagementTab = debounce(renderSocialPassManagementTab, 180); // §PERF-DEBOUNCE-SEARCH
 function setSocialPassMgmtSearch(v){
   socialPassMgmtUi.search = v || '';
-  renderSocialPassManagementTab();
+  debouncedRenderSocialPassManagementTab();
 }
 function setSocialPassMgmtFilterBtn(btn, key){
   document.querySelectorAll('.sp-filter-btn').forEach(b=>{ const a = b===btn; b.classList.toggle('active', a); b.setAttribute('aria-pressed', a?'true':'false'); });
@@ -14920,15 +14954,33 @@ function loadState(){
    truong hop trinh duyet da don duoc cho luc do). KHONG anh huong dong bo Firebase (van la nguon du
    lieu chinh, hoat dong doc lap voi cache local nay — §DATA-ARCH-5). */
 let __localCacheQuotaExceeded = false;
+/* §PERF-LOCALCACHE-THROTTLE (2026-09-18) — Kiem tra hieu nang phat hien: tryCacheStateLocally() duoc goi
+   TU RAT NHIEU noi (saveState() moi thao tac, applyRemoteEntityLocally(), VA rieng attachEntityListener/
+   attachSettingsListener cho TUNG node Firebase — ~55 node ARRAY_ENTITY_NODES+ACADEMY_ENTITY_NODES+
+   OBJECT_ENTITY_NODES, xem dinh nghia gan L7871) — moi lan goi truoc day JSON.stringify(state) +
+   localStorage.setItem() NGAY LAP TUC va DONG BO. Luc app vua load/reconnect, ~55 listener bung no gan
+   nhu cung luc -> ~55 lan stringify+ghi TOAN BO state (bills/players/history/tournaments...) lien tiep
+   trong vai chuc ms, ton CPU that su gay giat/lag ma khong can thiet — day CHI la cache offline-first
+   (Firebase van la nguon du lieu chinh, khong anh huong tinh dung dan neu cache tre vai tram ms — xem
+   §DATA-ARCH-5). FIX: throttle ghi thuc te toi da 1 lan / 800ms bang 1 timer dung chung — cac lan goi
+   trong luc dang cho se bi bo qua (khong xep chong thanh nhieu timer), lan ghi khi timer chay se luon
+   lay state MOI NHAT tai thoi diem do (dong tren closure `state`, khong snapshot cu) nen khong mat du
+   lieu cache, chi tre viec ghi xuong dia vai tram ms. */
+let __localCacheWriteTimer = null;
+const LOCAL_CACHE_THROTTLE_MS = 800;
 function tryCacheStateLocally(callerLabel){
   if(__localCacheQuotaExceeded) return;
-  try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }catch(e){
-    __localCacheQuotaExceeded = true;
-    console.error('[' + callerLabel + '] ghi cache local that bai (localStorage da vuot han muc — TAT cache local cho phan con lai cua phien nay, F5 de thu lai). Dong bo Firebase KHONG bi anh huong.', e);
-    if(typeof logSystemError === 'function') logSystemError(callerLabel, 'localStorage quota vuot han muc — da tat cache local cho phien nay: ' + (e && e.message), e && e.stack);
-  }
+  if(__localCacheWriteTimer) return; // da co 1 lan ghi dang cho trong cua so throttle, khong can lam gi them
+  __localCacheWriteTimer = setTimeout(()=>{
+    __localCacheWriteTimer = null;
+    try{
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }catch(e){
+      __localCacheQuotaExceeded = true;
+      console.error('[' + callerLabel + '] ghi cache local that bai (localStorage da vuot han muc — TAT cache local cho phan con lai cua phien nay, F5 de thu lai). Dong bo Firebase KHONG bi anh huong.', e);
+      if(typeof logSystemError === 'function') logSystemError(callerLabel, 'localStorage quota vuot han muc — da tat cache local cho phien nay: ' + (e && e.message), e && e.stack);
+    }
+  }, LOCAL_CACHE_THROTTLE_MS);
 }
 /* §DATA-ARCH-5 — saveState() KHONG con day nguyen ca cay len Firebase. Van giu localStorage
    lam cache offline-first (§56/70), va debounce mot vong quet diff-based entity-level (§6 tren
@@ -14985,6 +15037,33 @@ function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.rando
 function debounce(fn, wait){
   let t;
   return function(...args){ clearTimeout(t); t = setTimeout(()=> fn.apply(this, args), wait); };
+}
+/* §PERF-FOCUS-PRESERVE (2026-09-18) — Kiem tra hieu nang phat hien: mot so ham render (VD
+   renderFinanceDebt/renderFinanceLedger/renderTournamentTab/renderSelectFourModal) set box.innerHTML =
+   `...` MA O TIM KIEM nam NGAY BEN TRONG chuoi HTML do (thay vi o mot <div> ket qua rieng, khac voi
+   pattern chuan da dung o renderPosGrid/renderBuyerList/renderMoneyTab/renderPresenceTab — o tim kiem
+   cua may ham do la the TINH, KHONG bi dung lai). Hau qua: moi lan render (truoc day la MOI ky tu go) se
+   PHA HUY roi TAO LAI dung DOM node cua chinh o dang go -> MAT FOCUS + vi tri con tro, nguoi dung go 1
+   ky tu la phai bam chuot lai vao o moi go tiep duoc — day la nguyen nhan THAT SU cua cam giac "giat/
+   khong muot" khi go tim kiem o cac man nay, khong chi la van de CPU. Ham nay LUU id + vi tri con tro
+   cua phan tu dang focus (neu co id) TRUOC khi chay renderFn, roi KHOI PHUC LAI ngay sau do neu 1 phan
+   tu cung id xuat hien tro lai trong DOM — KHONG doi cau truc HTML/logic cua tung ham render, chi bao
+   ve trai nghiem go lien tuc. */
+function preserveFocusAcrossRender(renderFn){
+  const active = document.activeElement;
+  const id = active && active.id;
+  const selStart = (id && typeof active.selectionStart === 'number') ? active.selectionStart : null;
+  const selEnd = (id && typeof active.selectionEnd === 'number') ? active.selectionEnd : null;
+  renderFn();
+  if(id){
+    const el = document.getElementById(id);
+    if(el && el !== active && typeof el.focus === 'function'){
+      el.focus();
+      if(selStart !== null && typeof el.setSelectionRange === 'function'){
+        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+      }
+    }
+  }
 }
 
 /* §PROD-7 — anh xa loi ky thuat (co the tu Firebase SDK: PERMISSION_DENIED, NETWORK_ERROR,
@@ -16295,7 +16374,8 @@ function toggleSelectFourPlayer(playerId){
   }
   renderSelectFourModal();
 }
-function setSelectFourSearch(val){ if(_reqFourDraft){ _reqFourDraft.search = val; renderSelectFourModal(); } }
+const debouncedRenderSelectFourModal = debounce(()=> preserveFocusAcrossRender(renderSelectFourModal), 180); // §PERF-FOCUS-PRESERVE
+function setSelectFourSearch(val){ if(_reqFourDraft){ _reqFourDraft.search = val; debouncedRenderSelectFourModal(); } }
 function selectFourGoToTeamStep(){
   const d = _reqFourDraft; if(!d) return;
   if(d.selected.length !== 4){ showToast('Cần chọn đúng 4 người.'); return; }
@@ -28158,10 +28238,12 @@ function setFinanceSubtab(key){
   if(key === 'debt') renderFinanceDebt();
   if(key === 'reports' && typeof renderReportsTab === 'function') renderReportsTab(); // §RESTRUCTURE2026-WS3 muc 3/87
 }
-function setFinanceLedgerSearch(v){ financeUiState.search = v||''; renderFinanceLedger(); }
+const debouncedRenderFinanceLedger = debounce(()=> preserveFocusAcrossRender(renderFinanceLedger), 180); // §PERF-FOCUS-PRESERVE
+function setFinanceLedgerSearch(v){ financeUiState.search = v||''; debouncedRenderFinanceLedger(); }
 function setFinanceLedgerTypeFilter(f){ financeUiState.typeFilter = f; renderFinanceLedger(); }
 function setFinanceLedgerRange(k){ financeUiState.rangeKey = k; renderFinanceLedger(); }
-function setFinanceDebtSearch(v){ financeDebtSearch = (v||'').trim().toLowerCase(); renderFinanceDebt(); }
+const debouncedRenderFinanceDebt = debounce(()=> preserveFocusAcrossRender(renderFinanceDebt), 180); // §PERF-FOCUS-PRESERVE
+function setFinanceDebtSearch(v){ financeDebtSearch = (v||'').trim().toLowerCase(); debouncedRenderFinanceDebt(); }
 /* §RESTRUCTURE2026 muc 17-21 — CONG NO KHACH HANG trong TAI CHINH. Canonical: KHONG tao source
    of truth rieng cho no — playerOutstanding = SUM(Outstanding cac bill hop le cua khach), tinh lai
    TU state.bills/state.payments moi lan render (dung lai getPlayerOutstanding()/
@@ -29133,6 +29215,7 @@ function getFilteredSortedProducts(){
   return list;
 }
 function setProductSearch(v){ productsUiState.search = v; renderProductsKho(); }
+const debouncedSetProductSearch = debounce(setProductSearch, 180); // §PERF-DEBOUNCE-SEARCH
 function setProductFilter(f){ productsUiState.filter = f; renderProductsKho(); }
 function setProductFilterBtn(f, btn){
   productsUiState.filter = f;
@@ -29189,6 +29272,7 @@ function toggleBuyerList(){
 function statusPriority(status){
   return { playing:0, ready:1, waiting:2, checked_out:3, waiting_payment:3, away:4 }[status] ?? 5;
 }
+const debouncedRenderBuyerList = debounce(()=> renderBuyerList(), 180); // §PERF-DEBOUNCE-SEARCH
 function renderBuyerList(){
   const box = document.getElementById('buyerListItems');
   if(!box) return;
@@ -29848,6 +29932,7 @@ function confirmAllowBillDebt(billId){
 // Firebase/localStorage (chi la UI tam thoi, giong het productsUiState.search).
 let posUiState = { search: '' };
 function setPosProductSearch(v){ posUiState.search = v; renderPosGrid(); }
+const debouncedSetPosProductSearch = debounce(setPosProductSearch, 180); // §PERF-DEBOUNCE-SEARCH
 function renderPosGrid(){
   const grid = document.getElementById('posProductGrid');
   const q = (posUiState.search||'').trim().toLowerCase();
@@ -30583,8 +30668,14 @@ function setMoneyStatusFilterFromSelect(v){
    0. WAITING_FOR_PAYMENT — khach bao sap ve, phai xu ly truoc tien
    1. FINISHED_PLAYING (checked_out) nhung bill con OPEN — da nghi choi, de quen thu tien
    2. PLAYING  3. READY  4. WAITING  5. con lai (away/not_ready/...) */
-function billPriorityRank(bill){
-  const p = playerById(bill.playerId);
+/* §PERF-BILLLIST-MAPLOOKUP (2026-09-18) — Kiem tra hieu nang phat hien: renderMoneyTab() truoc day goi
+   playerById(b.playerId) (state.players.find(...) — quet tuyen tinh) NHIEU LAN cho MOI bill (trong
+   filter/sort/render loop) -> O(so bill × so nguoi choi) moi lan render (kem ca moi lan go tim kiem
+   truoc khi co debounce o tren). Them tham so playersMap (Map id->Player, dung ke sat) TUY CHON —
+   truyen vao tu renderMoneyTab() se tra ve O(1)/lookup; khong truyen (cac noi goi khac neu co sau nay)
+   se fallback ve playerById() nhu cu, KHONG doi hanh vi mac dinh. */
+function billPriorityRank(bill, playersMap){
+  const p = playersMap ? playersMap.get(bill.playerId) : playerById(bill.playerId);
   const status = p ? p.status : 'checked_out';
   if(status === 'waiting_payment') return 0;
   if(status === 'checked_out') return 1;
@@ -30610,10 +30701,11 @@ function statusMetaFor(p){
   if(p.status === 'waiting' && p.restOneRound) return { icon:'🟠', label:'Nghỉ 1 lượt' };
   return STATUS_META[p.status] || { icon:'⚪', label:'?' };
 }
-function playerLiveStatusLabel(playerId){
-  return statusMetaFor(playerById(playerId));
+function playerLiveStatusLabel(playerId, playersMap){
+  return statusMetaFor(playersMap ? playersMap.get(playerId) : playerById(playerId));
 }
 
+const debouncedRenderMoneyTab = debounce(()=> renderMoneyTab(), 180); // §PERF-DEBOUNCE-SEARCH
 function renderMoneyTab(){
   const q = (document.getElementById('moneySearchInput').value || '').trim().toLowerCase();
   const todayStr = new Date().toDateString();
@@ -30625,19 +30717,20 @@ function renderMoneyTab(){
   // no tu ngay nao (van con no tien, can thu), nhung bill DA THANH TOAN chi hien neu thanh toan
   // TRONG HOM NAY — bill da paid tu ngay truoc muon xem lai thi vao BÁO CÁO/TÀI CHÍNH (co du lieu
   // lich su day du), khong can lam ro man tac nghiep nay.
+  const playersById = new Map(state.players.map(p=>[p.id, p])); // §PERF-BILLLIST-MAPLOOKUP — dung ke tra cuu O(1) thay vi playerById() quet tuyen tinh nhieu lan
   let bills = state.bills.filter(b=> b.items && b.items.length && (b.status==='open' || (b.status==='paid' && b.paidAt && new Date(b.paidAt).toDateString()===todayStr))); // §FIX-CRASH-1 — guard b.items
   if(q) bills = bills.filter(b=>b.playerName.toLowerCase().includes(q));
 
-  if(moneyFilter === 'playing') bills = bills.filter(b=> b.status==='open' && playerById(b.playerId) && playerById(b.playerId).status==='playing');
-  else if(moneyFilter === 'ended') bills = bills.filter(b=> b.status==='open' && (!playerById(b.playerId) || playerById(b.playerId).status==='checked_out'));
-  else if(moneyFilter === 'waiting_payment') bills = bills.filter(b=> b.status==='open' && playerById(b.playerId) && playerById(b.playerId).status==='waiting_payment');
+  if(moneyFilter === 'playing') bills = bills.filter(b=> b.status==='open' && playersById.get(b.playerId) && playersById.get(b.playerId).status==='playing');
+  else if(moneyFilter === 'ended') bills = bills.filter(b=> b.status==='open' && (!playersById.get(b.playerId) || playersById.get(b.playerId).status==='checked_out'));
+  else if(moneyFilter === 'waiting_payment') bills = bills.filter(b=> b.status==='open' && playersById.get(b.playerId) && playersById.get(b.playerId).status==='waiting_payment');
   else if(moneyFilter === 'unpaid') bills = bills.filter(b=> b.status==='open');
   else if(moneyFilter === 'paid') bills = bills.filter(b=> b.status==='paid');
   // 'all' = khong loc gi them
 
   bills.sort((a,b)=>{
     if(a.status !== b.status) return a.status==='open' ? -1 : 1; // open len truoc paid
-    if(a.status==='open') return billPriorityRank(a) - billPriorityRank(b) || a.createdAt - b.createdAt;
+    if(a.status==='open') return billPriorityRank(a, playersById) - billPriorityRank(b, playersById) || a.createdAt - b.createdAt;
     return (b.paidAt||0) - (a.paidAt||0);
   });
 
@@ -30648,8 +30741,8 @@ function renderMoneyTab(){
 
   list.innerHTML = bills.map(bill=>{
     const total = billTotal(bill);
-    const st = playerLiveStatusLabel(bill.playerId);
-    const bp = playerById(bill.playerId);
+    const st = playerLiveStatusLabel(bill.playerId, playersById);
+    const bp = playersById.get(bill.playerId);
     const isWaitingPayment = bill.status==='open' && bp && bp.status==='waiting_payment';
     const isEndedUnpaid = bill.status==='open' && (!bp || bp.status==='checked_out');
     const groupsSummary = BILL_ITEM_GROUPS.map(g=>{
@@ -32131,6 +32224,7 @@ function startPresenceGroupPay(){
   if(!billIds.length){ showToast('Chưa chọn ai để thanh toán nhóm.'); return; }
   openMultiPayModal(billIds);
 }
+const debouncedRenderPresenceTab = debounce(()=> renderPresenceTab(), 180); // §PERF-DEBOUNCE-SEARCH
 function renderPresenceTab(){
   const q = (document.getElementById('presenceSearchInput').value || '').trim().toLowerCase();
   const isSmartSocialMode = (state.settings.socialMode||'SELF_PLAY') === 'SMART_SOCIAL'; // dung cho canh bao dong (crowd warning) ben duoi
@@ -32161,6 +32255,14 @@ function renderPresenceTab(){
   if(!list.length){ box.innerHTML = '<div class="card muted" style="text-align:center; grid-column:1/-1;">Không có ai khớp bộ lọc.</div>'; renderPresenceGroupPayBar(); return; } // §FIX-GROUPPAY-1
 
   const warnMinutes = state.settings.forgottenPaymentWarnMinutes || 15;
+  /* §PERF-PRESENCE-BILLGROUP (2026-09-18) — Kiem tra hieu nang phat hien: truoc day moi the trong list
+     nay tu goi state.bills.filter(b=>b.playerId===p.id...) RIENG -> O(so nguoi dang o san × so bill) moi
+     lan render (moi ky tu go tim kiem truoc khi co debounce o tren). Gom nhom 1 lan thanh Map (playerId
+     -> mang cac bill 'open') TRUOC vong lap, dung .get(p.id) O(1) trong vong lap thay vi .filter() lai
+     tu dau moi lan — giu NGUYEN logic/ket qua cua §FIX-PRESENCECARD-MULTIBILL (van cong tat ca bill open
+     cua player), chi doi cach truy xuat cho nhanh hon. */
+  const openBillsByPlayerId = new Map();
+  state.bills.forEach(b=>{ if(b.status==='open'){ if(!openBillsByPlayerId.has(b.playerId)) openBillsByPlayerId.set(b.playerId, []); openBillsByPlayerId.get(b.playerId).push(b); } });
 
   box.innerHTML = list.map(p=>{
     const meta = statusMetaFor(p);
@@ -32176,7 +32278,7 @@ function renderPresenceTab(){
     // Da xac nhan qua console dump that (khong doan): 6 openBillCount, REAL_totalAcrossAllOpenBills=30000
     // nhung displayedOnCard truoc fix = 0. Xem them repairDuplicateEmptyOpenBill() — don sach cac bill
     // rong trung lap nay qua Data Health de tinh trang nay khong tai dien voi du lieu cu con sot.
-    const openBillsForPlayer = state.bills.filter(b=>b.playerId===p.id && b.status==='open');
+    const openBillsForPlayer = openBillsByPlayerId.get(p.id) || [];
     const total = openBillsForPlayer.reduce((s,b)=>s+billTotal(b), 0);
     const isFinishedUnpaid = p.status === 'checked_out';
     const finishedMin = (isFinishedUnpaid && p.finishedPlayingAt) ? fmtWaitMin(now - p.finishedPlayingAt) : null;
@@ -35195,7 +35297,8 @@ function tournFeeInitials(name){
    tiet tai 1 thoi diem (bam lai cung id -> dong). paidSectionOpen: mac dinh dong (thu gon) de uu tien
    khong gian cho CHƯA ĐÓNG — filter 'PAID' se tu dong hien thi phan nay du gia tri co la false. */
 let tournFeeUiState = { search:'', filter:'ALL', expandedPairId:null, paidSectionOpen:false };
-function setTournFeeSearch(v){ tournFeeUiState.search = v||''; renderTournamentTab(); }
+const debouncedRenderTournamentTabForFeeSearch = debounce(()=> preserveFocusAcrossRender(renderTournamentTab), 220); // §PERF-FOCUS-PRESERVE — renderTournamentTab la ham render CA TAB (nang), debounce dai hon chut so voi cac o tim kiem nho khac
+function setTournFeeSearch(v){ tournFeeUiState.search = v||''; debouncedRenderTournamentTabForFeeSearch(); }
 function setTournFeeFilter(f){ tournFeeUiState.filter = f; renderTournamentTab(); }
 function toggleTournFeeExpand(pairId){
   tournFeeUiState.expandedPairId = (tournFeeUiState.expandedPairId === pairId) ? null : pairId;
