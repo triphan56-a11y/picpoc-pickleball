@@ -2,6 +2,19 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.20 (2026-09-18) — §FIX-CHECKIN-LISTENEROVERWRITE — Admin báo nhân viên check-in nhiều người lúc
+  đông khách, sau đó tab ĐANG Ở SÂN chỉ còn hiện 8 người dù đã check nhiều hơn. Điều tra Console xác nhận:
+  cả 17 lượt check-in hôm nay đều có Visit thật sự ACTIVE (không mất dữ liệu), nhưng 9/17 player có
+  p.status KHÔNG phải "waiting" (kẹt ở status cũ trước lúc check-in) — cùng CLASS lỗi với
+  §FIX-LISTENER-OVERWRITE-PENDING-WRITE (đã vá cho thanh toán bill ở confirmBillPaymentAtomicV2) nhưng
+  CHƯA được vá cho luồng check-in: confirmCheckInAtomic() trước đây không gọi markEntityPendingWrite()
+  trước khi chạy transaction OCC trên /players/{id} — nên nếu attachEntityListener('players') nhận được
+  1 sự kiện cập nhật từ server (vd do MỘT LƯỢT CHECK-IN KHÁC xảy ra gần như đồng thời) đúng lúc transaction
+  của người này chưa commit xong, listener sẽ ghi đè TOÀN BỘ state.players bằng snapshot server (chưa kịp
+  có "waiting" mới) vì id này không nằm trong danh sách được bảo vệ — càng đông khách check-in dồn dập
+  càng dễ trúng. FIX: bảo vệ đúng pattern đã có sẵn (markEntityPendingWrite trước/clearEntityPendingWrite
+  sau, cả nhánh thành công/thất bại/lỗi mạng), không đổi logic nghiệp vụ chống trùng check-in bên trong.
+
   v1.43.19 (2026-09-17) — §FIX-EOD-WATERDETAIL — Admin báo the "KẾT THÚC NGÀY" cảnh báo "1 độ nước chưa
   xuất" nhưng bấm "XEM CHI TIẾT" thì không hiện khách nào. ĐIỀU TRA qua Console xác nhận: khoản độ nước
   đó (A Vũ Sữa, Aquafina) có player.status = "paid_and_left" (đã rời sân từ trước) — root cause là từ bản
@@ -8024,7 +8037,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.19'; // §FIX-EOD-WATERDETAIL — nut "XEM CHI TIẾT" o the Kết thúc ngày luon dieu huong sang Công nợ du dang canh bao do nuoc (khach da roi san thi khong con the nao o Đang Ở Sân de xu ly) — them modal rieng liet ke ca khach da roi, dung lai openFulfillModal()/cancelWaterLoss() co san — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.20'; // §FIX-CHECKIN-LISTENEROVERWRITE — confirmCheckInAtomic() chua bao ve bang markEntityPendingWrite() nen check-in dong thoi luc dong khach de bi attachEntityListener('players') ghi de mat trang thai 'waiting' vua set (Visit ACTIVE that nhung khong hien len ĐANG Ở SÂN) — gio bao ve dung pattern da co (giong confirmBillPaymentAtomicV2) — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -18629,10 +18642,24 @@ function reopenPlayerSession(player){
    dung trang thai TRUOC do, bao ro cho Staff (tranh 2 Active Visit chong cheo cho cung 1 nguoi). */
 function confirmCheckInAtomic(player, visit, prevSnapshot){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve();
+  // §FIX-CHECKIN-LISTENEROVERWRITE — Admin bao "nhan vien check-in nhieu nguoi, gio chi con 8 nguoi hien
+  // ra" trong luc dong khach (nhieu check-in lien tiep trong vai phut). Dieu tra qua Console xac nhan:
+  // playerVisits cua TAT CA nguoi bi "mat" van ACTIVE (that su da check-in dung, khong mat du lieu that),
+  // chi rieng player.status khong con la 'waiting' — dung 1 loai trieu chung voi
+  // §FIX-LISTENER-OVERWRITE-PENDING-WRITE (da vá cho bill o confirmBillPaymentAtomicV2) nhung CHUA duoc
+  // vá o day: attachEntityListener('players') ghi de TOAN BO state.players moi lan CO BAT KY thay doi
+  // nao tu server (vd tu 1 luot check-in KHAC dang dien ra gan nhu dong thoi) — id nao KHONG nam trong
+  // pendingEntityWrites se bi lay lai gia tri REMOTE (chua kip cap nhat 'waiting') thay vi gia tri LOCAL
+  // vua sua. Ham nay truoc day KHONG goi markEntityPendingWrite() nen hoan toan khong duoc bao ve khoi
+  // rang buoc do — cang nhieu nguoi check-in gan nhau (gio cao diem) cang de trung. FIX: bao ve dung
+  // pattern da co san (markEntityPendingWrite truoc/clearEntityPendingWrite sau, ca 2 nhanh success/fail
+  // va catch) — khong doi logic nghiep vu OCC ben trong.
+  markEntityPendingWrite('players', player.id);
   return DataService.players.transaction(player.id, remoteP=>{
     if(remoteP && remoteP.activeVisitId && remoteP.activeVisitId !== visit.id) return undefined;
     return sanitizeForFirebase(player);
   }).then(result=>{
+    clearEntityPendingWrite('players', player.id);
     if(!result || !result.committed){
       const v = state.playerVisits.find(x=>x.id===visit.id);
       if(v && v.status === 'ACTIVE'){ v.status = 'COMPLETED'; v.checkOutAt = Date.now(); v.closeReason = 'DUPLICATE_CHECKIN_ROLLBACK'; }
@@ -18646,7 +18673,7 @@ function confirmCheckInAtomic(player, visit, prevSnapshot){
       markEntityDirty('players', player.id);
       markEntityDirty('playerVisits', visit.id);
     }
-  }).catch(err=>{ console.error('[checkin] confirm error', err); handleWriteError('players','transaction',err); });
+  }).catch(err=>{ clearEntityPendingWrite('players', player.id); console.error('[checkin] confirm error', err); handleWriteError('players','transaction',err); });
 }
 /* §RESTRUCTURE2026-WS3 muc 2/86 — mo/dong modal Check-in inline tu man DANG O SAN (KHONG chuyen tab).
    Goi renderPlayerSearch()/renderGenderPickRow()/renderLevelPickRow() ngay khi mo de dam bao form
