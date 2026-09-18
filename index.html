@@ -2,6 +2,61 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.2 (2026-09-18) — §FEATURE-PAIRPICKER — Theo yêu cầu Admin: "trong phần thêm cặp hoặc thêm danh
+  sách vận động viên, làm sao để chọn người chơi đã có trong hệ thống". Bước 02 CẶP ĐẤU của Tournament
+  Setup vốn chỉ là 2 ô nhập text tự do (data model t.pairs = [{id, label:"Tên1 & Tên2", manualGroup}],
+  KHÔNG liên kết Player entity — quyết định kiến trúc có chủ đích từ đợt audit trước, "không ép refactor
+  ngoài scope"). Giữ nguyên quyết định đó (không refactor sang liên kết Player entity thật, vẫn cho phép
+  gõ tên khách vãng lai chưa có trong hệ thống), nhưng thêm lớp GỢI Ý/CHỌN NHANH từ danh sách VĐV có sẵn
+  (state.players) để tránh gõ sai chính tả/trùng tên — tái dùng đúng pattern tìm kiếm của
+  renderPlayerSearch() (vnFold tên + phoneDigits theo SĐT, khớp một phần):
+  1) Modal "+ THÊM CẶP" (#pairQuickAddModal): mỗi ô "VĐV 1"/"VĐV 2" giờ có dropdown gợi ý (tối đa 8 kết
+  quả) hiện ngay khi gõ hoặc focus vào ô — renderPairQuickSuggest(slot)/selectPairQuickSuggest(slot,
+  playerId). Click 1 người chơi sẽ điền tên vào ô (chỉ điền text, không gán playerId — đúng data model
+  hiện tại). Dùng onmousedown thay vì onclick cho item + hidePairQuickSuggestLater() trễ 150ms trên blur,
+  tránh trường hợp blur ăn mất click trước khi kịp chọn.
+  2) Modal "📋 NHẬP DANH SÁCH" (#pairBulkImportModal): thêm nút "Chọn người chơi có sẵn" mở panel tìm
+  kiếm + danh sách VĐV (togglePairBulkPicker()/renderPairBulkPickerResults()). Click 1 người chơi sẽ CHÈN
+  tên vào cuối textarea #pairsInput (insertPlayerIntoBulkPairs()) theo quy tắc: dòng cuối đang trống →
+  chèn tên (bắt đầu 1 cặp mới); dòng cuối đã có đúng 1 tên (chưa có " & ") → nối thêm " & "+tên (hoàn tất
+  cặp); dòng cuối đã là 1 cặp đủ "A & B" → xuống dòng mới rồi chèn tên (bắt đầu cặp tiếp theo) — cho phép
+  bấm liên tục nhiều người chơi để dựng nhanh cả danh sách cặp mà không cần gõ tay.
+  KHÔNG đổi data model/logic addPairsFromInput()/submitPairQuickAdd() hiện có — chỉ thêm lớp UI hỗ trợ gõ
+  nhanh + chính xác. Đã verify 14/9 thẻ script và chạy syntax-check (new Function trên từng script block)
+  — 0 lỗi.
+
+  v1.44.1 (2026-09-18) — §FEATURE-TOURNFEE-DEBT-WATER — Theo yêu cầu Admin: "trong phần giải đấu, trong
+  phần thu tiền khách, thêm nút cho nợ giống như bên club và trong nút thu tiền, nên thêm nút thêm nước
+  uống để tính tiền luôn 1 lần cho tiện làm". Đã thêm 2 tính năng vào modal xác nhận thu Phí tham gia giải
+  (áp dụng cho cả thu 1 người và thu theo cặp/pair):
+  1) NÚT "📒 CHO NỢ" — ghi nợ phí tham gia giải giống Club, NHƯNG bill phí giải có playerId=null (không
+  gắn Player thật) nên KHÔNG thể tái dùng thẳng allowBillDebt() của Club — viết hàm riêng
+  allowTournamentEntryFeeDebt(mode, targetId, extraItems): tạo/tái dùng bill, set bill.debtCreatedAt/
+  debtCreatedBy (chỉ set nếu chưa có, tránh ghi đè khi tái dùng bill cũ), participant.entryFeeStatus=
+  'DEBT' (thêm giá trị enum mới, trước đây chỉ có UNPAID/PAID), participant.billId trỏ tới bill — KHÔNG
+  set paymentId. Có logOverride('tournament_entry_debt_allowed', ...) để audit trail.
+  2) NÚT "🥤 + Thêm nước uống / sản phẩm" — thêm 1 product-picker grid ngay trong modal thu tiền, cho phép
+  gộp thêm sản phẩm (nước uống, đồ ăn...) vào CHUNG 1 lần thu tiền với phí tham gia giải, thay vì phải mở
+  riêng 1 giao dịch bán hàng khác. buildTournamentExtraBillItems(extraItems) validate tồn kho + build bill
+  items; applyTournamentExtraStockUpdates() trừ kho + ghi inventoryLog(type:'bill_product_add') +
+  markEntityDirty('products', id) từng sản phẩm. QUYẾT ĐỊNH KIẾN TRÚC: trừ kho tại thời điểm BẤM XÁC NHẬN
+  (không phải lúc thêm vào giỏ trong modal), vì giỏ hàng trong modal chỉ là state tạm chưa phải Bill thật
+  — tránh phải làm rollback-on-cancel cho 1 giỏ hàng chưa tồn tại chính thức.
+  3) collectTournamentEntryFee()/collectTournamentEntryFeeForPair() được sửa để nhận thêm tham số
+  extraItems: gộp extra items vào bill.items trước khi payBill() (payBill() tự tính lại total từ
+  bill.items nên tự động đúng số tiền gộp); có kiểm tra tái dùng bill cũ nếu participant đã ở trạng thái
+  DEBT trước đó (tránh tạo bill trùng khi từ CHO NỢ chuyển sang thu tiền thật). Thêm
+  markEntityDirty('tournamentEntryParticipants', id) sau khi đổi entryFeeStatus (đúng nguyên tắc
+  markEntityDirty-listener-overwrite đã audit ở v1.44.0).
+  4) UI: renderTournamentEntryFeeSection() hiển thị phân biệt rõ 3 trạng thái — '● Chưa đóng' (UNPAID),
+  '📒 Đã ghi nợ' (DEBT, màu đỏ), đã đóng (PAID) — thay vì chỉ 2 trạng thái như trước.
+  5) DATA HEALTH: thêm check cho entryFeeStatus='DEBT' (song song với check PAID có sẵn) — báo ERROR nếu
+  thiếu billId hoặc bill không tồn tại, báo WARNING nếu bill không còn ở trạng thái 'open' (VD: đã bị
+  thanh toán qua đường khác mà participant vẫn còn đánh dấu DEBT — dữ liệu lệch cần Admin rà soát).
+  Đã kiểm tra: getTournamentEntryFeeSummary() không cần sửa — totalOutstanding = totalDue - totalCollected
+  tự động tính đúng cho cả DEBT (vì DEBT không được cộng vào totalCollected). Đã verify 14/9 the script
+  tag và chạy syntax-check (new Function trên từng script block) — 0 lỗi.
+
   v1.44.0 (2026-09-18) — §FULLAUDIT2-2026-09-18 — Admin yêu cầu audit toàn diện CLUB + GIẢI ĐẤU (bug thật,
   logic trùng, sai tài chính, lỗi realtime/multi-device, idempotency, permission, UI/UX, performance...)
   sau khi vừa phát hiện lớp lỗi markEntityDirty-listener-overwrite ở endPlaying() (v1.43.25). Do không có
@@ -5489,6 +5544,13 @@
   #pairBulkImportModal textarea{ min-height:200px; line-height:1.6; padding:12px 14px; }
   .tournament-pairs-actions{ display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 0; }
   .tournament-pairs-actions button{ margin:0; }
+  /* §FEATURE-PAIRPICKER — dropdown goi y VDV co san trong modal THEM CAP/NHAP DANH SACH. */
+  .pair-quick-suggest{ position:absolute; left:0; right:0; top:100%; z-index:40; background:var(--surface,#fff); border:1px solid var(--border,#e5e7eb); border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,.12); max-height:220px; overflow-y:auto; margin-top:2px; }
+  .pair-quick-suggest-item{ padding:8px 12px; cursor:pointer; font-size:.88rem; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .pair-quick-suggest-item:hover{ background:var(--surface-hover,#F3F4F6); }
+  .pair-quick-suggest-empty{ padding:8px 12px; font-size:.82rem; color:var(--muted); }
+  #pairBulkPickerResults .pair-quick-suggest-item{ border-bottom:1px solid var(--border,#f0f0f0); }
+  #pairBulkPickerResults .pair-quick-suggest-item:last-child{ border-bottom:none; }
   /* Danh sach cap dau — grid 2 cot desktop, scroll rieng neu qua dai (khong keo dai vo han ca trang —
      spec muc 9 "giảm khoảng trắng thừa"), khong con can ep bang chieu cao cot ben canh nhu truoc. */
   .tournament-pairs-card .tournament-pairs-grid{ grid-template-columns:repeat(2,1fr); max-height:420px; overflow-y:auto; padding-right:4px; margin-top:4px; }
@@ -7628,6 +7690,17 @@
     <div class="tournament-pairs-actions">
       <button onclick="addPairsFromInput()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm vào danh sách</button>
       <button class="secondary" onclick="clearPairs()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>Xóa toàn bộ</button>
+      <button class="secondary" type="button" onclick="togglePairBulkPicker()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Chọn người chơi có sẵn</button>
+    </div>
+    <!-- §FEATURE-PAIRPICKER — panel tim & chen nhanh ten VDV da co trong he thong (state.players) vao
+         textarea nhieu dong. Data model t.pairs van la chuoi "label" tu do (xem HOTFIX-TOURNSETUP1 phia
+         tren) — panel nay CHI giup GO NHANH dung ten co san (tranh sai chinh ta/trung ten), KHONG lien
+         ket Player entity, khong doi logic addPairsFromInput(). Click 1 nguoi choi se chen ten vao cuoi
+         dong hien tai trong textarea (tu dong them " & " neu dong do da co 1 ten, hoac xuong dong moi
+         neu dong hien tai da du cap "A & B") — cho phep bam lien tuc de ghep nhieu cap nhanh. -->
+    <div id="pairBulkPickerPanel" style="display:none; margin-top:10px; border:1px solid var(--border,#e5e7eb); border-radius:12px; padding:10px 12px;">
+      <input type="text" id="pairBulkPickerSearch" placeholder="Tìm người chơi có sẵn theo tên/SĐT..." oninput="renderPairBulkPickerResults()" style="margin-bottom:8px;">
+      <div id="pairBulkPickerResults" style="max-height:220px; overflow-y:auto;"></div>
     </div>
   </div>
 </div>
@@ -7644,13 +7717,19 @@
       <div><h1 class="page-title" style="font-size:1.15rem; display:inline-flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm cặp</h1><p class="page-desc">Nhập tên 2 người chơi</p></div>
       <button class="secondary" onclick="closePairQuickAddModal()">✕ Đóng</button>
     </div>
-    <div class="checkin-form-group">
+    <!-- §FEATURE-PAIRPICKER — autocomplete goi y VDV co san (state.players) khi go vao 2 o ten. Van la
+         o text tu do (co the go ten khach vang lai chua co trong he thong) — dropdown CHI la goi y de
+         click dien nhanh, khong bat buoc phai chon tu danh sach. position:relative tren wrapper de
+         dropdown absolute dung vi tri ngay duoi o input tuong ung. -->
+    <div class="checkin-form-group" style="position:relative;">
       <label>VĐV 1</label>
-      <input type="text" id="pairQuickName1" placeholder="Tìm người...">
+      <input type="text" id="pairQuickName1" placeholder="Tìm người..." autocomplete="off" oninput="renderPairQuickSuggest(1)" onfocus="renderPairQuickSuggest(1)" onblur="hidePairQuickSuggestLater(1)">
+      <div id="pairQuickSuggest1" class="pair-quick-suggest" style="display:none;"></div>
     </div>
-    <div class="checkin-form-group">
+    <div class="checkin-form-group" style="position:relative;">
       <label>VĐV 2</label>
-      <input type="text" id="pairQuickName2" placeholder="Tìm người...">
+      <input type="text" id="pairQuickName2" placeholder="Tìm người..." autocomplete="off" oninput="renderPairQuickSuggest(2)" onfocus="renderPairQuickSuggest(2)" onblur="hidePairQuickSuggestLater(2)">
+      <div id="pairQuickSuggest2" class="pair-quick-suggest" style="display:none;"></div>
     </div>
     <div class="form-actions">
       <button class="big" onclick="submitPairQuickAdd()">THÊM CẶP</button>
@@ -8202,7 +8281,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.0'; // §FULLAUDIT2-2026-09-18 — audit CLUB+GIẢI ĐẤU theo yêu cầu Admin: mở rộng triệt để lớp lỗi markEntityDirty-listener-overwrite (vào sân/tạo Ready Group/rollback/huỷ nhóm/reset hàng chờ/đóng ca/rollback thanh toán) + centralize markEntityDirty('playerVisits') vào completePlayerVisit() — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.2'; // §FEATURE-PAIRPICKER — thêm gợi ý/chọn nhanh VĐV có sẵn khi Thêm cặp/Nhập danh sách giải đấu — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -33452,6 +33531,17 @@ function runDataIntegrityCheck(){
         if(!pay) addIssue('Tournament','ERROR','VĐV "' + part.name + '" đã PAID nhưng payment "' + part.paymentId + '" không tồn tại.');
       }
     }
+    // §FEATURE-TOURNFEE-DEBT-WATER — cung logic voi (c) o tren, ap dung cho trang thai DEBT moi them
+    // (CHO NỢ phí tham gia giải): phai co billId tro toi 1 bill THAT SU con ton tai, dang 'open'
+    // (chua duoc thanh toan — neu da 'paid' ma status van 'DEBT' la du lieu bi lech).
+    if(part.entryFeeStatus === 'DEBT'){
+      if(!part.billId) addIssue('Tournament','ERROR','VĐV "' + part.name + '" đang ở trạng thái ghi nợ (DEBT) nhưng thiếu billId.');
+      else {
+        const b = state.bills.find(x=>x.id===part.billId);
+        if(!b) addIssue('Tournament','ERROR','VĐV "' + part.name + '" đang ghi nợ nhưng bill "' + part.billId + '" không tồn tại.');
+        else if(b.status !== 'open') addIssue('Tournament','WARNING','VĐV "' + part.name + '" đang ở trạng thái ghi nợ (DEBT) nhưng bill "' + part.billId + '" đã ở trạng thái "' + b.status + '" — dữ liệu có thể bị lệch, cần Admin rà soát lại.');
+      }
+    }
     // d) waterIssuedQty > 0 nhung khong co inventoryLog tuong ung — mirror §3c cho water thuong
     if(part.waterIssuedQty > 0){
       const hasLog = (state.inventoryLog||[]).some(log=>log.referenceId===part.id && log.type==='tournament_water_issue');
@@ -34519,6 +34609,8 @@ function openPairBulkImportModal(){
 function closePairBulkImportModal(){
   const overlay = document.getElementById('pairBulkImportModal');
   if(overlay) overlay.classList.remove('show');
+  const panel = document.getElementById('pairBulkPickerPanel'); // §FEATURE-PAIRPICKER — dong modal thi thu gon luon panel chon nguoi choi, lan mo sau se gon gang lai
+  if(panel) panel.style.display = 'none';
 }
 function openPairQuickAddModal(){
   const overlay = document.getElementById('pairQuickAddModal');
@@ -34554,6 +34646,83 @@ function submitPairQuickAdd(){
   renderTournamentTab();
   closePairQuickAddModal();
   showToast('Đã thêm cặp: ' + name1 + ' & ' + name2);
+}
+/* §FEATURE-PAIRPICKER — autocomplete goi y VDV co san (state.players) cho 2 o ten trong modal THEM CAP.
+   Tai su dung dung pattern filter cua renderPlayerSearch() (vnFold ten + phoneDigits, xem ~L19637) —
+   KHONG tao logic tim kiem thu 2. Chi goi y de CLICK DIEN NHANH, o van la text tu do (van go duoc ten
+   khach vang lai chua co trong he thong — khong ep buoc phai chon tu danh sach). */
+function renderPairQuickSuggest(slot){
+  const input = document.getElementById('pairQuickName' + slot);
+  const box = document.getElementById('pairQuickSuggest' + slot);
+  if(!input || !box) return;
+  const qRaw = (input.value || '').trim();
+  if(!qRaw){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  const q = vnFold(qRaw);
+  const qPhoneDigits = normalizeSearchPhoneQuery(qRaw);
+  const matches = (state.players||[]).filter(p=> !p.archived && (vnFold(p.name).includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits))) ).slice(0,8);
+  if(!matches.length){ box.innerHTML = '<div class="pair-quick-suggest-empty">Không tìm thấy — có thể nhập tên khách mới.</div>'; box.style.display = 'block'; return; }
+  box.innerHTML = matches.map(p=> `<div class="pair-quick-suggest-item" onmousedown="selectPairQuickSuggest(${slot}, '${p.id}')"><b>${escapeHtml(p.name)}</b><span class="muted">${getPlayerPpr(p).toFixed(2)}</span></div>`).join('');
+  box.style.display = 'block';
+}
+function selectPairQuickSuggest(slot, playerId){
+  const p = playerById(playerId); if(!p) return;
+  const input = document.getElementById('pairQuickName' + slot);
+  const box = document.getElementById('pairQuickSuggest' + slot);
+  if(input) input.value = p.name;
+  if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+}
+function hidePairQuickSuggestLater(slot){
+  // onmousedown (khong phai onclick) tren item da chon truoc khi blur an dropdown, nhung van tre 150ms
+  // de tranh truong hop trinh duyet xu ly blur truoc mousedown tren mot so thiet bi cham.
+  setTimeout(()=>{ const box = document.getElementById('pairQuickSuggest' + slot); if(box) box.style.display = 'none'; }, 150);
+}
+/* §FEATURE-PAIRPICKER — panel "Chọn người chơi có sẵn" trong modal NHAP DANH SACH (#pairBulkImportModal).
+   Chen ten VDV da co vao CUOI dong hien tai cua textarea #pairsInput: neu dong cuoi rong hoac vua xuong
+   dong -> chen ten (bat dau 1 cap moi); neu dong cuoi da co dung 1 ten (chua co " & ") -> noi them " & "+ten
+   (hoan tat cap); neu dong cuoi da la 1 cap du "A & B" -> xuong dong moi roi chen ten (bat dau cap tiep
+   theo). Cho phep bam lien tuc nhieu nguoi choi de dung nhanh danh sach cap ma khong can go tay tung ten
+   — KHONG doi data model (van la chuoi "label" tu do, textarea van dung nguyen addPairsFromInput()). */
+function togglePairBulkPicker(){
+  const panel = document.getElementById('pairBulkPickerPanel');
+  if(!panel) return;
+  const show = panel.style.display === 'none';
+  panel.style.display = show ? 'block' : 'none';
+  if(show){
+    const search = document.getElementById('pairBulkPickerSearch');
+    if(search){ search.value = ''; search.focus(); }
+    renderPairBulkPickerResults();
+  }
+}
+function renderPairBulkPickerResults(){
+  const box = document.getElementById('pairBulkPickerResults');
+  const searchEl = document.getElementById('pairBulkPickerSearch');
+  if(!box) return;
+  const qRaw = (searchEl && searchEl.value || '').trim();
+  const q = vnFold(qRaw);
+  const qPhoneDigits = normalizeSearchPhoneQuery(qRaw);
+  let matches = (state.players||[]).filter(p=> !p.archived);
+  if(qRaw) matches = matches.filter(p=> vnFold(p.name).includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits)));
+  matches = matches.slice(0, 30);
+  if(!matches.length){ box.innerHTML = '<div class="pair-quick-suggest-empty">Không tìm thấy người chơi nào.</div>'; return; }
+  box.innerHTML = matches.map(p=> `<div class="pair-quick-suggest-item" onclick="insertPlayerIntoBulkPairs('${p.id}')"><b>${escapeHtml(p.name)}</b><span class="muted">${getPlayerPpr(p).toFixed(2)}</span></div>`).join('');
+}
+function insertPlayerIntoBulkPairs(playerId){
+  const p = playerById(playerId); if(!p) return;
+  const textarea = document.getElementById('pairsInput');
+  if(!textarea) return;
+  const val = textarea.value || '';
+  const lines = val.split('\n');
+  const lastLine = lines[lines.length - 1];
+  if(lastLine.trim() === ''){
+    lines[lines.length - 1] = p.name;
+  } else if(!lastLine.includes(' & ')){
+    lines[lines.length - 1] = lastLine + ' & ' + p.name;
+  } else {
+    lines.push(p.name);
+  }
+  textarea.value = lines.join('\n');
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
 }
 function removePair(id){
   const t = currentTournament();
@@ -34774,15 +34943,57 @@ function cancelParticipantsForPair(pairId, reason){
    payment + xác nhận đa thiết bị theo BILL đã có sẵn (§39/40). Vì bill này MỚI TẠO mỗi lần gọi,
    payBill() không tự chặn được race giữa 2 THIẾT BỊ cùng thu phí 1 participant (2 bill id khác
    nhau) — nên còn có lớp xác nhận participant-level riêng ở dưới (confirmTournamentEntryFeeAtomic). */
-function collectTournamentEntryFee(participantId, paymentMethod){
+/* §FEATURE-TOURNFEE-DEBT-WATER — Admin yêu cầu (ảnh chụp modal thu "Hương" 100.000đ): (1) thêm nút
+   CHO NỢ giống bên Club (bill khách Club đã có allowBillDebt()/confirmAllowBillDebt() từ trước — Tournament
+   entry fee KHÔNG dùng chung được vì bill Tournament có playerId=null, khác hẳn bill Club luôn gắn 1
+   Player thật); (2) thêm nút gộp sản phẩm (nước uống) vào CÙNG 1 lần thu tiền cho tiện, khỏi phải qua
+   POS riêng. FIX: viết 1 helper dùng chung `buildTournamentEntryFeeBillItems()` cho items vé + items sản
+   phẩm thêm (extraItems: [{productId, qty}]) — validate lại tồn kho NGAY LÚC XÁC NHẬN (không phải lúc
+   thêm vào giỏ tạm trong modal, tránh phải viết luồng rollback-khi-Hủy phức tạp cho 1 giỏ hàng chưa từng
+   là Bill thật), trừ kho + ghi inventoryLog đúng 1 lần tại đây. Nếu participant ĐÃ được CHO NỢ trước đó
+   (billId trỏ tới 1 bill 'open' còn tồn tại), TÁI SỬ DỤNG đúng bill đó thay vì tạo bill mới (tránh sinh 2
+   bill cho cùng 1 lần đăng ký — cùng nguyên tắc đã áp dụng cho Bill Club). */
+function buildTournamentExtraBillItems(extraItems){
+  // extraItems: [{productId, qty}] — tra ve {items, stockUpdates} hoac null neu 1 san pham khong du ton
+  // (goi validate TRUOC khi tru bat ky cai nao, tranh tru nua chung roi moi phat hien loi giua chung).
+  if(!extraItems || !extraItems.length) return { items:[], stockUpdates:[] };
+  const stockUpdates = [];
+  for(const ei of extraItems){
+    const p = state.products.find(x=>x.id===ei.productId);
+    if(!p) return { error: 'Sản phẩm không còn tồn tại.' };
+    if(ei.qty > p.stock) return { error: 'Không đủ tồn kho ' + p.name + ' (còn ' + p.stock + ').' };
+    stockUpdates.push({ product:p, qty: ei.qty });
+  }
+  const items = stockUpdates.map(su=>({ id: uid('bi'), type:'product', label: su.product.name, unitPrice: su.product.price, amount: su.product.price*su.qty, qty: su.qty, timestamp: Date.now(), meta:{ productId: su.product.id } }));
+  return { items, stockUpdates };
+}
+function applyTournamentExtraStockUpdates(stockUpdates, playerLabel){
+  stockUpdates.forEach(su=>{
+    const p = su.product;
+    const stockBefore = p.stock;
+    p.stock -= su.qty;
+    state.inventoryLog.unshift({ id: uid('inv'), type:'bill_product_add', productId:p.id, name:p.name,
+      qtyChange:-su.qty, stockBefore, stockAfter:p.stock, note:'Thêm vào bill Phí tham gia giải — '+(playerLabel||''), timestamp: Date.now() });
+    markEntityDirty('products', p.id);
+  });
+}
+function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
   if(!participant || participant.canceled) return null;
   if(participant.entryFeeStatus === 'PAID') return null; // §idempotent — đã thu rồi, double-click không tạo bill/payment lần 2
+  const extra = buildTournamentExtraBillItems(extraItems);
+  if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
   const t = state.tournaments[participant.catKey];
-  const bill = { id: uid('bill'), playerId: null, playerName: participant.name, status:'open',
+  // §FEATURE-TOURNFEE-DEBT-WATER — neu participant nay TUNG duoc CHO NỢ (billId tro toi 1 bill 'open'
+  // con ton tai), tai su dung DUNG bill do thay vi tao bill moi trung.
+  const existingBill = participant.billId ? state.bills.find(b=>b.id===participant.billId && b.status==='open') : null;
+  const bill = existingBill || { id: uid('bill'), playerId: null, playerName: participant.name, status:'open',
     items: [{ id: uid('bi'), type:'tournament_entry', label:'Vé tham gia giải' + (t?(' — '+t.label):''), amount: participant.entryFeeAmount, qty:1, unitPrice: participant.entryFeeAmount, timestamp: Date.now(), meta:{ participantId: participant.id, catKey: participant.catKey } }],
     openedAt: Date.now(), paidAt: null };
-  state.bills.push(bill);
+  if(extra.items.length) bill.items = bill.items.concat(extra.items);
+  if(!existingBill) state.bills.push(bill);
+  else markEntityDirty('bills', bill.id); // §DATA-ARCH — bill da co san, items vua noi them can day ngay truoc khi payBill() doc lai
+  applyTournamentExtraStockUpdates(extra.stockUpdates, participant.name);
   const payment = payBill(bill.id, paymentMethod);
   if(!payment){ return null; } // payBill tu chan (vd offline/maintenance) — bill van con 'open', khong danh dau PAID
   participant.entryFeeStatus = 'PAID';
@@ -34790,6 +35001,7 @@ function collectTournamentEntryFee(participantId, paymentMethod){
   participant.paymentId = payment.id;
   participant.paidAt = Date.now();
   saveState();
+  markEntityDirty('tournamentEntryParticipants', participant.id); // §FIX-ENDPLAYING-LISTENEROVERWRITE — dong ngay, khong doi debounce
   payment._tournamentEntrySyncPromise = confirmTournamentEntryFeeAtomic(participant, bill, payment);
   return payment;
 }
@@ -34798,20 +35010,63 @@ function collectTournamentEntryFee(participantId, paymentMethod){
    từng dòng) nhưng vẫn TẠO/ĐÁNH DẤU 2 participant ĐỘC LẬP (§13 — không dùng 1 entitlement chung
    2 chai). Chỉ thu các participant còn UNPAID trong cặp (nếu 1 người đã đóng riêng trước đó thì
    không thu lại — §double-payment). */
-function collectTournamentEntryFeeForPair(pairId, paymentMethod){
+function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems){
   const participants = getTournamentEntryParticipantsForPair(pairId).filter(p=>p.entryFeeStatus!=='PAID');
   if(!participants.length) return null; // §idempotent — cả đôi đã thu đủ rồi
+  const extra = buildTournamentExtraBillItems(extraItems);
+  if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
   const t = state.tournaments[participants[0].catKey];
-  const bill = { id: uid('bill'), playerId: null, playerName: (t?t.label:'') + ' — cặp', status:'open',
+  // §FEATURE-TOURNFEE-DEBT-WATER — tai su dung bill 'open' da co (CHO NỢ truoc do) neu BAT KY participant
+  // nao trong cap dang tro toi 1 bill nhu vay (thiet ke ban dau: CHO NỢ ca doi dung CHUNG 1 bill).
+  const existingBill = (()=>{ for(const p of participants){ if(p.billId){ const b = state.bills.find(x=>x.id===p.billId && x.status==='open'); if(b) return b; } } return null; })();
+  const bill = existingBill || { id: uid('bill'), playerId: null, playerName: (t?t.label:'') + ' — cặp', status:'open',
     items: participants.map(p=>({ id: uid('bi'), type:'tournament_entry', label:'Vé tham gia giải — ' + p.name, amount: p.entryFeeAmount, qty:1, unitPrice: p.entryFeeAmount, timestamp: Date.now(), meta:{ participantId: p.id, catKey: p.catKey } })),
     openedAt: Date.now(), paidAt: null };
-  state.bills.push(bill);
+  if(extra.items.length) bill.items = bill.items.concat(extra.items);
+  if(!existingBill) state.bills.push(bill);
+  else markEntityDirty('bills', bill.id);
+  applyTournamentExtraStockUpdates(extra.stockUpdates, bill.playerName);
   const payment = payBill(bill.id, paymentMethod);
   if(!payment){ return null; }
-  participants.forEach(p=>{ p.entryFeeStatus='PAID'; p.billId=bill.id; p.paymentId=payment.id; p.paidAt=Date.now(); });
+  participants.forEach(p=>{ p.entryFeeStatus='PAID'; p.billId=bill.id; p.paymentId=payment.id; p.paidAt=Date.now(); markEntityDirty('tournamentEntryParticipants', p.id); });
   saveState();
   payment._tournamentEntrySyncPromise = Promise.all(participants.map(p=>confirmTournamentEntryFeeAtomic(p, bill, payment)));
   return payment;
+}
+
+/* §FEATURE-TOURNFEE-DEBT-WATER — CHO NỢ cho Tournament entry fee. KHÁC allowBillDebt() cua Club (yeu
+   cau bill.playerId tro toi 1 Player that) — bill Tournament KHONG gan Player nao (playerId luon null),
+   nen viet ham rieng: tao/tai su dung bill 'open' (giong het collectTournamentEntryFee/-ForPair, gom ca
+   extraItems neu co) nhung KHONG goi payBill() — chi danh dau bill.debtCreatedAt + participant.entryFeeStatus
+   = 'DEBT'. Khi Staff quay lai thu tien that su sau (showTournEntryFeeConfirm van hoat dong binh thuong
+   voi participant o trang thai DEBT, vi filter chi loai tru PAID), collectTournamentEntryFee()/-ForPair()
+   se TAI SU DUNG dung bill nay (da co san logic o tren), khong tao bill trung. */
+function allowTournamentEntryFeeDebt(mode, targetId, extraItems){
+  const participants = mode==='single'
+    ? [state.tournamentEntryParticipants.find(p=>p.id===targetId)].filter(p=>p && !p.canceled && p.entryFeeStatus!=='PAID')
+    : getTournamentEntryParticipantsForPair(targetId).filter(p=>p.entryFeeStatus!=='PAID');
+  if(!participants.length) return null; // §idempotent
+  const extra = buildTournamentExtraBillItems(extraItems);
+  if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
+  const t = state.tournaments[participants[0].catKey];
+  const existingBill = (()=>{ for(const p of participants){ if(p.billId){ const b = state.bills.find(x=>x.id===p.billId && x.status==='open'); if(b) return b; } } return null; })();
+  const bill = existingBill || (mode==='single'
+    ? { id: uid('bill'), playerId: null, playerName: participants[0].name, status:'open',
+        items: [{ id: uid('bi'), type:'tournament_entry', label:'Vé tham gia giải' + (t?(' — '+t.label):''), amount: participants[0].entryFeeAmount, qty:1, unitPrice: participants[0].entryFeeAmount, timestamp: Date.now(), meta:{ participantId: participants[0].id, catKey: participants[0].catKey } }],
+        openedAt: Date.now(), paidAt: null }
+    : { id: uid('bill'), playerId: null, playerName: (t?t.label:'') + ' — cặp', status:'open',
+        items: participants.map(p=>({ id: uid('bi'), type:'tournament_entry', label:'Vé tham gia giải — ' + p.name, amount: p.entryFeeAmount, qty:1, unitPrice: p.entryFeeAmount, timestamp: Date.now(), meta:{ participantId: p.id, catKey: p.catKey } })),
+        openedAt: Date.now(), paidAt: null });
+  if(extra.items.length) bill.items = bill.items.concat(extra.items);
+  const currentUser = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  if(!bill.debtCreatedAt){ bill.debtCreatedAt = Date.now(); bill.debtCreatedBy = currentUser ? currentUser.name : 'staff'; }
+  if(!existingBill) state.bills.push(bill);
+  applyTournamentExtraStockUpdates(extra.stockUpdates, bill.playerName);
+  participants.forEach(p=>{ p.entryFeeStatus='DEBT'; p.billId=bill.id; markEntityDirty('tournamentEntryParticipants', p.id); });
+  markEntityDirty('bills', bill.id);
+  logOverride('tournament_entry_debt_allowed', 'Ghi nợ phí tham gia giải cho ' + participants.map(p=>p.name).join(', ') + ' — ' + fmtVnd(billTotal(bill)), 'bill', bill.id);
+  saveState();
+  return { ok:true, bill, participants };
 }
 
 /* §DATA-ARCH-style — CHỐNG 2 THIẾT BỊ CÙNG THU PHÍ 1 PARTICIPANT (2 bill id local khác nhau nên
@@ -35033,7 +35288,13 @@ function renderTournamentEntryFeeSection(catKey){
   const unpaidDetailHtml = info => {
     const rows = info.players.map(({p,name})=>{
       const paid = p.entryFeeStatus === 'PAID';
-      const dot = paid ? '<span class="tfee-fee-dot tfee-dot-paid">✓ Đã đóng</span>' : '<span class="tfee-fee-dot tfee-dot-unpaid">● Chưa đóng</span>';
+      // §FEATURE-TOURNFEE-DEBT-WATER — phan biet rieng trang thai DEBT (da ghi no, cho thu sau) voi
+      // UNPAID thuong (chua ai lam gi) — tranh Staff tuong nham "chua ai xu ly" trong khi thuc ra da
+      // duoc ghi no co chu dich.
+      const isDebt = p.entryFeeStatus === 'DEBT';
+      const dot = paid ? '<span class="tfee-fee-dot tfee-dot-paid">✓ Đã đóng</span>'
+        : isDebt ? '<span class="tfee-fee-dot tfee-dot-unpaid" style="color:#b91c1c;">📒 Đã ghi nợ</span>'
+        : '<span class="tfee-fee-dot tfee-dot-unpaid">● Chưa đóng</span>';
       const btn = paid ? '' : `<button class="small tfee-detail-collect" onclick="event.stopPropagation(); showTournEntryFeeConfirm('${p.id}')">THU ${fmtVnd(p.entryFeeAmount)}</button>`;
       return `<div class="tfee-detail-player">
           <span class="tfee-detail-name" title="${escapeHtml(name)}">${escapeHtml(tournFeeInitials(name))} · ${escapeHtml(name)}</span>
@@ -35153,6 +35414,11 @@ function renderTournamentEntryFeeSection(catKey){
    HIEN CO — 2 ham nay va tham so paymentMethod cua chung KHONG doi gi, chi doi NGUON gia tri method
    truyen vao (tu modal thay vi hard-code). Khong dung/doi bill/participant/water/inventory logic. */
 let tournEntryModalPaymentMethod = 'BANK_TRANSFER';
+// §FEATURE-TOURNFEE-DEBT-WATER — gio hang tam thoi trong modal thu phi giai (khong luu Firebase, giong
+// het pattern posUiState/productsUiState — chi ton tai trong luc modal dang mo). Moi phan tu:
+// {productId, name, price, qty}. Reset moi lan mo modal (showTournEntryFeeConfirm/-ForPairConfirm).
+let tournEntryModalExtraItems = [];
+let tournEntryModalTitle = '', tournEntryModalBaseAmount = 0, tournEntryModalMode = 'single', tournEntryModalTargetId = '';
 function setTournEntryModalMethod(method){
   tournEntryModalPaymentMethod = method;
   const bankBtn = document.getElementById('tefMethodBankBtn');
@@ -35160,18 +35426,72 @@ function setTournEntryModalMethod(method){
   if(bankBtn){ bankBtn.classList.toggle('active', method==='BANK_TRANSFER'); bankBtn.textContent = method==='BANK_TRANSFER' ? '✓ CHUYỂN KHOẢN' : 'CHUYỂN KHOẢN'; }
   if(cashBtn){ cashBtn.classList.toggle('active', method==='CASH'); cashBtn.textContent = method==='CASH' ? '✓ TIỀN MẶT' : 'TIỀN MẶT'; }
 }
+function tournEntryModalExtraTotal(){ return tournEntryModalExtraItems.reduce((s,it)=>s+it.price*it.qty,0); }
+function toggleTournEntryExtraPicker(){
+  const grid = document.getElementById('tefExtraPickerGrid');
+  if(!grid) return;
+  const willShow = grid.style.display === 'none';
+  grid.style.display = willShow ? '' : 'none';
+  if(willShow) renderTournEntryExtraPickerGrid();
+}
+function renderTournEntryExtraPickerGrid(){
+  const grid = document.getElementById('tefExtraPickerGrid');
+  if(!grid) return;
+  const list = state.products.filter(p=>p.active!==false);
+  if(!list.length){ grid.innerHTML = '<div class="muted" style="padding:8px;">Không có sản phẩm nào.</div>'; return; }
+  grid.innerHTML = list.map(p=>{
+    const disabled = p.stock<=0;
+    return `<div class="bill-line" style="align-items:center;">
+      <span>${escapeHtml(p.name)} <span class="muted" style="font-size:.78rem;">(còn ${p.stock})</span></span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <b>${fmtVnd(p.price)}</b>
+        <button class="small" ${disabled?'disabled':''} onclick="addTournEntryExtraItem('${p.id}')">${disabled?'HẾT':'+'}</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+function addTournEntryExtraItem(productId){
+  const p = state.products.find(x=>x.id===productId);
+  if(!p) return;
+  const existing = tournEntryModalExtraItems.find(it=>it.productId===productId);
+  const currentQty = existing ? existing.qty : 0;
+  if(currentQty + 1 > p.stock){ showToast('Không đủ tồn kho ' + p.name); return; }
+  if(existing) existing.qty += 1;
+  else tournEntryModalExtraItems.push({ productId: p.id, name: p.name, price: p.price, qty: 1 });
+  renderTournEntryFeeConfirmModal(tournEntryModalTitle, tournEntryModalBaseAmount, tournEntryModalMode, tournEntryModalTargetId);
+}
+function removeTournEntryExtraItem(productId){
+  tournEntryModalExtraItems = tournEntryModalExtraItems.filter(it=>it.productId!==productId);
+  renderTournEntryFeeConfirmModal(tournEntryModalTitle, tournEntryModalBaseAmount, tournEntryModalMode, tournEntryModalTargetId);
+}
 function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
   const box = document.getElementById('matchModalContent');
   if(!box) return;
+  tournEntryModalTitle = title; tournEntryModalBaseAmount = amount; tournEntryModalMode = mode; tournEntryModalTargetId = targetId;
+  const extraTotal = tournEntryModalExtraTotal();
+  const grandTotal = amount + extraTotal;
+  const extraListHtml = tournEntryModalExtraItems.length ? tournEntryModalExtraItems.map(it=>`
+    <div class="bill-line" style="align-items:center;">
+      <span>${escapeHtml(it.name)} ×${it.qty}</span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <b>${fmtVnd(it.price*it.qty)}</b>
+        <button class="small secondary" onclick="removeTournEntryExtraItem('${it.productId}')">✕</button>
+      </span>
+    </div>`).join('') : '';
   box.innerHTML = `
     <h2>${escapeHtml(title)}</h2>
-    <p>Số tiền: <b style="font-size:1.3rem;">${fmtVnd(amount)}</b></p>
+    <p>Phí tham gia giải: <b>${fmtVnd(amount)}</b></p>
+    ${extraListHtml ? `<div class="bill-section-label">Sản phẩm thêm</div>${extraListHtml}` : ''}
+    <button type="button" class="secondary" style="width:100%; margin:6px 0;" onclick="toggleTournEntryExtraPicker()">🥤 + Thêm nước uống / sản phẩm</button>
+    <div id="tefExtraPickerGrid" style="display:none; flex-direction:column; gap:6px; max-height:220px; overflow:auto; margin-bottom:8px;"></div>
+    <p>Tổng cộng: <b style="font-size:1.3rem;">${fmtVnd(grandTotal)}</b></p>
     <div class="bill-section-label">Phương thức</div>
     <div class="method-toggle">
       <button id="tefMethodBankBtn" class="method-btn ${tournEntryModalPaymentMethod==='BANK_TRANSFER'?'active':''}" aria-pressed="${tournEntryModalPaymentMethod==='BANK_TRANSFER'}" onclick="setTournEntryModalMethod('BANK_TRANSFER')">${tournEntryModalPaymentMethod==='BANK_TRANSFER'?'✓ ':''}CHUYỂN KHOẢN</button>
       <button id="tefMethodCashBtn" class="method-btn ${tournEntryModalPaymentMethod==='CASH'?'active':''}" aria-pressed="${tournEntryModalPaymentMethod==='CASH'}" onclick="setTournEntryModalMethod('CASH')">${tournEntryModalPaymentMethod==='CASH'?'✓ ':''}TIỀN MẶT</button>
     </div>
     <button class="big" onclick="confirmTournEntryFeeModal('${mode}','${targetId}')">✔️ XÁC NHẬN THU TIỀN</button>
+    <button class="secondary" style="width:100%; margin-top:6px;" onclick="confirmTournEntryFeeDebtModal('${mode}','${targetId}')">📒 CHO NỢ</button>
     <button class="secondary" onclick="closeModal()">Hủy</button>
   `;
   document.getElementById('matchModal').classList.add('show');
@@ -35180,6 +35500,7 @@ function showTournEntryFeeConfirm(participantId){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
   if(!participant || participant.canceled || participant.entryFeeStatus==='PAID') return;
   tournEntryModalPaymentMethod = 'BANK_TRANSFER'; // moi lan mo phai mac dinh chuyen khoan, giong showPayConfirm()
+  tournEntryModalExtraItems = []; // §FEATURE-TOURNFEE-DEBT-WATER — reset gio hang tam moi lan mo modal
   renderTournEntryFeeConfirmModal(participant.name, participant.entryFeeAmount, 'single', participantId);
 }
 function showTournEntryFeeForPairConfirm(pairId){
@@ -35189,18 +35510,39 @@ function showTournEntryFeeForPairConfirm(pairId){
   const pair = t && (t.pairs||[]).find(pr=>pr.id===pairId);
   const amount = parts.reduce((sum,p)=>sum+p.entryFeeAmount,0);
   tournEntryModalPaymentMethod = 'BANK_TRANSFER';
+  tournEntryModalExtraItems = []; // §FEATURE-TOURNFEE-DEBT-WATER
   renderTournEntryFeeConfirmModal(pair ? pair.label : 'Thu cả đôi', amount, 'pair', pairId);
 }
 function confirmTournEntryFeeModal(mode, targetId){
+  const extraItems = tournEntryModalExtraItems.map(it=>({ productId: it.productId, qty: it.qty }));
   const payment = mode === 'single'
-    ? collectTournamentEntryFee(targetId, tournEntryModalPaymentMethod)
-    : collectTournamentEntryFeeForPair(targetId, tournEntryModalPaymentMethod);
+    ? collectTournamentEntryFee(targetId, tournEntryModalPaymentMethod, extraItems)
+    : collectTournamentEntryFeeForPair(targetId, tournEntryModalPaymentMethod, extraItems);
+  if(!payment) return; // §FEATURE-TOURNFEE-DEBT-WATER — that bai (vd het ton kho san pham them) -> GIU modal mo, khong dong nham de Staff sua lai gio hang
+  tournEntryModalExtraItems = [];
   closeModal();
   // §TOURNGRID — collectTournamentEntryFee()/collectTournamentEntryFeeForPair() (ham goc, khong doi)
   // KHONG tu goi renderTournamentTab() ben trong (khac voi issueTournamentIncludedWater()/
   // cancelTournamentEntryParticipant() da co san dong nay) — render lai ngay tai day de Card chuyen
   // "THU 90K" -> "✓ Đã đóng" tuc thi tren CHINH thiet bi vua bam, khong phai doi round-trip Firebase.
-  if(payment) renderTournamentTab();
+  renderTournamentTab();
+}
+/* §FEATURE-TOURNFEE-DEBT-WATER — nhanh "CHO NỢ" trong CUNG modal, dung cung gio hang (tournEntryModalExtraItems)
+   voi nhanh thu tien — Staff co the them nuoc roi ghi no ca phan nuoc do luon, khong can 2 buoc rieng. */
+function confirmTournEntryFeeDebtModal(mode, targetId){
+  const title = mode==='single'
+    ? (state.tournamentEntryParticipants.find(p=>p.id===targetId)||{}).name
+    : tournEntryModalTitle;
+  if(!confirm('Ghi nhận công nợ phí tham gia giải cho ' + (title||'VĐV này') + '? Sẽ được đưa vào danh sách chưa đóng cho tới khi thu đủ.')) return;
+  const extraItems = tournEntryModalExtraItems.map(it=>({ productId: it.productId, qty: it.qty }));
+  const result = mode === 'single'
+    ? allowTournamentEntryFeeDebt('single', targetId, extraItems)
+    : allowTournamentEntryFeeDebt('pair', targetId, extraItems);
+  if(!result) return; // §FEATURE-TOURNFEE-DEBT-WATER — that bai (het ton kho/da PAID roi) -> giu modal mo
+  tournEntryModalExtraItems = [];
+  closeModal();
+  renderTournamentTab();
+  showToast('📒 Đã ghi nợ ' + fmtVnd(billTotal(result.bill)) + ' cho ' + result.participants.map(p=>p.name).join(', '));
 }
 
 /* ================= §THIET LAP GIAI / BOC THAM UX-2 — 1 nguon du lieu duy nhat =================
