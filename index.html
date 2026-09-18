@@ -2,6 +2,37 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.22 (2026-09-18) — §FULLAUDIT-2026-09-18 — Admin yêu cầu "kiểm tra lại toàn bộ app 1 lần nữa" sau
+  vụ trùng bill v1.43.21. Grep toàn bộ ~35 điểm push() vào các entity đồng bộ Firebase (bills/payments/
+  waterLoss/bookings/bookingSeries/users/tournamentEntryParticipants/creditLots/socialGroups/...), so
+  sánh với đúng 1 câu hỏi: "entity vừa tạo có được markEntityDirty() đẩy NGAY hay chỉ dựa vào lưới an toàn
+  debounce?" — vì bất kỳ điểm nào thiếu đều có nguy cơ y hệt bug playerVisits/bookingBill đã gặp (bị
+  listener ghi đè mất trước khi kịp round-trip, khiến lần thao tác tiếp theo tạo trùng). Tìm thấy VÀ vá
+  thêm: ensureOpenBillForCustomer() (bill cho khách đặt sân), payBill()/payMultipleBills()/checkout bán lẻ
+  POS (3 nơi tạo Payment), confirmFinishMatch() + ghi độ nước thủ công (2 nơi tạo waterLoss), tạo booking
+  đơn/theo loạt/mở rộng series (3 vòng lặp), thêm người dùng mới (Settings), đồng bộ Vé tham gia giải đấu
+  (vòng lặp). Các điểm ĐÃ ĐÚNG từ trước (không cần sửa): issueCreditLot, socialRequestedFours/socialGroups,
+  createBillPayment (dùng OCC riêng), tournamentSeries, draftBill+payBill() nội bộ (gọi payBill() NGAY
+  trong cùng 1 lệnh đồng bộ — JS single-thread nên không có khoảng hở cho listener chen vào). CHƯA rà hết
+  100% mọi call site trong Academy module (ngoài phạm vi Club đang tập trung xử lý) — nếu phát sinh hiện
+  tượng tương tự bên Academy, báo lại để rà tiếp.
+
+  v1.43.21 (2026-09-18) — §FIX-MARKDIRTY-LISTENEROVERWRITE — Admin phản bác đúng: "không thể nào check-in/
+  rời 15 lần trong 1 ngày" khi thấy cảnh báo "Chị Vi Lá Coffee có 15 OPEN BILL cùng lúc". Điều tra tiếp từ
+  v1.43.20 (chỉ vá phần player.status hiển thị) phát hiện GỐC RỄ RỘNG HƠN, đúng như Admin nghi ngờ — đây
+  KHÔNG phải hành vi thật của khách, mà là lỗi hệ thống tự tạo trùng: (1) createPlayerVisit() trước đây
+  KHÔNG gọi markEntityDirty() cho Visit vừa tạo — chỉ dựa vào lưới an toàn debounce (diffAndFlushEntities)
+  để đẩy lên sau, giống lỗi đã vá cho Bill ở HOTFIX-BILLSYNC1 nhưng CHƯA áp dụng cho Visit; (2)
+  markEntityDirty() — hàm dùng ở HÀNG CHỤC nơi để đẩy 1 entity mới/thay đổi lên Firebase ngay — trước đây
+  KHÔNG đăng ký pendingEntityWrites, nên trong khoảng ngắn giữa lúc entity được tạo cục bộ và lúc .set()
+  round-trip xong, nếu attachEntityListener(node) nhận 1 snapshot từ BẤT KỲ ghi nào khác (vd 1 lượt
+  check-in KHÁC gần như đồng thời lúc đông khách), Visit/Bill vừa tạo sẽ "bay mất" khỏi state cục bộ —
+  lượt check-in tiếp theo cho CÙNG khách đó không tìm thấy Visit ACTIVE cũ, tạo THÊM 1 Visit + 1 Bill mới,
+  lặp lại nhiều lần trong lúc dồn dập tạo ra hàng chục bill trùng cho 1 khách trong vài phút. FIX: (1)
+  createPlayerVisit() giờ gọi markEntityDirty() đẩy Visit ngay khi tạo; (2) markEntityDirty() giờ tự bảo
+  vệ bằng markEntityPendingWrite()/clearEntityPendingWrite() (đúng pattern đã dùng cho các Firebase
+  .transaction() riêng) — bảo vệ chung cho MỌI entity đi qua hàm này, không chỉ riêng check-in.
+
   v1.43.20 (2026-09-18) — §FIX-CHECKIN-LISTENEROVERWRITE — Admin báo nhân viên check-in nhiều người lúc
   đông khách, sau đó tab ĐANG Ở SÂN chỉ còn hiện 8 người dù đã check nhiều hơn. Điều tra Console xác nhận:
   cả 17 lượt check-in hôm nay đều có Visit thật sự ACTIVE (không mất dữ liệu), nhưng 9/17 player có
@@ -7736,6 +7767,21 @@ function markEntityPendingWrite(node, id){
 function clearEntityPendingWrite(node, id){
   if(pendingEntityWrites[node]) pendingEntityWrites[node].delete(id);
 }
+/* §FIX-MARKDIRTY-LISTENEROVERWRITE — Admin bao "check-in nhieu nguoi luc dong khach, 1 nguoi (Chị Vi Lá
+   Coffee) bi tao toi 15 bill trung nhau cung ngay" — dieu tra tiep tu §FIX-CHECKIN-LISTENEROVERWRITE
+   (v1.43.20, chi vá rieng player.status) phat hien GOC RE RONG HON: markEntityDirty() — CHOKE POINT dung
+   o HANG CHUC noi de day 1 entity MOI/thay doi len Firebera ngay lap tuc — truoc day CHI goi .set() va
+   cap nhat lastSyncedSnapshot, KHONG dang ky pendingEntityWrites. Trong khoang thoi gian NGAN giua luc
+   entity duoc push vao state[node] cuc bo va luc .set() nay THAT SU round-trip xong, neu
+   attachEntityListener(node) nhan duoc 1 snapshot 'value' TU BAT KY ghi nao khac (vd 1 luot check-in
+   KHAC dang dien ra gan nhu dong thoi) truoc khi round-trip nay hoan tat, entity MOI TAO se bi "bay mat"
+   khoi state[node] cuc bo (khong nam trong snapshot server luc do). Neu ham goi tiep theo dua vao
+   state[node] de dedupe (vd createPlayerVisit() tim Active Visit qua getActiveVisitForPlayer() doc
+   thang tu state.playerVisits) se KHONG THAY duoc Visit vua tao -> tao THEM 1 Visit + 1 Bill MOI —
+   lap lai nhieu lan trong luc dong khach check-in dồn dập se ra hang chuc bill trung. FIX: markEntityDirty()
+   gio bao ve entity NGAY LUC PUSH bang pendingEntityWrites (giong het pattern markEntityPendingWrite/
+   clearEntityPendingWrite da dung cho cac Firebase .transaction() rieng) — dong bo hoa toan voi cac call
+   site hien co, KHONG doi hanh vi .set()/lastSyncedSnapshot nao. */
 function markEntityDirty(node, id){
   if(!SYNC_ENABLED || !dbRoot) return;
   const fb = fbNodeNameFor(node);
@@ -7744,8 +7790,17 @@ function markEntityDirty(node, id){
   if(Array.isArray(arr)) entity = arr.find(e=>e && e.id===id);
   else if(arr && typeof arr === 'object') entity = arr[id];
   if(entity === undefined) return;
-  if(entity === null){ dbRoot.child(fb).child(id).remove().catch(err=>handleWriteError(node,'remove',err)); return; }
-  dbRoot.child(fb).child(id).set(sanitizeForFirebase(entity)).catch(err=>handleWriteError(node,'set',err));
+  if(entity === null){
+    markEntityPendingWrite(node, id);
+    dbRoot.child(fb).child(id).remove()
+      .catch(err=>handleWriteError(node,'remove',err))
+      .finally(()=>clearEntityPendingWrite(node, id));
+    return;
+  }
+  markEntityPendingWrite(node, id);
+  dbRoot.child(fb).child(id).set(sanitizeForFirebase(entity))
+    .catch(err=>handleWriteError(node,'set',err))
+    .finally(()=>clearEntityPendingWrite(node, id));
   if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
   lastSyncedSnapshot[node][id] = JSON.stringify(entity);
 }
@@ -8037,7 +8092,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.20'; // §FIX-CHECKIN-LISTENEROVERWRITE — confirmCheckInAtomic() chua bao ve bang markEntityPendingWrite() nen check-in dong thoi luc dong khach de bi attachEntityListener('players') ghi de mat trang thai 'waiting' vua set (Visit ACTIVE that nhung khong hien len ĐANG Ở SÂN) — gio bao ve dung pattern da co (giong confirmBillPaymentAtomicV2) — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.22'; // §FULLAUDIT-2026-09-18 — ra soat toan bo cac diem tao entity moi (bills/payments/waterLoss/bookings/bookingSeries/users/tournamentEntryParticipants) con thieu markEntityDirty() ngay khi tao (cung 1 loai lo hong vua vá o v1.43.21 cho playerVisits) — da vá het cac diem tim thay, markEntityDirty() gio tu bao ve pendingEntityWrites cho MOI entity di qua no — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -12955,6 +13010,16 @@ function createPlayerVisit(player, bill){
   };
   state.playerVisits.push(visit);
   player.activeVisitId = visit.id; // §DATA-ARCH-16/64 — dinh danh on dinh de transaction check-in phat hien trung Active Visit da thiet bi
+  // §FIX-CREATEVISIT-NOFLUSH — truoc day ham nay KHONG goi markEntityDirty() cho Visit vua tao, hoan
+  // toan phu thuoc vao luoi an toan debounce diffAndFlushEntities() de day len Firebase sau nay — dung
+  // pattern da bi hi HOTFIX-BILLSYNC1 vá cho ensureOpenBillForPlayer() truoc do (Vé Social bill moi cung
+  // tung gap loi tuong tu). Trong khoang thoi gian cho debounce, neu 1 luot check-in khac trigger
+  // attachEntityListener('playerVisits') truoc khi Visit nay kip round-trip, Visit se "bay mat" khoi
+  // state.playerVisits cuc bo, khien lan check-in KE TIEP (getActiveVisitForPlayer() khong thay) tao
+  // THEM 1 Visit + 1 Bill trung — day chinh la nguyen nhan 1 khach bi tao toi hang chuc bill trong 1
+  // ngay dong khach. FIX: day ngay lap tuc (markEntityDirty gio da tu bao ve qua pendingEntityWrites,
+  // xem §FIX-MARKDIRTY-LISTENEROVERWRITE), khong doi gi logic dedupe/OCC khac.
+  markEntityDirty('playerVisits', visit.id);
   return visit;
 }
 /* Dong 1 Active Visit — dung khi thanh toan xong (§8) hoac force-close (reset queue/EOD, §34/35).
@@ -14054,6 +14119,7 @@ function payBill(billId, paymentMethod){
   const payment = { id: uid('pay'), amount: total, originalAmount: total, paymentMethod, billIds:[billId],
     allocations: buildPaymentAllocations([bill]), createdBy: currentUser ? currentUser.name : 'staff', createdAt: Date.now(), voided:false };
   state.payments.push(payment);
+  markEntityDirty('payments', payment.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE — truoc day payment KHONG duoc day rieng, chi dua vao luoi an toan debounce (khac voi bill da co confirmBillPaymentAtomic() rieng ben duoi)
   markBillPaid(bill, paymentMethod, payment.id);
   // §FINANCE1/§13/§18 — auto-mirror sang so Thu&Chi, idempotent qua sourceId=payment.id (KHONG cong
   // vao KPI Tong quan — xem giai thich (1)/(3) o dau khoi §FINANCE1, chi de HIEN THI trong ledger).
@@ -14126,6 +14192,7 @@ function payMultipleBills(billIds, paymentMethod){
   const payment = { id: uid('pay'), amount, originalAmount: amount, paymentMethod, billIds: validBills.map(b=>b.id),
     allocations: buildPaymentAllocations(validBills), createdBy: currentUser ? currentUser.name : 'staff', createdAt: Date.now(), voided:false };
   state.payments.push(payment);
+  markEntityDirty('payments', payment.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE
   validBills.forEach(b=> markBillPaid(b, paymentMethod, payment.id));
   // §FINANCE1/§13/§18 — auto-mirror sang so Thu&Chi (xem giai thich o payBill() ben tren).
   recordFinanceTransactionForPayment({ sourceType: financeSourceTypeForBills(validBills), sourceId: payment.id,
@@ -18245,9 +18312,13 @@ function confirmFinishMatch(courtId){
       const wl = { id: uid('wl'), productId, productName: product.name, unitPrice: product.price,
         quantity: qty, playerId, matchId, timestamp: Date.now(), fulfillmentStatus:'NOT_FULFILLED', canceled:false };
       state.waterLoss.push(wl);
+      // §FIX-WATERLOSS-NOFLUSH — cung 1 loai lo hong da soat lai theo yeu cau kiem tra toan bo app
+      // (xem §FIX-MARKDIRTY-LISTENEROVERWRITE/§FIX-BOOKINGBILL-NOFLUSH): truoc day khong day ngay,
+      // chi dua vao luoi an toan debounce, de mat neu bi listener ghi de giua chung.
+      markEntityDirty('waterLoss', wl.id);
       // cong tien do nuoc vao bill dang mo cua nguoi thua — KHONG dung toi ton kho o day
       const billForWl = addBillItem(playerId, { type:'water', label:'Độ nước '+product.name, amount: qty*product.price, qty, unitPrice: product.price, meta:{ waterLossId: wl.id, productId } });
-      if(billForWl) wl.billItemId = billForWl.items[billForWl.items.length-1].id;
+      if(billForWl){ wl.billItemId = billForWl.items[billForWl.items.length-1].id; markEntityDirty('waterLoss', wl.id); }
     });
     m.waterBet = { productName: product.name, quantity: qty, loserTeam: loserTeamKey==='team1'?'Đội 1 thua':'Đội 2 thua' };
   }
@@ -19778,10 +19849,11 @@ function submitManualWaterLoss(){
     matchId: null, timestamp: Date.now(), fulfillmentStatus:'FULFILLED', canceled:false,
     fulfilledProductId: productId, fulfilledProductName: p.name, fulfilledQty: qty, fulfilledAt };
   state.waterLoss.push(wl);
+  markEntityDirty('waterLoss', wl.id); // §FIX-WATERLOSS-NOFLUSH — xem giai thich day du tai confirmFinishMatch()
   const invLogId = uid('inv');
   state.inventoryLog.unshift({ id: invLogId, type:'water_fulfill', productId, name:p.name, qtyChange:-qty, stockBefore, stockAfter:p.stock, referenceId: wl.id, note:'Ghi độ nước (đã giao ngay) cho ' + playerName(playerId), timestamp: fulfilledAt, createdBy:'staff' });
   const bill = addBillItem(playerId, { type:'water', label:'Độ nước '+p.name, amount: qty*p.price, qty, unitPrice: p.price, meta:{ waterLossId: wl.id, productId } });
-  if(bill) wl.billItemId = bill.items[bill.items.length-1].id;
+  if(bill){ wl.billItemId = bill.items[bill.items.length-1].id; markEntityDirty('waterLoss', wl.id); }
   markEntityDirty('products', p.id);
   saveState();
   closeModal();
@@ -27056,6 +27128,7 @@ function submitAddUser(){
     u.coachId = coachIdEl && coachIdEl.value ? coachIdEl.value : null; // §CLASS-COACH-B — user.coachId LIEN KET tuong minh, khong doan qua ten
   }
   state.users.push(u);
+  markEntityDirty('users', u.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE — day ngay, tranh phu thuoc luoi an toan debounce
   logOverride('settings_update', 'Thêm người dùng: ' + name + ' (' + role + ')', 'user', u.id);
   saveState();
   closeModal();
@@ -29619,6 +29692,7 @@ function confirmRetailCheckout(){
   const payment = { id: uid('pay'), amount: total, paymentMethod: retailPaymentMethod, billIds: [], saleId,
     createdBy:'staff', createdAt: Date.now(), voided:false };
   state.payments.push(payment);
+  markEntityDirty('payments', payment.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE
   // §FINANCE1/§13/§18 — ban le POS khong qua Bill nen hook rieng tai day (xem payBill() cho giai thich).
   recordFinanceTransactionForPayment({ sourceType:'POS_PAYMENT', sourceId: payment.id, amount: payment.amount,
     paymentMethod: payment.paymentMethod, description: 'Bán hàng — ' + buyerName, createdAt: payment.createdAt, createdBy: payment.createdBy });
@@ -30329,6 +30403,11 @@ function ensureOpenBillForCustomer(customerId, customerName){
   if(bill) return bill;
   bill = { id: uid('bill'), playerId: customerId, playerName: customerName, status:'open', items:[], openedAt: Date.now(), paidAt: null };
   state.bills.push(bill);
+  // §FIX-BOOKINGBILL-NOFLUSH — cung 1 loai lo hong da vá cho ensureOpenBillForPlayer() o HOTFIX-BILLSYNC1
+  // (va cho createPlayerVisit() o §FIX-CREATEVISIT-NOFLUSH) nhung ham chi em nay (bill cho khach dat san,
+  // co the chua tung check-in) truoc day chua duoc vá — bill moi chi ton tai LOCAL cho toi khi luoi an
+  // toan debounce chay toi, de bi mat neu 1 ghi khac trigger attachEntityListener('bills') giua chung.
+  markEntityDirty('bills', bill.id);
   return bill;
 }
 function addBookingBillItem(customerId, customerName, item){
@@ -30813,6 +30892,7 @@ function confirmSingleBooking(){
   booking.billId = res.bill.id;
   booking.billItemId = res.itemId;
   state.bookings.push(booking);
+  markEntityDirty('bookings', booking.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE
   saveState();
 
   document.getElementById('bkName').value = '';
@@ -31179,6 +31259,7 @@ function finalizeMonthlySeriesCreation(){
     booking.billId = res.bill.id;
     booking.billItemId = res.itemId;
     state.bookings.push(booking);
+    markEntityDirty('bookings', booking.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE — tao nhieu booking lien tiep trong vong lap, rui ro y het check-in don dap
     createdCount++;
     baseTotal += baseAmount;
     discountAmountTotal += discountAmount;
@@ -31196,6 +31277,7 @@ function finalizeMonthlySeriesCreation(){
     note, createdAt: Date.now(), status:'ACTIVE'
   };
   state.bookingSeries.push(series);
+  markEntityDirty('bookingSeries', series.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE
   saveState();
 
   pendingSeries = null;
@@ -31612,6 +31694,7 @@ function confirmEditSeries(){
     });
     booking.billId = res.bill.id; booking.billItemId = res.itemId;
     state.bookings.push(booking);
+    markEntityDirty('bookings', booking.id); // §FIX-MARKDIRTY-LISTENEROVERWRITE
     addedCount++;
   });
 
@@ -34395,8 +34478,8 @@ function syncTournamentEntryParticipants(catKey){
     const existing = state.tournamentEntryParticipants.filter(p=>p.pairId===pair.id && !p.canceled);
     const slotsPresent = existing.map(p=>p.slot);
     const [nameA, nameB] = splitPairLabel(pair.label);
-    if(!slotsPresent.includes('A')) state.tournamentEntryParticipants.push(makeEntryParticipant(catKey, pair.id, 'A', nameA, cfg));
-    if(!slotsPresent.includes('B')) state.tournamentEntryParticipants.push(makeEntryParticipant(catKey, pair.id, 'B', nameB, cfg));
+    if(!slotsPresent.includes('A')){ const pa = makeEntryParticipant(catKey, pair.id, 'A', nameA, cfg); state.tournamentEntryParticipants.push(pa); markEntityDirty('tournamentEntryParticipants', pa.id); } // §FIX-MARKDIRTY-LISTENEROVERWRITE
+    if(!slotsPresent.includes('B')){ const pb = makeEntryParticipant(catKey, pair.id, 'B', nameB, cfg); state.tournamentEntryParticipants.push(pb); markEntityDirty('tournamentEntryParticipants', pb.id); }
   });
 }
 
