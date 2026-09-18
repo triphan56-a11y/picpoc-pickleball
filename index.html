@@ -2,6 +2,60 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.0 (2026-09-18) — §FULLAUDIT2-2026-09-18 — Admin yêu cầu audit toàn diện CLUB + GIẢI ĐẤU (bug thật,
+  logic trùng, sai tài chính, lỗi realtime/multi-device, idempotency, permission, UI/UX, performance...)
+  sau khi vừa phát hiện lớp lỗi markEntityDirty-listener-overwrite ở endPlaying() (v1.43.25). Do không có
+  quyền điều khiển trình duyệt vào app thật đang chạy production, phần "test từng flow" thực hiện đúng
+  theo chính hướng dẫn của Admin cho trường hợp này: đọc source, lần theo luồng dữ liệu thật, xác nhận
+  bằng logic/code — không giả PASS.
+  1) MỞ RỘNG TRIỆT ĐỂ LỚP LỖI markEntityDirty-listener-overwrite (P0 — đây là phần việc chính của đợt
+  audit này): dùng 1 subagent quét toàn bộ file tìm MỌI hàm đổi `player.status`/`playerVisits.status`/
+  `courts` mà không đẩy Firebase ngay (cùng cơ chế đã gây bug "bấm KẾT THÚC 11 người vẫn hiện lại"), xác
+  nhận lại bằng cách đọc trực tiếp source (không tin mù kết quả agent) rồi vá:
+     - completePlayerVisit() — hàm ĐÓNG VISIT DÙNG CHUNG cho ~10 nơi gọi (markBillPaid/endPlaying/
+       reconcileOrphanedPlayerSession/writeOffTestBill/resetQueueOnly/confirmEndOfDay/rollback thanh
+       toán...) — TRƯỚC ĐÂY không tự markEntityDirty('playerVisits', v.id), hoàn toàn phụ thuộc từng nơi
+       gọi tự nhớ làm. FIX TẬN GỐC: chuyển markEntityDirty vào ngay bên trong hàm này (1 điểm duy nhất),
+       thay vì vá lại từng nơi gọi — mọi caller hiện tại và tương lai đều tự động được bảo vệ.
+     - createReadyGroup()/sendReadyGroupToCourt() — hàm CANONICAL DUY NHẤT đưa 4 người "vào sân" (đổi
+       status 'ready'/'playing') — thiếu markEntityDirty('players') cho cả 4 người mỗi lần vào sân, đây
+       là 1 trong những thao tác XẢY RA NHIỀU NHẤT trong ngày.
+     - rollbackSendToCourtConflict()/cancelReadyGroup() — 2 đường rollback/huỷ tương ứng, cùng thiếu.
+     - removePlayerFromOperationalQueues() — helper dùng chung khi giải tán 1 Ready Group do 1 thành
+       viên rời đi: đổi status của các thành viên KHÁC (bystander) về 'waiting' nhưng không markEntityDirty
+       — điểm mù dễ bỏ sót vì không phải player đang được xử lý chính trong hàm gọi.
+     - resetQueueOnly() (nút "Reset hàng chờ & sân") / confirmEndOfDay() (nút "VẪN ĐÓNG CA") — 2 hàm
+       BULK đổi status HÀNG LOẠT player active cùng lúc + xoá toàn bộ state.courts — TRƯỚC ĐÂY chỉ gán
+       cục bộ rồi saveState(), đây là kịch bản DỄ TRÚNG NHẤT vì đổi rất nhiều entity cùng lúc. FIX: markEntityDirty
+       cho từng player, và QUAN TRỌNG — xoá TỪNG court qua DataService.courts.remove(courtId) thay vì chỉ
+       gán state.courts={} cục bộ (vì 'courts' là OBJECT_ENTITY_NODES — gán cục bộ KHÔNG xoá trên Firebase,
+       lần listener 'courts' kế tiếp sẽ "hồi sinh" lại các sân tưởng đã xoá, y hệt cơ chế đã gây bug players).
+     - handlePaymentConflict()/reopenCompletedVisitAfterPaymentRollback() — đường rollback hiếm gặp khi
+       2 thiết bị cùng thanh toán 1 bill: rollback bill/player/visit về trạng thái cũ nhưng không đẩy lên
+       Firebase — thiết bị khác sẽ không thấy rollback này.
+  writeOffTestBill() đã kiểm tra: vốn đã đúng (tự markEntityDirty cho bills/players), giờ còn được bảo vệ
+  thêm cho playerVisits nhờ fix tận gốc ở completePlayerVisit().
+  2) SPOT-CHECK CÁC MODULE P0/P1/P2 KHÁC (đọc source xác nhận, không phải test UI thật — MANUAL VERIFIED):
+  Credit eligibility (CREDIT_ELIGIBLE_ITEM_TYPES = ['ticket','court','tournament_entry',
+  'ball_machine_rental'] — đúng khớp yêu cầu, loại trừ đúng Gói Social/Nước/Retail/Academy; getBillEligibleOutstanding()
+  dùng toán worst-case đảm bảo Credit không bao giờ "ăn" vào phần non-eligible của bill hỗn hợp) — OK,
+  không regression. Social Pass consume: hasSocialPassUsageForVisit() làm khoá idempotent theo visitId,
+  consumeSocialPassForVisit() tự return sớm nếu đã dùng — OK. Inventory double-mutation: submitImportStock()
+  đã có rào chắn từ đợt vá trước (§INV-FIX2026 — chỉ 1 nơi duy nhất được đổi p.stock là kết quả transaction,
+  không còn cộng cục bộ trước) — OK, không regression. Tournament ranking: rule Wins → Point Diff →
+  Head-to-head (findHeadToHeadWinner) đã đúng, tie chưa phân định được gắn TIE_UNRESOLVED và có
+  validateTournamentBracketGeneration() chặn tạo bracket nếu tie ảnh hưởng seed — OK. TV Announcer: có cơ
+  chế trạng thái PLAYED/tvChampionShownFor để không phát lại sau F5 — OK.
+  3) CÁC PHẦN CHƯA ĐƯỢC RE-VERIFY TRỰC TIẾP trong đợt này (dựa trên kết quả audit P0-P2 đã hoàn tất ở các
+  phiên làm việc trước — xem các dòng CHANGELOG cũ §RESTRUCTURE2026/§DATAHEALTH/v1.38.x-v1.43.x — không
+  phát hiện dấu hiệu regression khi đọc lướt qua, nhưng KHÔNG được test lại từ đầu trong đợt này do giới
+  hạn thời gian/phạm vi): responsive/UI chi tiết từng màn hình, performance/render-loop, memory leak,
+  booking cross-band pricing chi tiết, series 8 tuần, permission STAFF/ADMIN chi tiết từng action. Đề nghị
+  Admin báo cụ thể nếu phát hiện vấn đề ở các phần này — sẽ audit sâu đúng module đó thay vì đoán.
+  KHÔNG đổi bất kỳ logic nghiệp vụ/số tiền nào trong đợt này — toàn bộ thay đổi là ĐỒNG BỘ FIREBASE
+  ngay lập tức (markEntityDirty) cho các thay đổi trạng thái vốn đã đúng về logic, chỉ chưa được đẩy kịp
+  thời, tránh bị ghi đè mất trong lúc thao tác dồn dập nhiều người/nhiều thiết bị cùng lúc.
+
   v1.43.25 (2026-09-18) — §FIX-ENDPLAYING-LISTENEROVERWRITE — Admin báo cáo NGHIÊM TRỌNG: "đã bấm kết
   thúc toàn bộ 11 người, họ đã về hết rồi" nhưng bấm xong màn ĐANG Ở SÂN vẫn hiện lại y như cũ. Đã hỏi rõ
   và xác nhận qua trả lời của Admin (không đoán): bấm xong nhưng vẫn còn hiện lại — nghĩa là 1 bug thật,
@@ -8148,7 +8202,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.25'; // §FIX-ENDPLAYING-LISTENEROVERWRITE — bam KET THUC (va cac nut doi trang thai khac tren the Diem danh: NGHI 1 LUOT/CHO TINH TIEN/TAM ROI SAN/DA QUAY LAI/chua san sang) khong day markEntityDirty('players') ngay, bi Firebase listener ghi de mat trong luc dong khach thao tac lien tuc — da vá toan bo nhom ham nay — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.0'; // §FULLAUDIT2-2026-09-18 — audit CLUB+GIẢI ĐẤU theo yêu cầu Admin: mở rộng triệt để lớp lỗi markEntityDirty-listener-overwrite (vào sân/tạo Ready Group/rollback/huỷ nhóm/reset hàng chờ/đóng ca/rollback thanh toán) + centralize markEntityDirty('playerVisits') vào completePlayerVisit() — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13104,6 +13158,16 @@ function completePlayerVisit(playerId, reason){
   if(reason === 'PAID' || reason === 'DEBT'){
     if(typeof maybeIssueMilestoneReward === 'function') maybeIssueMilestoneReward(playerId, Date.now());
   }
+  // §FIX-COMPLETEVISIT-CENTRALDIRTY — completePlayerVisit() la ham DUNG CHUNG duoc goi tu RAT NHIEU noi
+  // (markBillPaid, endPlaying, reconcileOrphanedPlayerSession, writeOffTestBill, resetQueueOnly,
+  // confirmEndOfDay, handlePaymentConflict rollback, v.v.) nhung TRUOC DAY khong tu markEntityDirty()
+  // cho Visit vua dong — hoan toan phu thuoc TUNG noi goi tu lam dieu do, va audit xac nhan it nhat 4
+  // diem goi (resetQueueOnly/confirmEndOfDay/reopenCompletedVisitAfterPaymentRollback/writeOffTestBill)
+  // bi bo sot, cung lop loi voi §FIX-ENDPLAYING-LISTENEROVERWRITE. FIX TAN GOC: day ngay TAI DAY (diem
+  // DUY NHAT dong Visit), khong con phu thuoc tung noi goi phai nho lam lai. markEntityDirty() da tu
+  // idempotent/an toan neu goi trung (chi ghi lai cung 1 gia tri) nen KHONG anh huong cac noi da tu lam
+  // dung truoc do (vd markBillPaid()) — chi la du thua vo hai, khong phai loi.
+  markEntityDirty('playerVisits', v.id);
   return v;
 }
 /* §11-14/§66/§80-81 — RETURN_SOON_REWARD: thuong "quay lai nhanh" sau 1 Visit hop le. Cooldown so
@@ -14243,8 +14307,9 @@ function handlePaymentConflict(bill, payment){
   if(idx>=0) state.payments.splice(idx,1);
   if(bill.paymentId === payment.id){
     bill.status = 'open'; bill.paidAt = null; bill.paymentMethod = null; bill.paymentId = null;
+    markEntityDirty('bills', bill.id); // §FIX-ENDPLAYING-LISTENEROVERWRITE
     const p = playerById(bill.playerId);
-    if(p && p.paidAndLeftAt){ p.status = 'waiting_payment'; p.paidAndLeftAt = null; }
+    if(p && p.paidAndLeftAt){ p.status = 'waiting_payment'; p.paidAndLeftAt = null; markEntityDirty('players', p.id); } // §FIX-ENDPLAYING-LISTENEROVERWRITE
     reopenCompletedVisitAfterPaymentRollback(bill.playerId);
   }
   const sIdx = state.sales.findIndex(s=>s.paymentId===payment.id);
@@ -14258,7 +14323,7 @@ function handlePaymentConflict(bill, payment){
    vi xung dot da thiet bi — mo lai DUNG Visit vua bi dong (khong tao Visit moi, tranh trung lap). */
 function reopenCompletedVisitAfterPaymentRollback(playerId){
   const v = getPlayerVisits(playerId).find(v=>v.closeReason==='PAID' && v.status==='COMPLETED');
-  if(v){ v.status = 'ACTIVE'; v.checkOutAt = null; v.closeReason = null; }
+  if(v){ v.status = 'ACTIVE'; v.checkOutAt = null; v.closeReason = null; markEntityDirty('playerVisits', v.id); } // §FIX-ENDPLAYING-LISTENEROVERWRITE
 }
 
 /* Thanh toan nhieu bill cung luc — 1 payment reference toi nhieu billIds, moi bill van PAID rieng,
@@ -15414,7 +15479,7 @@ function createReadyGroup(courtId, team1, team2, options){
   markSelected([...ids1, ...ids2]);
   [...ids1, ...ids2].forEach(id=>{
     const p = playerById(id);
-    if(p) p.status = 'ready';
+    if(p){ p.status = 'ready'; markEntityDirty('players', id); } // §FIX-ENDPLAYING-LISTENEROVERWRITE — cung lop loi, xem giai thich tai endPlaying()
   });
   const group = { id: uid('rg'), courtId: courtId || null, team1: ids1, team2: ids2, createdAt: Date.now(),
     sourceType: (options && options.sourceType) || null, sourceId: (options && options.sourceId) || null };
@@ -15479,7 +15544,7 @@ function sendReadyGroupToCourt(groupId){
   state.courts[courtId] = courtValue;
   [...g.team1, ...g.team2].forEach(id=>{
     const p = playerById(id);
-    if(p) p.status = 'playing';
+    if(p){ p.status = 'playing'; markEntityDirty('players', id); } // §FIX-ENDPLAYING-LISTENEROVERWRITE
   });
   // §TVANNOUNCE2026/§19 — CALL_TO_COURT ngay tai choke point canonical DUY NHAT vao san (§17 "khong
   // tao pipeline song song"). Huy PREPARE_NEXT cua CHINH nhom nay truoc (§20 → §19: da "chuan bi" xong,
@@ -15528,7 +15593,7 @@ function rollbackSendToCourtConflict(courtId, g, matchId){
   if(!state.readyGroups.find(x=>x.id===g.id)) state.readyGroups.push(g);
   [...g.team1, ...g.team2].forEach(id=>{
     const p = playerById(id);
-    if(p && p.status === 'playing') p.status = 'ready';
+    if(p && p.status === 'playing'){ p.status = 'ready'; markEntityDirty('players', id); } // §FIX-ENDPLAYING-LISTENEROVERWRITE
   });
   // §SOCIAL4-31/37 — rollback CA metadata request ve dung trang thai truoc do (READY, chua vao san that)
   if(g.sourceType === 'REQUESTED_FOUR' && g.sourceId){
@@ -17455,7 +17520,7 @@ function assignReadyGroupCourt(groupId, courtId){
 function cancelReadyGroup(groupId){
   const g = state.readyGroups.find(x=>x.id===groupId);
   if(!g) return;
-  [...g.team1, ...g.team2].forEach(id=>{ const p = playerById(id); if(p) p.status='waiting'; }); // §SOCIAL4-9 — KHONG dong waitSince, giu dung hanh vi cu
+  [...g.team1, ...g.team2].forEach(id=>{ const p = playerById(id); if(p){ p.status='waiting'; markEntityDirty('players', id); } }); // §SOCIAL4-9 — KHONG dong waitSince, giu dung hanh vi cu; §FIX-ENDPLAYING-LISTENEROVERWRITE — day ngay Firebase
   if(typeof cancelTvAnnouncementsFor === 'function') cancelTvAnnouncementsFor(groupId, 'PREPARE_NEXT'); // §TVANNOUNCE2026/§53 — nhom bi huy, TV khong con doc/hien "chuan bi" cho nhom nay nua
   state.readyGroups = state.readyGroups.filter(x=>x.id!==groupId);
   // §SOCIAL4-9 — "Hủy" 1 Ready Group xuat than tu Requested Four = huy CA yeu cau (khong tu dong
@@ -18700,7 +18765,7 @@ function removePlayerFromOperationalQueues(playerId, reason){
       [...g.team1, ...g.team2].forEach(pid=>{
         if(pid===playerId) return;
         const pp = playerById(pid);
-        if(pp) pp.status = 'waiting'; // giu dung hanh vi cu cua markNotReady() — tra ve 'waiting' khong dieu kien
+        if(pp){ pp.status = 'waiting'; markEntityDirty('players', pid); } // giu dung hanh vi cu cua markNotReady() — tra ve 'waiting' khong dieu kien; §FIX-ENDPLAYING-LISTENEROVERWRITE — bystander player nay tung bi bo sot markEntityDirty
       });
     });
     const affectedIds = affected.map(g=>g.id);
@@ -28824,10 +28889,20 @@ function importData(event){
 function resetQueueOnly(){
   if(!requirePermission(PERMISSION.RESET_QUEUE)) return; // §21 — mac dinh ADMIN only
   if(!confirm('Reset hàng chờ và sân? Người chơi vẫn được giữ để tìm/check-in lại, chỉ dữ liệu vận hành hiện tại (sân/hàng chờ) được reset.')) return;
+  /* §FIX-ENDPLAYING-LISTENEROVERWRITE — ham nay bulk-doi status HANG LOAT player + xoa het courts nhung
+     TRUOC DAY chi saveState() (local) — cung 1 loi voi endPlaying() (xem giai thich day du tai do), o day
+     con NANG hon vi anh huong MOI player dang active CUNG LUC (dung kich ban de bi Firebase listener
+     ghi de nhat). FIX: markEntityDirty('players', id) cho tung player bi doi + xoa TUNG court qua
+     DataService.courts.remove() (KHONG chi gan state.courts={} cuc bo — object-entity node can xoa dung
+     tung key tren Firebase, neu khong lan listener 'courts' ke tiep se "hoi sinh" lai cac san da xoa tu
+     ban snapshot remote cu, giong het co che da gay bug players). completePlayerVisit() gio da tu
+     markEntityDirty('playerVisits', ...) o ben trong (§FIX-COMPLETEVISIT-CENTRALDIRTY) nen khong can them o day. */
+  const courtIdsToRemove = Object.keys(state.courts||{});
   state.players.forEach(p=>{
     if(PLAYER_ACTIVE_STATUSES.includes(p.status)){
       p.status = 'checked_out';
       p.finishedPlayingAt = Date.now();
+      markEntityDirty('players', p.id);
     }
   });
   /* §PLAYER-34 (V1.2) — Force Reset khong duoc de Visit ACTIVE vinh vien: dong het Active
@@ -28835,6 +28910,7 @@ function resetQueueOnly(){
   state.playerVisits.forEach(v=>{ if(v.status==='ACTIVE') completePlayerVisit(v.playerId, 'FORCE_RESET'); });
   state.courts = {};
   state.readyGroups = [];
+  courtIdsToRemove.forEach(cid=>{ if(typeof DataService !== 'undefined' && DataService.courts && DataService.courts.remove) DataService.courts.remove(cid); });
   logOverride('reset_queue', 'Reset hàng chờ & sân — giữ nguyên hồ sơ người chơi/bill/payment', 'system', null);
   saveState(); renderAll();
   showToast('Đã reset hàng chờ & sân (hồ sơ người chơi được giữ nguyên)');
@@ -32281,17 +32357,26 @@ function confirmEndOfDay(){
       deviceId: (typeof DEVICE_ID !== 'undefined') ? DEVICE_ID : null // §PROD-17/11
     });
   }catch(e){ /* khong de loi snapshot bao cao lam gian doan dong ca that su */ }
+  // §FIX-ENDPLAYING-LISTENEROVERWRITE — cung lo hong voi resetQueueOnly() (xem giai thich day du tai
+  // do): bulk-doi status TOAN BO player dang hoat dong + xoa het courts nhung truoc day khong day
+  // markEntityDirty('players')/xoa dung tung court tren Firebase — chi gan cuc bo roi phu thuoc luoi an
+  // toan debounce, de bi "hoi sinh" lai khi co thao tac khac xay ra gan nhu dong thoi luc dong ca (thoi
+  // diem RAT de trung vi nhieu nguoi cung thao tac dong ca/thanh toan cuoi ngay).
+  const eodCourtIdsToRemove = Object.keys(state.courts||{});
   state.players.forEach(p=>{
     if(p.status !== 'checked_out' && p.status !== 'paid_and_left'){
       p.status = 'checked_out';
       p.finishedPlayingAt = p.finishedPlayingAt || Date.now();
+      markEntityDirty('players', p.id);
     }
   });
   /* §PLAYER-35 (V1.2) — dong ca ma van con Active Visit thi force-close voi ly do END_OF_DAY,
-     khong de "treo" ACTIVE sang ngay hom sau. */
+     khong de "treo" ACTIVE sang ngay hom sau. completePlayerVisit() da tu markEntityDirty('playerVisits')
+     ben trong (§FIX-COMPLETEVISIT-CENTRALDIRTY). */
   state.playerVisits.forEach(v=>{ if(v.status==='ACTIVE') completePlayerVisit(v.playerId, 'END_OF_DAY'); });
   state.courts = {};
   state.readyGroups = [];
+  eodCourtIdsToRemove.forEach(cid=>{ if(typeof DataService !== 'undefined' && DataService.courts && DataService.courts.remove) DataService.courts.remove(cid); });
   state.lastShiftClosedAt = Date.now();
   if(forceReason){
     logOverride('force_end_of_day', 'Buộc đóng ca dù còn ' + eod.messages.length + ' mục chưa xử lý — lý do: ' + forceReason, 'system', null); // §PROD-16
