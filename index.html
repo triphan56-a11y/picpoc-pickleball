@@ -2,6 +2,24 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.23 (2026-09-18) — §FIX-PRESENCECARD-MULTIBILL — Admin chụp ảnh thẻ "A Vũ Sữa" ở tab ĐANG Ở SÂN
+  hiện "Bill: 0đ" dù khách chưa trả tiền, hỏi có khách nào khác bị vậy không. Đã KHÔNG đoán — dùng console
+  dump thật để xác nhận trước: A Vũ Sữa đang có 6 bill 'open' cùng lúc (5 bill RỖNG 0 item, tạo ra từ dư
+  chấn của lỗi tạo Bill trùng khi check-in bị lặp — đúng lỗ hổng đã vá kiến trúc ở v1.43.20/21/22 —
+  markEntityDirty()/createPlayerVisit()), CHỈ 1 bill thật có Vé Social 30.000đ. NGUYÊN NHÂN GỐC: thẻ Điểm
+  danh (renderPresenceTab()) tính "Bill: Xđ" bằng getOpenBillForPlayer() — hàm này CHỈ trả về 1 bill DUY
+  NHẤT (ưu tiên bill không debtCreatedAt, hoặc opens[0]) — khi có nhiều bill open, hàm "bốc" ngẫu nhiên 1
+  bill trong số đó theo thứ tự mảng; với A Vũ Sữa nó bốc trúng bill rỗng đầu tiên → hiện 0đ dù còn nợ thật
+  ở bill khác. FIX 1 (hiển thị): renderPresenceTab() đổi sang CỘNG TẤT CẢ bill 'open' của player thay vì
+  chỉ lấy 1 bill — số hiện trên thẻ giờ luôn đúng bằng tổng thật, bất kể có bao nhiêu bill open. FIX 2 (dọn
+  dữ liệu cũ): nâng cấp cảnh báo "N OPEN BILL cùng lúc" (Data Health) — với mỗi bill RỖNG (0 item) trong
+  nhóm trùng lặp đó, nếu collected=0 (chưa ai thu tiền) VÀ còn ≥1 bill open khác của cùng khách (chứng
+  minh chắc chắn là trùng lặp, không phải bill duy nhất đang chờ dùng), gắn nút "SỬA AN TOÀN" mới —
+  repairDuplicateEmptyOpenBill() — huỷ bill rỗng đó (status='cancelled', giống hệt logic huỷ bill thủ công
+  cancelOpenBill() có sẵn) để dọn sạch các bill "ma" còn sót từ trước khi vá v1.43.20-22, KHÔNG đụng đến
+  payment/finance/bill thật nào, không mất tiền. Đã grep xác nhận biến `bill` không còn dùng ở nơi khác
+  trong renderPresenceTab() trước khi đổi logic tính total.
+
   v1.43.22 (2026-09-18) — §FULLAUDIT-2026-09-18 — Admin yêu cầu "kiểm tra lại toàn bộ app 1 lần nữa" sau
   vụ trùng bill v1.43.21. Grep toàn bộ ~35 điểm push() vào các entity đồng bộ Firebase (bills/payments/
   waterLoss/bookings/bookingSeries/users/tournamentEntryParticipants/creditLots/socialGroups/...), so
@@ -8092,7 +8110,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.22'; // §FULLAUDIT-2026-09-18 — ra soat toan bo cac diem tao entity moi (bills/payments/waterLoss/bookings/bookingSeries/users/tournamentEntryParticipants) con thieu markEntityDirty() ngay khi tao (cung 1 loai lo hong vua vá o v1.43.21 cho playerVisits) — da vá het cac diem tim thay, markEntityDirty() gio tu bao ve pendingEntityWrites cho MOI entity di qua no — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.23'; // §FIX-PRESENCECARD-MULTIBILL — the "ĐANG Ở SÂN" hien Bill:0đ sai khi player co nhieu bill open cung luc (di san loi tao Bill trung da vá kien truc o v1.43.20-22) — fix hien tong tat ca bill open + them Data Health repair don bill "ma" rong — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -14056,7 +14074,33 @@ function repairPurgeLegacyOrphanVisit(args){
   DataService.playerVisits.remove(v.id);
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef, repairOrphanedCreditLot };
+/* §FIX-DUPEMPTYBILL-REPAIR — repair cho DUPLICATE_EMPTY_OPEN_BILL (xem addIssue() tai check "N OPEN
+   BILL cùng lúc" trong runDataIntegrityCheck()). Dung LAI CHINH XAC logic an toan cua cancelOpenBill()
+   thu cong (status='cancelled', khong dong payment/finance nao) nhung khong yeu cau UI/confirm() vi day
+   la duong Data Health tu dong — bu lai bang re-validate NGHIEM NGAT hon tai thoi diem sua: (a) bill van
+   con 'open', (b) items VAN rong (chua ai kip them gi), (c) collected VAN = 0 (chua ai kip thu tien),
+   (d) VAN con it nhat 1 bill 'open' KHAC cua CUNG player (chung minh day THAT SU la ban trung lap, khong
+   phai bill mo duy nhat dang cho dung). Neu bat ky dieu kien nao sai lech so voi luc quet — TU CHOI sua,
+   khong doan. */
+function repairDuplicateEmptyOpenBill(args){
+  const bill = state.bills.find(b=>b.id===args.billId);
+  if(!bill) return { ok:false, reason:'Không tìm thấy Bill để sửa (có thể đã bị xoá/huỷ từ trước).' };
+  if(bill.status !== 'open') return { ok:false, reason:'Bill không còn ở trạng thái mở — dữ liệu đã thay đổi, không cần sửa.' };
+  if(bill.items && bill.items.length) return { ok:false, reason:'Bill này đã có khoản phát sinh — dữ liệu đã thay đổi, không tự huỷ.' };
+  if(getBillCollected(bill) > 0) return { ok:false, reason:'Bill này đã thu tiền — không thể tự huỷ.' };
+  const otherOpen = state.bills.some(b=>b.id!==bill.id && b.playerId===bill.playerId && b.status==='open' && !b.debtCreatedAt);
+  if(!otherOpen) return { ok:false, reason:'Đây hiện là bill mở duy nhất của khách — không tự huỷ (khách có thể sắp dùng).' };
+  const before = { status: bill.status };
+  bill.status = 'cancelled';
+  bill.cancelledAt = Date.now();
+  bill.cancelledBy = 'system-auto-repair';
+  logDataIntegrityRepair('DUPLICATE_EMPTY_OPEN_BILL', 'bill', bill.id, before, { status: bill.status },
+    'Bill "' + bill.id + '" của "' + (bill.playerName||bill.playerId) + '" trống (0 item, chưa thu tiền) — huỷ (status=cancelled) vì là bill trùng lặp còn sót lại từ lỗi tạo Bill khi check-in bị lặp (đã vá kiến trúc ở v1.43.20-22), không đụng payment/finance nào, không mất tiền thật.');
+  markEntityDirty('bills', bill.id);
+  saveState();
+  return { ok:true };
+}
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef, repairOrphanedCreditLot, repairDuplicateEmptyOpenBill };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 /* §FIX-GHOSTCOURT-ALLENDED — xem giai thich day du tai check GHOST_COURT_ALL_PLAYERS_ENDED. Dung LAI
@@ -31865,8 +31909,20 @@ function renderPresenceTab(){
 
   box.innerHTML = list.map(p=>{
     const meta = statusMetaFor(p);
-    const bill = getOpenBillForPlayer(p.id);
-    const total = bill ? billTotal(bill) : 0;
+    // §FIX-PRESENCECARD-MULTIBILL — TRUOC DAY: chi lay getOpenBillForPlayer() (1 bill DUY NHAT, uu tien
+    // bill khong debtCreatedAt hoac opens[0]) de tinh "Bill: Xđ" tren the. Khi 1 player co NHIEU bill
+    // 'open' cung luc (di san cua loi tao Bill trung khi check-in bi lap — xem markEntityDirty()/
+    // createPlayerVisit() §FIX-MARKDIRTY-LISTENEROVERWRITE/§FIX-CREATEVISIT-NOFLUSH v1.43.21), ham chi
+    // "boc thu" 1 bill NGAU NHIEN trong so do — neu bill duoc chon la 1 bill "ma" RONG (0 item, tao ra
+    // tu lan check-in bi lap nhung khong bao gio duoc dung), the hien "Bill: 0đ" DU khach van con no that
+    // o 1 bill KHAC cung luc (vd A Vũ Sữa: 6 bill open, 5 bill rong + 1 bill that 30.000đ — the chi hien
+    // bill_mu5bgu6fmsszz rong dau tien). FIX: CONG TAT CA bill 'open' cua player nay lai (dung y nghia
+    // "tong con phai thu" nhu billsByPlayer da dem o Data Health), khong con phu thuoc chon dung 1 bill.
+    // Da xac nhan qua console dump that (khong doan): 6 openBillCount, REAL_totalAcrossAllOpenBills=30000
+    // nhung displayedOnCard truoc fix = 0. Xem them repairDuplicateEmptyOpenBill() — don sach cac bill
+    // rong trung lap nay qua Data Health de tinh trang nay khong tai dien voi du lieu cu con sot.
+    const openBillsForPlayer = state.bills.filter(b=>b.playerId===p.id && b.status==='open');
+    const total = openBillsForPlayer.reduce((s,b)=>s+billTotal(b), 0);
     const isFinishedUnpaid = p.status === 'checked_out';
     const finishedMin = (isFinishedUnpaid && p.finishedPlayingAt) ? fmtWaitMin(now - p.finishedPlayingAt) : null;
     const isForgotten = isFinishedUnpaid && finishedMin !== null && finishedMin >= warnMinutes;
@@ -32186,7 +32242,27 @@ function runDataIntegrityCheck(){
     billsByPlayer[b.playerId] = (billsByPlayer[b.playerId]||0) + 1;
   });
   Object.keys(billsByPlayer).forEach(pid=>{
-    if(billsByPlayer[pid] > 1) addIssue('Bill','WARNING','Player "' + (playerName(pid)) + '" có ' + billsByPlayer[pid] + ' OPEN BILL cùng lúc.');
+    if(billsByPlayer[pid] > 1){
+      addIssue('Bill','WARNING','Player "' + (playerName(pid)) + '" có ' + billsByPlayer[pid] + ' OPEN BILL cùng lúc.');
+      // §FIX-DUPEMPTYBILL-REPAIR — nguoi dung phan anh the "ĐANG Ở SÂN" cua A Vũ Sữa hien "Bill: 0đ" du
+      // con no that (đã xác nhận qua console dump: 6 bill open, 5 bill RONG + 1 bill that 30.000đ — xem
+      // renderPresenceTab() §FIX-PRESENCECARD-MULTIBILL fix cung ban nay cho phan hien thi). Cac bill
+      // RONG (0 item) trong 1 nhom "N OPEN BILL cùng lúc" la du lieu "ma" con sot lai TU TRUOC KHI vá kien
+      // truc markEntityDirty()/createPlayerVisit() (v1.43.20-22) — gio co the AN TOAN tu don: 0 item = khong
+      // mat gi, va CHI don khi collected=0 (chua ai tra tien) VA con bill 'open' KHAC cua CUNG player (chac
+      // chan la trung lap, khong phai bill duy nhat dang cho dung).
+      state.bills.filter(b=>b.playerId===pid && b.status==='open' && !b.debtCreatedAt).forEach(b=>{
+        const isEmpty = !(b.items && b.items.length);
+        if(isEmpty && getBillCollected(b) <= 0){
+          addIssue('Bill','ERROR','Bill "' + b.id + '" (trống, chưa có khoản nào) của "' + (playerName(pid)) + '" là 1 trong ' + billsByPlayer[pid] + ' bill mở trùng lặp — có thể khiến thẻ Điểm danh hiển thị nhầm "Bill: 0đ" dù khách còn nợ ở bill khác.', {
+            code:'DUPLICATE_EMPTY_OPEN_BILL', entityType:'bill', entityId:b.id, entityLabel:b.id,
+            impact:'Bill này KHÔNG có khoản thu nào (0 item, chưa từng thu tiền) — huỷ nó không mất tiền/dữ liệu, chỉ dọn sạch bill "ma" để app hiển thị đúng số tiền khách còn nợ.',
+            repairable:true, repairConfidence:'DETERMINISTIC',
+            repairFn:'repairDuplicateEmptyOpenBill', repairArgs:{ billId:b.id, playerId:pid }
+          });
+        }
+      });
+    }
   });
 
   // 4) Bill PAID nhung khong co ALLOCATION con hieu luc — §27 paid-bill-without-active-allocation
