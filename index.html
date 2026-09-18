@@ -2,6 +2,20 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.43.24 (2026-09-18) — §FIX-BILLMODAL-STALEFALLBACK — Admin chụp ảnh "A Hộ" (card ngoài đúng "Bill: 0đ"
+  — ĐÚNG, cả 3 bill của A Hộ đều 'paid', kể cả bill 52.000đ của phiên ACTIVE hiện tại) nhưng bấm vào "BILL"
+  lại hiện 1 bill CŨ 45.000đ từ phiên 8 ngày trước (10/9), gây hiểu lầm mâu thuẫn với số 0đ ngoài thẻ. Đã
+  console-dump xác nhận trước khi sửa (không đoán): fallback cũ trong openBillModal() —
+  `state.bills.filter(...).sort((a,b)=>b.createdAt-a.createdAt)[0]` — dựa vào field `bill.createdAt`, mà
+  field này đang là `null` trên toàn bộ bill của A Hộ (không được ghi lúc tạo) → comparator luôn trả NaN →
+  sort() coi là "bằng nhau", giữ nguyên thứ tự mảng gốc (thứ tự push() = bill CŨ NHẤT trước) → luôn bốc
+  trúng bill đầu tiên từng tạo, ngược hẳn ý định "lấy bill gần nhất". FIX: tách fallback thành hàm riêng
+  getMostRelevantBillForPlayer() — ưu tiên bill gắn với Active Visit hiện tại (đúng bill của phiên đang
+  diễn ra), fallback theo createdAt nếu có, cuối cùng mới fallback theo VỊ TRÍ TRONG MẢNG (phần tử cuối =
+  mới tạo nhất, vì bill luôn được push() vào cuối — an toàn dù createdAt bị thiếu, không còn bị đảo ngược
+  thành cũ nhất). Không đổi bất kỳ logic tiền/thanh toán nào — chỉ đổi bill nào được CHỌN ĐỂ HIỂN THỊ khi
+  không còn bill mở.
+
   v1.43.23 (2026-09-18) — §FIX-PRESENCECARD-MULTIBILL — Admin chụp ảnh thẻ "A Vũ Sữa" ở tab ĐANG Ở SÂN
   hiện "Bill: 0đ" dù khách chưa trả tiền, hỏi có khách nào khác bị vậy không. Đã KHÔNG đoán — dùng console
   dump thật để xác nhận trước: A Vũ Sữa đang có 6 bill 'open' cùng lúc (5 bill RỖNG 0 item, tạo ra từ dư
@@ -8110,7 +8124,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.43.23'; // §FIX-PRESENCECARD-MULTIBILL — the "ĐANG Ở SÂN" hien Bill:0đ sai khi player co nhieu bill open cung luc (di san loi tao Bill trung da vá kien truc o v1.43.20-22) — fix hien tong tat ca bill open + them Data Health repair don bill "ma" rong — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.43.24'; // §FIX-BILLMODAL-STALEFALLBACK — modal XEM BILL hien nham bill CU nhat (thay vi gan nhat) khi player khong con bill open, do fallback dua vao field createdAt hay bi null — fix uu tien bill cua Active Visit hien tai + fallback theo vi tri mang thay vi createdAt — chi tiet o CHANGELOG dau file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -29164,13 +29178,41 @@ function billLinesHtml(bill){
   }).join('');
 }
 
+/* §FIX-BILLMODAL-STALEFALLBACK — Admin phan anh (anh chup "A Hộ", card ngoai dung hien "Bill: 0đ" —
+   DUNG, vi ca 3 bill cua A Hộ deu da 'paid', ke ca bill cua phien dang ACTIVE hien tai) nhung bam vao
+   "BILL" lai hien 1 bill CU tu 8 ngay truoc (45.000đ, visit 10/9) thay vi bill 52.000đ that su gan voi
+   phien dang dien ra hom nay. NGUYEN NHAN GOC (xac nhan qua console dump, khong doan): fallback cu
+   `state.bills.filter(...).sort((a,b)=>b.createdAt-a.createdAt)[0]` DUA VAO field `bill.createdAt` de
+   tim "bill gan nhat" — nhung field nay dang la `null` tren CA BA bill cua A Hộ (khong duoc ghi luc tao),
+   khien comparator luon tra ve NaN → Array.sort() coi la "bang nhau", GIU NGUYEN thu tu ban dau trong
+   mang (thu tu push() — tuc la bill CU NHAT, khong phai moi nhat) → luon boc trung bill dau tien tung
+   tao cho player do, sai hoan toan y do "bill gan nhat" ma comment ngay tren da mo ta. FIX: tach fallback
+   thanh ham rieng getMostRelevantBillForPlayer() — UU TIEN bill gan voi Active Visit hien tai cua player
+   (dung nghia nhat khi dang xem 1 khach ĐANG Ở SÂN), sau do moi fallback theo createdAt (neu co) roi cuoi
+   cung moi fallback theo VI TRI TRONG MANG (phan tu CUOI = moi tao nhat, vi bill luon duoc push() vao
+   cuoi — an toan bat ke createdAt co bi thieu hay khong, khong con bi dao nguoc thanh cu nhat nhu truoc). */
+function getMostRelevantBillForPlayer(playerId){
+  const p = playerById(playerId);
+  if(p && p.activeVisitId){
+    const v = state.playerVisits.find(x=>x.id===p.activeVisitId);
+    if(v && v.billId){
+      const activeBill = state.bills.find(b=>b.id===v.billId);
+      if(activeBill) return activeBill;
+    }
+  }
+  const playerBills = state.bills.filter(b=>b.playerId===playerId);
+  if(!playerBills.length) return null;
+  const withCreatedAt = playerBills.filter(b=>b.createdAt);
+  if(withCreatedAt.length) return withCreatedAt.sort((a,b)=>b.createdAt-a.createdAt)[0];
+  return playerBills[playerBills.length-1]; // §FIX-BILLMODAL-STALEFALLBACK — thu tu mang = thu tu tao that
+}
 function openBillModal(playerId, explicitBillId){
   // §HOTFIX — explicitBillId: khi bam XEM BILL tu 1 dong LICH SU cu the (vd subtab LUOT CHOI), PHAI
   // mo DUNG bill cua dong do, KHONG duoc tu dong lay bill moi nhat/bill dang mo cua player (truoc day
   // moi lan bam XEM BILL o BAT KY dong lich su nao cung ra CUNG 1 bill — luon la bill gan nhat).
   const bill = explicitBillId
     ? state.bills.find(b=>b.id===explicitBillId)
-    : (getOpenBillForPlayer(playerId) || state.bills.filter(b=>b.playerId===playerId).sort((a,b)=>b.createdAt-a.createdAt)[0]);
+    : (getOpenBillForPlayer(playerId) || getMostRelevantBillForPlayer(playerId));
   const p = playerById(playerId);
   const box = document.getElementById('matchModalContent');
   // §FIX-EMPTYBILL-HASPAYMENT — Admin bam "XEM BILL" cho dung bill test "Trí Phan" (0đ, khong co item
