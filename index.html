@@ -2,6 +2,40 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.6 (2026-09-19) — §FIX-REPORTS-ADJUSTMENT-DOUBLECOUNT — Admin báo: "hôm nay chưa có gì hết mà sao
+  doanh thu 118k và còn phải thu 118k". Điều tra qua console dump `buildReportContext()` xác nhận: 118k
+  đến từ 4 item loại "Điều chỉnh dữ liệu lịch sử (khớp số đã thu trước đó)" (A Vũ Sữa 46k, A Quốc Oppo
+  22k, A Vũ Xe 28k, A Hậu Dương 22k) — đây là item do `repairCollectedExceedsGeneratedLegacyItem()`
+  (§FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM, v1.43.1) tự thêm vào các bill ĐÃ 'paid' từ trước để đồng bộ
+  lại sổ sách khớp tiền đã thu — chính comment của hàm đó ghi rõ "KHÔNG tạo thêm 1 đồng doanh thu nào".
+  Item này có sẵn cờ đánh dấu `isDataRepairAdjustment:true`, nhưng bước lọc "doanh thu phát sinh trong
+  khoảng thời gian" ở `buildReportContext()` trước giờ KHÔNG kiểm tra cờ này — nên mỗi khi repair chạy
+  (timestamp lúc đó = ngay-lúc-repair, tức hôm nay 07:11:57), item liền bị tính nhầm thành "doanh thu
+  phát sinh hôm nay" dù thực ra là tiền cũ đã thu từ trước, khiến "Doanh thu hôm nay" bị cộng khống và
+  "Còn phải thu" (=Generated−Collected) cũng bị đội lên sai theo — một loại bug KHÁC hẳn (báo cáo doanh
+  thu), không liên quan lớp lỗi markEntityDirty/listener-overwrite đã audit trước đó. FIX: `buildReportContext()`
+  loại trừ item có `isDataRepairAdjustment===true` khỏi `revenueEntries` (đúng ý thiết kế ban đầu của
+  repair function) — billTotal()/hiển thị chi tiết bill vẫn GIỮ NGUYÊN item này (không đổi, vẫn cần để
+  tổng bill khớp tiền đã thu thật), CHỈ riêng các báo cáo doanh thu theo khoảng thời gian (Tài chính ▸
+  Tổng quan, Báo cáo...) là loại trừ. Đã verify 14/9 thẻ script và chạy syntax-check — 0 lỗi.
+
+  v1.44.5 (2026-09-19) — §FEATURE-SMOOTH-DOUBLERENDER — Theo yêu cầu Admin: "khi bấm f5 thì hình như nó
+  chạy 2 lần luôn". Đã điều tra kỹ trước khi sửa (không đoán): tự mở trang thật, theo dõi tab Network
+  nhiều lần F5 — XÁC NHẬN chỉ có ĐÚNG 1 request tải trang (document), KHÔNG có reload thật lần 2. Grep
+  toàn bộ file cũng xác nhận không có location.reload()/meta refresh/service worker nào tự động chạy —
+  chỉ có 1 chỗ duy nhất là nút "THỬ LẠI" thủ công khi mất kết nối. NGUYÊN NHÂN THẬT: app có CHỦ Ý vẽ giao
+  diện 2 lần lúc mở — lần 1 từ cache local ngay lập tức (renderAll() ở cuối file, phía sau
+  appLoadingOverlay, offline-first để mở nhanh), lần 2 sau khi Firebase Auth xác thực xong + dữ liệu thật
+  về (~1 giây sau, resolveEnterAppFor() gọi renderAll() lại). Giữa 2 lần đó, overlay "productionAuthOverlay"
+  (đang hiện "ĐANG KIỂM TRA ĐĂNG NHẬP") che lên NGAY TRÊN app đã hiện từ cache rồi lại biến mất ĐỘT NGỘT
+  (display:flex/none không transition) — đúng là cái gây cảm giác "trang tự load lại" mà Admin thấy, dù
+  không phải reload thật. FIX: CHỈ làm mượt phần HIỆU ỨNG hiện/ẩn của overlay (thêm animation fade-in khi
+  hiện + fade-out 200ms trước khi ẩn hẳn, dùng class .overlay-fading-out) — KHÔNG đụng vào logic/thứ
+  tự/điều kiện xác thực thật (đã qua rất nhiều đợt sửa kỹ race condition ở các chỗ gọi các hàm này, giữ
+  nguyên 100% để không phát sinh lỗi auth mới). Áp dụng cho cả appLoadingOverlay và productionAuthOverlay
+  (2 hàm hideAppLoadingOverlay()/hideProductionAuthOverlay()). Đã verify 14/9 thẻ script và chạy
+  syntax-check (new Function trên từng script block) — 0 lỗi.
+
   v1.44.4 (2026-09-18) — §FEATURE-AUDITLOG-SHOWMORE — Theo yêu cầu Admin: "trong phần nhật ký thao tác,
   tôi muốn xem tất cả lịch sử thao tác của tất cả mọi người luôn". Kiểm tra source xác nhận: nhật ký
   (state.overrideLog) VỐN ĐÃ ghi thao tác của TẤT CẢ người dùng (cột "Người thực hiện" chỉ là hiển thị,
@@ -4894,7 +4928,19 @@
   .placeholder-card{text-align:center; padding:50px 20px; color:var(--muted);}
   /* §PROD-1/2 — man hinh loading/mat ket noi khoi dong, che TOAN BO business UI phia duoi khi
      data/auth chua san sang, tranh "flash" du lieu cu/sai truoc khi state that su duoc load. */
-  .app-loading-overlay{position:fixed; inset:0; background:#0f172a; color:#fff; z-index:9999; display:flex; align-items:center; justify-content:center;}
+  .app-loading-overlay{position:fixed; inset:0; background:#0f172a; color:#fff; z-index:9999; display:flex; align-items:center; justify-content:center; animation:appOverlayFadeIn .2s ease; transition:opacity .2s ease;}
+  /* §FEATURE-SMOOTH-DOUBLERENDER (2026-09-19) — Theo yeu cau Admin: F5 xong ~1s sau "hinh nhu no chay
+     lai" — da xac nhan qua Network tab THAT SU CHI CO 1 lan tai trang (khong phai reload that), nguyen
+     nhan la app co CHU DICH ve 2 lan luc mo: lan 1 tu cache local (ngay lap tuc, an sau appLoadingOverlay),
+     lan 2 sau khi Firebase Auth xac thuc xong + du lieu that ve (~1s sau, luc nay productionAuthOverlay
+     hien ra DE TREN app da hien tu cache roi lai bien mat) — chinh cai overlay thu 2 nay HIEN/AN dot ngot
+     (display:flex/none) gay cam giac giong "trang tu load lai". FIX: CHI lam muot phan HIEU UNG hien/an
+     overlay (fade thay vi dot ngot) — KHONG dong vao logic/thu tu/dieu kien xac thuc that (qua nhieu doi
+     sua rat ky ve race condition o cac cho goi cac ham nay, khong dong vao). Class .overlay-fading-out
+     dung cho hieu ung fade-out truoc khi that su set display:none (xem hideAppLoadingOverlay()/
+     hideProductionAuthOverlay()). */
+  .app-loading-overlay.overlay-fading-out{ opacity:0; }
+  @keyframes appOverlayFadeIn{ from{opacity:0;} to{opacity:1;} }
   .app-loading-box{text-align:center;}
   /* §UIAUDIT-ICONS1 — doi tu text thuan "🏓 PICPOC" sang icon SVG + chu, dung chung layout flex ngang
      giua cho ca 3 noi render (2 HTML tinh + 1 fallback JS getAuthScreenLogoHtml()). */
@@ -8337,7 +8383,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.4'; // §FEATURE-AUDITLOG-SHOWMORE — bỏ cắt cứng 300 dòng, thêm nút Xem thêm + sort mới nhất trước cho Nhật ký thao tác — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.6'; // §FIX-REPORTS-ADJUSTMENT-DOUBLECOUNT — loại trừ item "Điều chỉnh dữ liệu lịch sử" khỏi Doanh thu/Còn phải thu theo ngày — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -11022,8 +11068,18 @@ function openSwitchUserModal(){
 /* ================= §AUTH — PRODUCTION FIREBASE AUTH SCREENS =================
    Chi active khi isProductionAuthMode(). Overlay che TOAN BO UI nghiep vu phia sau (khong loe LIVE/
    Academy/Payments/Settings truoc khi an — §AUTH-9/10). */
-function showProductionAuthOverlay(){ const el = document.getElementById('productionAuthOverlay'); if(el) el.style.display = 'flex'; }
-function hideProductionAuthOverlay(){ const el = document.getElementById('productionAuthOverlay'); if(el) el.style.display = 'none'; }
+function showProductionAuthOverlay(){ const el = document.getElementById('productionAuthOverlay'); if(el){ el.classList.remove('overlay-fading-out'); el.style.display = 'flex'; } } // §FEATURE-SMOOTH-DOUBLERENDER — bo fading-out neu dang giua chung khi bi goi lai
+function hideProductionAuthOverlay(){
+  // §FEATURE-SMOOTH-DOUBLERENDER (2026-09-19) — TRUOC DAY: display='none' NGAY LAP TUC (dot ngot) —
+  // day chinh la cho gay cam giac "trang tu load lai" khi overlay nay bien mat de lo ra renderAll() lan
+  // 2 (xem giai thich chi tiet o CSS .app-loading-overlay). FIX: fade opacity truoc (200ms) roi moi that
+  // su set display:none — CHI doi HIEU UNG hien thi, KHONG doi thoi diem/dieu kien ham nay duoc goi (van
+  // do resolveEnterAppFor()/beginProductionAuthFlow() quyet dinh y het truoc gio).
+  const el = document.getElementById('productionAuthOverlay');
+  if(!el || el.style.display === 'none') return;
+  el.classList.add('overlay-fading-out');
+  setTimeout(()=>{ if(el.classList.contains('overlay-fading-out')){ el.style.display = 'none'; el.classList.remove('overlay-fading-out'); } }, 200);
+}
 /* §LOGINUI2026 — dung LAI logo that da co san tai #appSidebarBrand (doc .src luc render, KHONG nhan
    ban chuoi base64 — dung y het pattern an toan cua getTournamentTvLogoHtml() §TOURNTV2026-LOGO) cho
    ca 3 man hinh Auth (checking/login/blocked) de "logo to len" nhu yeu cau, dong nhat thuong hieu. Phan
@@ -27997,6 +28053,22 @@ function buildReportContext(start, end){
   state.bills.forEach(bill=>{
     (bill.items || []).forEach(it=>{
       if(it.type === 'court') return; // §REPORTS-14 — xu ly rieng qua booking ben duoi
+      /* §FIX-REPORTS-ADJUSTMENT-DOUBLECOUNT (2026-09-19) — Theo Admin bao: "hôm nay chưa có gì hết mà
+         sao doanh thu 118k". Dieu tra qua console dump revenueEntries xac nhan: 4 khoan 118k do la item
+         loai "Điều chỉnh dữ liệu lịch sử (khớp số đã thu trước đó)" — item nay duoc
+         repairCollectedExceedsGeneratedLegacyItem() (§FIX-COLLECTEDEXCEEDS-PAIDBILL-LEGACYITEM, v1.43.1)
+         them vao bill DA 'paid' tu truoc, voi muc dich CHI dong bo lai SO SACH cho billTotal() khop voi
+         tien DA thu that su tu truoc do — chinh comment cua ham do da ghi ro "KHÔNG tạo thêm 1 đồng doanh
+         thu nào". Item nay co san co flag `isDataRepairAdjustment:true` danh dau rieng, NHUNG buoc loc
+         revenueEntries o day truoc gio KHONG kiem tra flag nay — nen bat cu khi nao 1 repair nhu vay chay
+         (item.timestamp = Date.now() luc repair, tuc HOM NAY), no bi tinh nham thanh "doanh thu phat sinh
+         HOM NAY", lam sai lech ca "Doanh thu hôm nay" lan "Còn phải thu" (Outstanding = Generated -
+         Collected, ma Collected khong tang tuong ung vi tien nay da duoc thu tu LAU, khong phai hom nay)
+         — dung 1 loai bug rieng, khong lien quan markEntityDirty/listener-overwrite da fix truoc do. FIX:
+         loai item co isDataRepairAdjustment=true khoi revenueEntries (dung y thiet ke ban dau cua repair
+         function) — billTotal()/hien thi bill van GIU NGUYEN item nay (khong doi, van can de tong bill
+         khop tien da thu that), CHI rieng bao cao doanh thu theo khoang thoi gian la loai tru. */
+      if(it.isDataRepairAdjustment) return;
       if(!inRange(it.timestamp)) return;
       revenueEntries.push({
         category: it.type || 'other', amount: it.amount || 0, ts: it.timestamp,
@@ -39020,8 +39092,11 @@ window.addEventListener('unhandledrejection', function(event){
 });
 
 function hideAppLoadingOverlay(){
+  // §FEATURE-SMOOTH-DOUBLERENDER (2026-09-19) — cung pattern fade voi hideProductionAuthOverlay() o tren.
   const el = document.getElementById('appLoadingOverlay');
-  if(el) el.style.display = 'none';
+  if(!el || el.style.display === 'none') return;
+  el.classList.add('overlay-fading-out');
+  setTimeout(()=>{ if(el.classList.contains('overlay-fading-out')){ el.style.display = 'none'; el.classList.remove('overlay-fading-out'); } }, 200);
 }
 /* §PROD-2 — man hinh KHONG THE KET NOI: chi hien khi CO cau hinh Firebase (SYNC_ENABLED) nhung
    sau thoi gian cho hop ly van chua ket noi duoc VA khong co cache local nao de xem tam (may
