@@ -2,6 +2,32 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.13 (2026-09-19) — §REMOVE-SMARTSOCIAL-2026. Admin yêu cầu: "bỏ phần ghép trận smart social đi,
+  ko cần ghép trận nữa". Đã xóa hẳn toàn bộ tính năng SMART SOCIAL (ghép trận tự động) — Picpoc từ nay
+  chỉ còn 1 chế độ vận hành duy nhất: TỰ CHƠI (Staff tự tay xếp 4 người vào sân qua "Xếp thủ công").
+  ĐÃ XÓA — UI: nút chuyển đổi chế độ "TỰ CHƠI/SMART SOCIAL" (#socialModeSwitch) trên tab LIVE; 2 stat
+  box "Chờ TB"/"Tình trạng Social" (chỉ có ý nghĩa khi Smart Social); card "Hàng chờ" (#waitingQueueCard/
+  bảng queueTable) — "Trận tiếp theo" giờ là card full-width duy nhất; toàn bộ card cài đặt "Trọng số ưu
+  tiên ghép sân/Traffic/Nhóm Social — xếp sân/Tự động ghép trận" trong CÀI ĐẶT > Giá & Social; nút
+  "Ghép ngay"/"Ghép dù" (đổi hẳn thành "Xếp thủ công"/"Xếp thủ công dù" ở MỌI trường hợp, không còn rẽ
+  nhánh theo chế độ nữa). ĐÃ XÓA — JS: setSocialMode()/applySocialModeUI()/saveMatchmakingSettings(),
+  toàn bộ engine tự động chọn người (buildFourOptions()/computeGroupAffinityBonus()/
+  suggestMatchOptions()/pickBestFourForAutoMatch()/isPlayerStillValidForCourtCommit()/
+  autoStartBestNextMatch()/autoFillAllEmptyCourtsAndStart()/undoAutoStart()/
+  __autoStartSuppressedCombos + 2 helper), modal "GHÉP NGAY" (openMatchOptionsModal()/pickMatchOption()),
+  forceMatchDespiteBooking(), renderQueueTable()/waitClass(), joinSocialParticipation()/
+  leaveSocialParticipation() (2 hàm này vốn đã orphan từ bản trước, không còn nút nào gọi). GIỮ NGUYÊN
+  KHÔNG ĐỤNG: toàn bộ engine "4 người muốn đánh cùng" (REQUESTED_FOUR — vẫn hoạt động bình thường, xếp
+  sân thủ công qua activateRequestedFourToCourt(), hoàn toàn độc lập với các hàm vừa xóa) và
+  splitIntoTeams()/calculateMatchQuality()/markSelected() (vẫn dùng chung cho REQUESTED_FOUR/lịch sử
+  trận). MIGRATION: nếu dữ liệu Firebase hiện tại của club vẫn còn socialMode:'SMART_SOCIAL' (đúng tình
+  trạng lúc phát sinh bug "sân ma" nguồn AUTO_MATCH trước đó) — attachSettingsListener() tự động ép về
+  'SELF_PLAY' + ghi lại ngay khi phát hiện, tránh còn sót hiển thị kiểu Smart Social không nhất quán.
+  LỢI ÍCH PHỤ: loại bỏ luôn nguồn gốc chính gây ra bug "sân ma" AUTO_MATCH — vì tự động ghép trận không
+  còn chạy nữa nên rủi ro race-condition tạo court cục bộ-only lúc mất mạng (đã nêu ở v1.44.12) giờ chỉ
+  còn xảy ra qua đường "Vào sân"/"Xếp thủ công" thủ công (staff bấm, tần suất thấp hơn nhiều so với auto
+  chạy liên tục). Đã xóa 14/9 script/script tag khớp, chạy Node syntax check 0 lỗi.
+
   v1.44.12 (2026-09-19) — §FIX-FINISHMATCH-GHOST-COURT-REFEQ. Admin báo: Sân 1/2/3 hiện "ĐANG CHƠI" với
   1 trận từ ~11 ngày trước, bấm nút "Kết thúc" rất nhiều lần vẫn không hết, tải lại trang trận vẫn "sống
   lại" y hệt. Gốc rễ: logic dọn "sân ma" đã có sẵn trong finishMatch() (§FIX-FINISHMATCH-GHOST-COURT,
@@ -6432,15 +6458,9 @@
   <section id="tab-live" class="tab-content active">
     <div class="page-header">
       <div><h1 class="page-title">LIVE</h1><p class="page-desc">Quản lý sân theo thời gian thực</p></div>
-      <!-- §SOCIALMODE2026 — CHI 2 MODE VAN HANH, chon thu cong (KHONG tu doi theo thu/ngay). Active mode
-           noi ro (teal dam/chu trang), inactive nhat (trang/chu toi/border nhe) — xem CSS .sms-btn. -->
-      <div class="social-mode-switch" id="socialModeSwitch">
-        <span class="sms-label">CHẾ ĐỘ HÔM NAY</span>
-        <div class="sms-buttons">
-          <button type="button" class="sms-btn" id="smsSelfPlayBtn" onclick="setSocialMode('SELF_PLAY')">TỰ CHƠI</button>
-          <button type="button" class="sms-btn" id="smsSmartSocialBtn" onclick="setSocialMode('SMART_SOCIAL')">SMART SOCIAL</button>
-        </div>
-      </div>
+      <!-- §REMOVE-SMARTSOCIAL-2026 — Admin yêu cầu bỏ hẳn tính năng ghép trận tự động (SMART SOCIAL),
+           chỉ giữ TỰ CHƠI. Đã xóa nút chuyển chế độ (#socialModeSwitch) — app giờ luôn vận hành theo
+           TỰ CHƠI, không còn cách nào bật lại SMART SOCIAL từ UI nữa. Chi tiết đầy đủ ở CHANGELOG đầu file. -->
     </div>
     <div id="startOfDayBanner" class="presence-warn" style="display:none; margin-bottom:12px;"></div>
     <div class="stats-strip">
@@ -6456,16 +6476,8 @@
         <div class="stat-icon stat-icon-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M4.5 20c0-4.1 3.4-7 7.5-7s7.5 2.9 7.5 7"/></svg></div>
         <div class="stat-body"><div class="num" id="statWaiting">0</div><div class="lbl">Đang chờ</div><div class="sub" id="statWaitingSub"></div></div>
       </div>
-      <div class="stat-box stat-box-icon" id="statAvgWaitBox">
-        <div class="stat-icon stat-icon-orange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg></div>
-        <div class="stat-body"><div class="num" id="statAvgWait">0'</div><div class="lbl">Chờ TB</div><div class="sub" id="statAvgWaitSub"></div></div>
-      </div>
-      <!-- §RESTRUCTURE2026-WS3 muc 98 — gop "Muc tai" + "Queue Health" thanh 1 khoi "TINH TRANG SOCIAL"
-           (chi hien khi SMART_SOCIAL, an trong SELF_PLAY nhu truoc — xem applySocialModeUI()). -->
-      <div class="stat-box stat-box-icon" id="statTrafficBox">
-        <div class="stat-icon stat-icon-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20v-3"/></svg></div>
-        <div class="stat-body"><div class="num" id="statQueueHealth">-</div><div class="lbl">Tình trạng Social</div><div class="sub">Mức tải: <span id="statTraffic">-</span> · <span id="statQueueHealthSub"></span></div></div>
-      </div>
+      <!-- §REMOVE-SMARTSOCIAL-2026 — đã xóa 2 stat box "Chờ TB"/"Tình trạng Social" (chỉ có ý nghĩa khi
+           SMART SOCIAL, nay tính năng đã bị bỏ hẳn). -->
     </div>
     <div class="card no-print" id="alertBox" style="display:none;"></div>
 
@@ -6488,24 +6500,13 @@
       <div id="requestedFoursWaitingList"></div>
     </div>
 
-    <!-- §WIDTHAUDIT-5/7 — "Trận tiếp theo" va "Hàng chờ" truoc day 2 strip full-width rieng biet du
-         noi dung thuong chi vai dong/vai nguoi — ghep canh nhau qua .ui-grid-2 (2 panel LIEN QUAN
-         truc tiep: hang cho -> san sang -> vao san). Giu NGUYEN bang compact cho Hang cho (§7 — khong
-         bat buoc doi thanh card grid, van can so sanh nhieu cot: Ten/Cho/Tran/Trinh do/Trang thai/Thao
-         tac), chi doi vi tri/chieu rong bao ngoai. Khong doi id/onclick/render nao. -->
-    <div class="ui-grid-2">
-      <div class="card no-print" id="readyQueueCard">
-        <h2><span class="section-dot section-dot-success"></span>Trận tiếp theo</h2>
-        <div id="readyQueueList" class="muted">Chưa có nhóm nào sẵn sàng.</div>
-      </div>
-
-      <div class="card no-print" id="waitingQueueCard">
-        <h2><span class="section-dot section-dot-warning"></span>Hàng chờ<span id="waitingQueueCount" class="section-count-badge"></span></h2>
-        <div class="table-card"><table id="queueTable">
-          <thead><tr><th>#</th><th>Tên</th><th>Chờ</th><th>Trận</th><th>Trình độ</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
-          <tbody id="queueTableBody"></tbody>
-        </table></div>
-      </div>
+    <!-- §REMOVE-SMARTSOCIAL-2026 — đã xóa card "Hàng chờ" (#waitingQueueCard/queueTable, dùng
+         renderQueueTable() — chỉ có ý nghĩa khi SMART SOCIAL) và bỏ wrapper .ui-grid-2 (trước đây chia
+         2 cột với card đó) — "Trận tiếp theo" giờ là card full-width duy nhất, thay cho việc trước đây
+         applySocialModeUI() phải set gridColumn='1 / -1' thủ công mỗi lần ở SELF_PLAY. -->
+    <div class="card no-print" id="readyQueueCard">
+      <h2><span class="section-dot section-dot-success"></span>Trận tiếp theo</h2>
+      <div id="readyQueueList" class="muted">Chưa có nhóm nào sẵn sàng.</div>
     </div>
 
     <div class="card" id="recentHistoryCard">
@@ -7506,36 +7507,11 @@
         </div>
         <p class="muted" id="pricingReadonlyNote" style="display:none;">Chỉ ADMIN được sửa bảng giá — bạn đang xem chế độ chỉ đọc.</p>
       </div>
-      <!-- §RESTRUCTURE2026-WS3 muc 5/90 — 2 the cua subtab SOCIAL & GHÉP TRẬN rieng (da bi go) CHUYEN
-           NGUYEN VEN vao day, id/onclick/data-require-permission GIU NGUYEN 100%. -->
-      <div class="card">
-        <h2><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>Trọng số ưu tiên ghép sân (Priority Score)</h2>
-        <div class="small-note">Số càng cao thì yếu tố đó càng được ưu tiên khi chọn người ghép trận tiếp theo — không cần hiểu code, chỉ cần thử và quan sát.</div>
-        <div class="grid-2col" style="margin-top:8px;">
-          <div><label>Chờ lâu (WAIT)</label><input type="number" step="0.1" id="wWait" oninput="markSettingsDirty('matchmaking')"></div>
-          <div><label>Chơi ít hơn TB (BEHIND)</label><input type="number" step="0.1" id="wBehind" oninput="markSettingsDirty('matchmaking')"></div>
-          <div><label>Ngồi nhiều vòng (SAT OUT)</label><input type="number" step="0.1" id="wSatOut" oninput="markSettingsDirty('matchmaking')"></div>
-          <div><label>Phạt vừa chơi liên tục (JUST PLAYED)</label><input type="number" step="0.1" id="wJustPlayed" oninput="markSettingsDirty('matchmaking')"></div>
-          <div><label>Phạt chưa sẵn sàng (NOT READY)</label><input type="number" step="0.1" id="wNotReady" oninput="markSettingsDirty('matchmaking')"></div>
-        </div>
-        <h3 style="margin-top:16px;">Traffic — mật độ khách</h3>
-        <div class="grid-2col">
-          <div><label>Ngưỡng THẤP (người/sân)</label><input type="number" step="0.1" id="trafficLowInput" oninput="markSettingsDirty('matchmaking')"></div>
-          <div><label>Ngưỡng ĐÔNG (người/sân)</label><input type="number" step="0.1" id="trafficPeakInput" oninput="markSettingsDirty('matchmaking')"></div>
-        </div>
-        <h3 style="margin-top:16px; display:flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3H5a2 2 0 0 0-2 2v7.5a2 2 0 0 0 .59 1.41l9.5 9.5a2 2 0 0 0 2.82 0l7.5-7.5a2 2 0 0 0 0-2.82l-9.5-9.5A2 2 0 0 0 12.5 3Z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>Nhóm Social — xếp sân</h3>
-        <div class="grid-2col">
-          <div><label>Ưu tiên cùng nhóm</label><input type="number" step="0.1" min="0" id="wGroupPreference" oninput="markSettingsDirty('matchmaking')"></div>
-        </div>
-        <div class="small-note">Số càng cao thì hệ thống càng ưu tiên chọn người cùng nhóm, nhưng vẫn cân bằng với thời gian chờ. Đây chỉ là bonus mềm khi ghép 4 người cùng chờ — không khoá cứng, người chờ lâu ngoài nhóm vẫn được ưu tiên nếu cần.</div>
-        <h3 style="margin-top:16px; display:flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" stroke="none"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/></svg>Tự động ghép trận</h3>
-        <div class="checkbox-row"><input type="checkbox" id="autoStartNextMatchToggle" oninput="markSettingsDirty('matchmaking')"><label style="margin:0;">TỰ ĐỘNG GHÉP VÀ BẮT ĐẦU TRẬN</label></div>
-        <div class="small-note">Khi có sân trống và đủ 4 người hợp lệ, Picpoc tự chọn phương án tốt nhất, đưa VĐV vào sân và bắt đầu tính giờ. Staff vẫn có thể hoàn tác trong ít giây sau khi tự động ghép, hoặc tắt tính năng này để quay lại ghép sân thủ công (nút GHÉP NGAY).</div>
-        <div class="settings-save-row" data-require-permission="WEIGHTS_EDIT">
-          <button onclick="saveMatchmakingSettings()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>LƯU THAY ĐỔI</button>
-          <span class="settings-dirty-note" id="matchmakingDirtyNote">Có thay đổi chưa lưu</span>
-        </div>
-      </div>
+      <!-- §REMOVE-SMARTSOCIAL-2026 — đã xóa hẳn card "Trọng số ưu tiên ghép sân (Priority Score)" +
+           "Traffic" + "Nhóm Social — xếp sân" + "Tự động ghép trận" (wWait/wBehind/wSatOut/wJustPlayed/
+           wNotReady/trafficLowInput/trafficPeakInput/wGroupPreference/autoStartNextMatchToggle +
+           saveMatchmakingSettings()) — toàn bộ chỉ phục vụ engine SMART SOCIAL (buildFourOptions()/
+           pickBestFourForAutoMatch()), nay đã bỏ hẳn theo yêu cầu Admin. Chi tiết CHANGELOG đầu file. -->
       <div class="card">
         <h2><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20v-3"/></svg>Seed PPR ban đầu (theo mức chọn lúc Check-in)</h2>
         <p class="muted">Đổi điểm số ở đây <b>không</b> tự đổi PPR của người chơi đã có sẵn — chỉ áp dụng cho lần chọn "Mức chơi ban đầu" tiếp theo khi Check-in khách mới (§H).</p>
@@ -8560,7 +8536,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.12'; // §FIX-FINISHMATCH-GHOST-COURT-REFEQ — sửa lỗi "sân ma" không xóa được do so sánh tham chiếu object sai — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.13'; // §REMOVE-SMARTSOCIAL-2026 — bỏ hẳn tính năng ghép trận tự động SMART SOCIAL, chỉ còn TỰ CHƠI — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -15808,90 +15784,11 @@ function currentMaxSpread(waitMinutes){
    (dam bao fairness — cho lau nhat luon duoc uu tien vao 1 trong 3 phuong an), chi khac o 3
    nguoi con lai. §172 — spread gio tinh theo PPR (getPlayerPpr) thay vi p.level truc tiep, va
    maxSpread lay tu currentMaxSpreadPpr() (§AO) thay vi currentMaxSpread() cu. */
-/* §SOCIAL4-19 — sameGroupCountMax cua 1 candidate four: dem so nguoi cung 1 socialGroupId (chi
-   tinh nhom active), lay nhom dong nhat nhat. Thang diem theo dung spec muc 19 (4 manh nhat, 3
-   vua, 2 nhe, <=1 khong bonus) — don vi ~PPR-tuong-duong de cong don duoc voi comboScore. */
-function computeGroupAffinityBonus(four){
-  const counts = {};
-  four.forEach(p=>{
-    const g = getPlayerSocialGroup(p.id);
-    if(g) counts[g.id] = (counts[g.id]||0) + 1;
-  });
-  const maxCount = Object.keys(counts).length ? Math.max(...Object.values(counts)) : 0;
-  if(maxCount >= 4) return 1.2;   // 4 nguoi cung nhom — uu tien manh
-  if(maxCount === 3) return 0.6;  // 3/4 cung nhom — uu tien vua
-  if(maxCount === 2) return 0.2;  // 2/4 cung nhom — tie-breaker nhe
-  return 0;
-}
-function buildFourOptions(maxOptions){
-  const now = Date.now();
-  // §FIX-QUEUE-1 muc 12 — dung helper dung chung isPlayerMatchmakingEligible() (dinh nghia gan
-  // QUEUE_VISIBLE_STATUSES/SESSION_ENDED_STATUSES) thay vi tu viet dieu kien rieng tai day — dieu kien
-  // GIU NGUYEN 100% (p.status==='waiting' && !p.restOneRound), chi doi CACH GOI de tap trung ve 1 noi,
-  // tranh cac module khac nhau tu dinh nghia "ai dang cho ghep tran" khac nhau (nguyen nhan goc cua bug
-  // Hang cho §FIX-QUEUE-1). KHONG doi logic uu tien/PPR/traffic mode nao ben duoi.
-  let pool = state.players.filter(isPlayerMatchmakingEligible);
-
-  const traffic = getTrafficMode();
-  if(traffic === 'PEAK'){
-    const notStreaky = pool.filter(p => (p.consecutivePlayed||0) < 2);
-    if(notStreaky.length >= 4) pool = notStreaky;
-  }
-
-  if(pool.length < 4) return [];
-
-  pool = pool.slice().sort((a,b)=> computePriority(b, now) - computePriority(a, now));
-  const anchor = pool[0];
-  const anchorWaitMin = (now - (anchor.waitSince || now)) / 60000;
-  const maxSpread = currentMaxSpreadPpr(anchorWaitMin); // §AO
-
-  const rest = pool.slice(1);
-  const candTop = rest.slice(0, Math.min(rest.length, 10)); // pool ung vien, gioi han cho hieu nang
-
-  // Sinh cac to hop 4-nguoi (luon gom anchor) tu candTop, cham diem, lay tot nhat.
-  function comboScore(four){
-    const pprs = four.map(p=>getPlayerPpr(p));
-    const spread = Math.max(...pprs) - Math.min(...pprs);
-    const prioritySum = four.reduce((s,p)=> s + computePriority(p, now), 0);
-    const overSpreadPenalty = spread > maxSpread ? (spread - maxSpread) * 20 : 0;
-    // §SOCIAL4-18/19/20 — GROUP AFFINITY la BONUS MEM khi CHON 4 nguoi (khong dung de chia doi —
-    // xem splitIntoTeams(), khong doi). Cang diem THAP cang duoc uu tien (combos.sort() tang dan
-    // ben duoi), nen bonus phai TRU vao score. sameGroupCountMax = so nguoi lon nhat cung 1 nhom
-    // trong 4 nguoi nay (4=manh nhat, 3=vua, 2=nhe, <=1=khong bonus — dung thang do spec muc 19).
-    // KHONG hard filter: combo van duoc tao tu candTop (da uu tien theo WAIT/priority — xem tren),
-    // nen 1 outsider cho rat lau (anchor luon co mat trong MOI combo) khong bao gio bi loai vi
-    // group — bonus chi la tie-breaker giua cac combo co spread/priority da gan bang nhau (muc 20).
-    const groupW = (state.settings && typeof state.settings.groupPreferenceWeight === 'number') ? state.settings.groupPreferenceWeight : 1.5;
-    const groupBonus = computeGroupAffinityBonus(four) * groupW;
-    return spread * 6 + overSpreadPenalty - prioritySum * 0.15 - groupBonus;
-  }
-
-  const combos = [];
-  for(let i=0;i<candTop.length;i++){
-    for(let j=i+1;j<candTop.length;j++){
-      for(let k=j+1;k<candTop.length;k++){
-        const four = [anchor, candTop[i], candTop[j], candTop[k]];
-        combos.push({ four, score: comboScore(four) });
-      }
-    }
-  }
-  if(!combos.length && rest.length >= 3){
-    combos.push({ four:[anchor, rest[0], rest[1], rest[2]], score:0 });
-  }
-  combos.sort((a,b)=> a.score - b.score);
-
-  // loai trung (cung 4 id) va gioi han so phuong an tra ve
-  const seen = new Set();
-  const options = [];
-  for(const c of combos){
-    const key = c.four.map(p=>p.id).sort().join(',');
-    if(seen.has(key)) continue;
-    seen.add(key);
-    options.push(c.four);
-    if(options.length >= (maxOptions || 3)) break;
-  }
-  return options;
-}
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa computeGroupAffinityBonus()/buildFourOptions() (engine "chọn 4
+   người tốt nhất" của SMART SOCIAL — chấm điểm chờ/PPR spread/nhóm — chỉ dùng bởi
+   suggestMatchOptions()/pickBestFourForAutoMatch(), cả 2 cũng đã bị xóa). splitIntoTeams()/
+   calculateMatchQuality()/markSelected() bên dưới VẪN GIỮ NGUYÊN — vẫn được dùng bởi REQUESTED_FOUR
+   (AUTO_BALANCE)/createReadyGroup()/lịch sử trận, không liên quan riêng SMART SOCIAL. */
 
 /* §172/§CA — calculateMatchQuality(): 0-100 diem "can bang" cua 1 tran dau, dua tren xac suat
    thang du kien (expected win) cua computeExpectedWin() — cang gan 50/50 diem cang cao. Dung
@@ -15968,14 +15865,6 @@ function markSelected(fourIds){
   // tu dong huy co "Nghi 1 luot" cho nhung nguoi da qua du 1 vong ke tu khi bat
   state.players.forEach(p=>{
     if(p.restOneRound && p.restClearRound && rc >= p.restClearRound) p.restOneRound = false;
-  });
-}
-
-function suggestMatchOptions(){
-  const fours = buildFourOptions(3);
-  return fours.map(four => {
-    const split = splitIntoTeams(four);
-    return { four, team1: split.team1, team2: split.team2, quality: split.quality };
   });
 }
 
@@ -16923,161 +16812,13 @@ function renderSocialGroupMemberPickerHtml(groupId){
    buildFourOptions()/comboScore() — không cần logic riêng) > NORMAL BEST MATCHMAKING
    (suggestMatchOptions()[0]). Staff vẫn có thể tắt qua Cài đặt (state.settings.autoStartNextMatch=
    false) để quay lại luồng thủ công (nút GHÉP NGAY vẫn luôn có sẵn làm fallback). */
-let __autoStartSuppressedCombos = {}; // key: playerIds đã sort nối bằng ',' -> thời điểm hết hạn (ms) — chặn 1 combo VỪA bị Staff hoàn tác khỏi được auto-chọn lại NGAY lập tức (chỉ tồn tại trong phiên trình duyệt, không cần persist)
-function isComboSuppressedForAutoMatch(ids){
-  const key = ids.slice().sort().join(',');
-  const exp = __autoStartSuppressedCombos[key];
-  if(!exp) return false;
-  if(Date.now() > exp){ delete __autoStartSuppressedCombos[key]; return false; }
-  return true;
-}
-function suppressComboForAutoMatch(ids){
-  const key = ids.slice().sort().join(',');
-  __autoStartSuppressedCombos[key] = Date.now() + 5*60*1000; // 5 phút là đủ để "lần đề xuất auto kế tiếp" không lặp lại combo vừa bị huỷ, không chặn vĩnh viễn (nếu ít người eligible thì vẫn có thể cần dùng lại combo đó sau)
-}
-/* Chọn "4 người + cách chia đội" tốt nhất cho 1 lần auto-start, đúng thứ tự ưu tiên của spec. Trả
-   về { team1:[player,...], team2:[...], sourceType, sourceId } hoặc { existingGroup: readyGroupObj }
-   (dùng LẠI group có sẵn, không tạo group mới) hoặc null (không đủ điều kiện — GIỮ SÂN TRỐNG, không
-   tạo bản ghi rỗng). KHÔNG tự viết lại scoring/fairness — buildFourOptions()/splitIntoTeams() (đã có
-   cả §SOCIAL4-19 group affinity bonus) vẫn là nguồn DUY NHẤT quyết định "tốt nhất" cho nhánh NORMAL. */
-function pickBestFourForAutoMatch(){
-  // ưu tiên 1 — REQUESTED FOUR: lấy theo thứ tự tạo trước, bỏ qua (mark NEEDS_ATTENTION) nếu không
-  // còn hợp lệ (KHÔNG tự override rest-one-round — người đang nghỉ 1 lượt không được auto chọn),
-  // KHÔNG để sân trống chỉ vì 1 request lỗi — tiếp tục thử request kế/normal matchmaking.
-  const reqs = (state.socialRequestedFours||[]).filter(r=>r.status==='WAITING').sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
-  for(const req of reqs){
-    const v = validateRequestedFourCandidates(req.playerIds, [], { excludeRequestId: req.id }); // §RF-FIX — xem giai thich o validateRequestedFourCandidates/activateRequestedFourToCourt
-    if(!v.ok){
-      req.status = 'NEEDS_ATTENTION';
-      markEntityDirty('socialRequestedFours', req.id);
-      logOverride('auto_match_skipped', 'Bỏ qua yêu cầu 4 người (' + req.id + ') khi tự động ghép — không còn hợp lệ: ' +
-        [...(v.invalid||[]), ...(v.needsRestOverride||[]).map(x=>({name:x.name, reason:'Đang nghỉ 1 lượt.'}))].map(x=>(x.name?x.name+': ':'')+x.reason).join('; '),
-        'socialRequestedFour', req.id);
-      continue;
-    }
-    // §SOCIALMODEV2-2026 — DA BO check "socialParticipation===true" rieng cho tung nguoi (khong con
-    // khai niem "tham gia Social" ca nhan nua). pickBestFourForAutoMatch() chi duoc goi tu cac diem
-    // vao da tu gate theo socialMode==='SMART_SOCIAL' (autoStartBestNextMatch/autoFillAllEmptyCourtsAndStart),
-    // nen o day validateRequestedFourCandidates() (status/visit) la du.
-    const fourPlayers = req.playerIds.map(id=>playerById(id));
-    let team1, team2;
-    if(req.teamMode === 'MANUAL' && req.team1 && req.team2){
-      team1 = req.team1.map(id=>playerById(id));
-      team2 = req.team2.map(id=>playerById(id));
-    } else {
-      const split = splitIntoTeams(fourPlayers);
-      team1 = split.team1; team2 = split.team2;
-    }
-    return { team1, team2, sourceType:'REQUESTED_FOUR', sourceId: req.id };
-  }
-  // ưu tiên 2 — Ready Group đã tạo sẵn nhưng CHƯA gán sân (courtId null, ví dụ Staff bấm "TẠO NHÓM
-  // SẴN SÀNG" mà chưa chọn sân ngay) — dùng LẠI group này, KHÔNG tạo group mới.
-  const waitingGroup = (state.readyGroups||[]).filter(g=>!g.courtId).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))[0];
-  if(waitingGroup) return { existingGroup: waitingGroup };
-  // ưu tiên 3/4 — SOCIAL GROUP preference (đã là 1 phần điểm trong buildFourOptions()/comboScore(),
-  // xem §SOCIAL4-18/19/20) rồi mới đến NORMAL BEST MATCHMAKING — suggestMatchOptions()[0] là nguồn
-  // DUY NHẤT cho cả 2, không tách logic riêng. Bỏ qua phương án trùng đúng 1 combo VỪA bị Staff hoàn
-  // tác (isComboSuppressedForAutoMatch) để tránh lặp lại ngay lập tức.
-  const options = suggestMatchOptions();
-  for(const opt of options){
-    const ids = [...opt.team1, ...opt.team2].map(p=>p.id);
-    if(isComboSuppressedForAutoMatch(ids)) continue;
-    return { team1: opt.team1, team2: opt.team2, sourceType:'AUTO_MATCH', sourceId:null };
-  }
-  return null;
-}
-/* Điểm vào chính — gọi 1 LẦN cho 1 sân VỪA được xác nhận là trống (ví dụ ngay sau
-   applyFinishMatchLocally() xoá court). Idempotent: luôn kiểm tra lại state.courts[courtId] còn
-   trống NGAY TRƯỚC KHI ghi (không chỉ dựa vào giả định của nơi gọi) — nếu 2 lần gọi trùng nhau (ví
-   dụ finishMatch() + 1 trigger khác cùng lúc), lần thứ 2 sẽ thấy court đã có và tự bỏ qua. An toàn
-   multi-device ở MỨC ĐỘ của sendReadyGroupToCourt() hiện có (Firebase transaction chỉ ghi nếu remote
-   còn trống, xem §DATA-ARCH-15/61) — KHÔNG tự viết cơ chế lock riêng, dùng LẠI cơ chế đã được kiểm
-   chứng thay vì tạo pipeline song song. */
-/* §MATCHFIX-20/21/22 — kiem tra RIENG cho buoc final-commit (KHAC voi isPlayerMatchmakingEligible()
-   dung de LOC POOL ban dau): tai thoi diem nay, pick.team1/team2 (tu AUTO_MATCH/REQUESTED_FOUR) van
-   con status='waiting' (chua bi createReadyGroup() doi), NHUNG pick.existingGroup (1 Ready Group co
-   san, courtId=null, Staff tao truoc do chua gan san) thi 4 nguoi DA la status='ready' tu luc tao —
-   nen chap nhan CA 2 status nay o day, van BAT BUOC con Active Visit THAT SU (lop bao ve cot loi
-   giong isPlayerMatchmakingEligible). */
-function isPlayerStillValidForCourtCommit(player){
-  if(!player) return false;
-  if(player.status !== 'waiting' && player.status !== 'ready') return false;
-  const visit = getActiveVisitForPlayer(player.id);
-  return !!visit && visit.status === 'ACTIVE';
-}
-function autoStartBestNextMatch(courtId){
-  if(!state.settings || state.settings.autoStartNextMatch === false) return; // Staff đã tắt trong Cài đặt — fallback thủ công (GHÉP NGAY)
-  if((state.settings.socialMode||'SELF_PLAY') !== 'SMART_SOCIAL') return; // §SOCIALMODE2026 — TU CHOI: KHONG auto ghep/auto lay nguoi tu queue, du nguon la REQUESTED_FOUR/existingGroup/AUTO_MATCH
-  if(!courtId || state.courts[courtId]) return; // idempotency — sân đã có trận (do lần gọi khác hoặc thiết bị khác vừa xử lý), không làm gì thêm
-  const pick = pickBestFourForAutoMatch();
-  if(!pick) return; // không đủ >=4 người eligible — GIỮ SÂN TRỐNG, không tạo bản ghi rỗng
-  /* §MATCHFIX-20/21/22 — REVALIDATE đúng 4 người NGAY TRƯỚC KHI commit vào sân (trước khi
-     createReadyGroup() đổi status sang 'ready', để còn kiểm tra được đúng ý nghĩa "vẫn còn hợp lệ" —
-     không chỉ tin kết quả buildFourOptions()/pickBestFourForAutoMatch() sinh ra trước đó, có thể đã
-     bị 1 hành động khác của Staff hoặc 1 thiết bị khác làm thay đổi ngay giữa 2 bước). Nếu có 1 người
-     không còn hợp lệ — HUỶ phương án này, giữ sân trống, để lần trigger kế tiếp tự tìm phương án khác
-     (không tự lặp tìm người thay thế ngay trong lần gọi này — tránh phức tạp hoá, vẫn đúng nguyên tắc
-     "không để sân trống vô lý" vì mọi finishMatch/return-from-away/check-in đều tự trigger lại). */
-  const ids4Check = pick.existingGroup
-    ? [...pick.existingGroup.team1, ...pick.existingGroup.team2]
-    : [...pick.team1.map(p=>p.id), ...pick.team2.map(p=>p.id)];
-  if(!ids4Check.every(id=> isPlayerStillValidForCourtCommit(playerById(id)))){
-    logOverride('auto_match_candidate_invalidated', 'Bỏ qua phương án tự động cho sân ' + courtId + ' — có người không còn hợp lệ ngay trước khi vào sân (trạng thái vừa đổi). Sân vẫn để trống, sẽ tự thử lại ở lần kế tiếp.', 'court', courtId);
-    return;
-  }
-  let group;
-  if(pick.existingGroup){
-    group = pick.existingGroup;
-    group.courtId = courtId;
-  } else {
-    group = createReadyGroup(courtId, pick.team1, pick.team2, { sourceType: pick.sourceType, sourceId: pick.sourceId });
-  }
-  logOverride('auto_match_selected', 'Tự động chọn 4 người cho sân ' + courtId + ': ' +
-    [...group.team1, ...group.team2].map(id=>playerName(id)).join(', '), 'court', courtId);
-  sendReadyGroupToCourt(group.id); // con đường canonical duy nhất vào sân — tự lo matchId/PPR snapshot/court.status=playing/startedAt/Firebase transaction
-  const m = state.courts[courtId];
-  if(!m) return; // sendReadyGroupToCourt() tự huỷ do xung đột đã được rollbackSendToCourtConflict() xử lý riêng, không còn gì làm thêm ở đây
-  logOverride('auto_match_started', 'Tự động bắt đầu trận sân ' + courtId + ' (matchId ' + m.matchId + ')', 'court', courtId);
-  const t1n = m.team1.map(id=>playerName(id)).join(' & '), t2n = m.team2.map(id=>playerName(id)).join(' & ');
-  showUndoToast('⚡ Tự động xếp sân ' + courtId + ': ' + t1n + ' vs ' + t2n, function(){ undoAutoStart(courtId, m.matchId); });
-}
-/* Nhiều sân trống cùng lúc: xử lý TUẦN TỰ từng sân, mỗi lần đọc lại state.players/state.courts MỚI
-   NHẤT (không precompute 1 lần cho tất cả sân — mỗi lần autoStartBestNextMatch() thành công sẽ tự
-   đổi 4 người đó sang 'playing', nên vòng lặp sau tự động không chọn trùng người). */
-function autoFillAllEmptyCourtsAndStart(){
-  if(!state.settings || state.settings.autoStartNextMatch === false) return;
-  if((state.settings.socialMode||'SELF_PLAY') !== 'SMART_SOCIAL') return; // §SOCIALMODE2026 — TU CHOI: khong tu dong lap san trong nao ca
-  const courtCount = state.settings.courtCount || 4;
-  for(let i=1;i<=courtCount;i++){
-    const cid = String(i);
-    if(!state.courts[cid]) autoStartBestNextMatch(cid);
-  }
-}
-/* Hoàn tác 1 trận VỪA được tự động xếp (trong cửa sổ hoàn tác của showUndoToast(), 10 giây). Yêu
-   cầu: KHÔNG ghi history (trận chưa từng "kết thúc" — chỉ là xếp nhầm), KHÔNG tăng gamesPlayed,
-   KHÔNG đổi PPR (cả 3 điều này đúng nghiễm nhiên vì finishMatch()/applyFinishMatchLocally() chưa
-   bao giờ được gọi cho trận này — huỷ ở đây chỉ là xoá 1 court mới tạo, không đụng tới bất kỳ logic
-   "kết thúc trận" nào). Suppress đúng combo này trong lần auto-suggest kế tiếp để tránh Picpoc lập
-   tức chọn lại đúng 4 người đó. */
-function undoAutoStart(courtId, matchId){
-  const m = state.courts[courtId];
-  if(!m || m.matchId !== matchId || m.status !== 'playing'){ showToast('Trận đã thay đổi — không thể hoàn tác.'); return; }
-  const allIds = [...m.team1, ...m.team2];
-  suppressComboForAutoMatch(allIds);
-  allIds.forEach(id=>{
-    const p = playerById(id);
-    if(p){ p.status = 'waiting'; markEntityDirty('players', id); } // waitSince KHÔNG bị đổi bởi createReadyGroup()/sendReadyGroupToCourt() nên tự động giữ đúng fairness/wait time cũ, không cần khôi phục thủ công
-  });
-  if(m.sourceType === 'REQUESTED_FOUR' && m.sourceId){
-    const req = (state.socialRequestedFours||[]).find(r=>r.id===m.sourceId);
-    if(req && req.status === 'PLAYING'){ req.status = 'WAITING'; req.courtId = null; markEntityDirty('socialRequestedFours', req.id); }
-  }
-  delete state.courts[courtId]; // dùng đúng pattern dọn court cục bộ giống applyFinishMatchLocally()/rollbackSendToCourtConflict() — lưới an toàn diffAndFlushEntities() sẽ tự dọn remote
-  logOverride('auto_match_undone', 'Hoàn tác tự động ghép sân ' + courtId + ' (matchId ' + matchId + ')', 'court', courtId);
-  saveState();
-  renderLiveTab();
-  showToast('✓ Đã hoàn tác — sân ' + courtId + ' trống trở lại.');
-}
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa hẳn engine tự động xếp sân của SMART SOCIAL:
+   __autoStartSuppressedCombos/isComboSuppressedForAutoMatch()/suppressComboForAutoMatch()/
+   pickBestFourForAutoMatch()/isPlayerStillValidForCourtCommit()/autoStartBestNextMatch()/
+   autoFillAllEmptyCourtsAndStart()/undoAutoStart(). REQUESTED_FOUR ("4 người muốn đánh cùng") KHÔNG
+   bị ảnh hưởng — activateRequestedFourToCourt() (thao tác thủ công của Staff) là con đường HOÀN TOÀN
+   ĐỘC LẬP, không đi qua các hàm vừa xóa (xem comment tại applyFinishMatchLocally/requestedFoursWaitingCard).
+   Chi tiết đầy đủ ở CHANGELOG đầu file. */
 </script>
 <script>
 /* ================= TABS NAV ================= */
@@ -17866,14 +17607,9 @@ function getBookingWarningForCourt(courtId, now){
 function canStartSocialMatchOnCourt(courtId, now){
   return !getBookingWarningForCourt(courtId, now);
 }
-function forceMatchDespiteBooking(courtId){
-  if(!requirePermission(PERMISSION.BOOKING_FORCE_OVERRIDE)) return; // §37 — ghep du booking la thao tac nhay cam, ADMIN only
-  const warn = getBookingWarningForCourt(courtId, new Date());
-  const label = warn ? (fmtHourLabel(warn.booking.startTime) + ' — còn ' + warn.minutesUntil + ' phút') : '';
-  if(!confirm('Sân ' + courtId + ' có booking lúc ' + (warn ? fmtHourLabel(warn.booking.startTime) : '') + '. Bạn vẫn muốn ghép trận Social?')) return;
-  logOverride('force_match_despite_booking', 'Ghép Social sân ' + courtId + ' dù có booking sắp tới (' + label + ')', 'court', courtId);
-  openMatchOptionsModal(courtId);
-}
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa forceMatchDespiteBooking() (nút "Ghép dù" chỉ hiện khi SMART
+   SOCIAL, gọi openMatchOptionsModal() đã xóa). TỰ CHƠI dùng "Xếp thủ công dù" (openManualStartMatchModal)
+   — xem renderCourts(), không đổi. */
 
 /* §35 — GOI LAI (nut 🔊) tren the san "ĐANG CHƠI": tao 1 announcement CALL_TO_COURT MOI cho dung
    tran/san hien tai (khong sua ban ghi PLAYED cu — §35 "Không sửa status PLAYED cũ. Tạo operation mới"). */
@@ -17888,7 +17624,6 @@ function renderCourts(){
   const grid = document.getElementById('courtsGrid');
   grid.innerHTML = '';
   const courtCount = state.settings.courtCount || 4;
-  const isSmartSocialMode = (state.settings.socialMode||'SELF_PLAY') === 'SMART_SOCIAL'; // §SOCIALMODE2026/§13/§15
   for(let i=1;i<=courtCount;i++){
     const courtId = String(i);
     const match = state.courts[courtId];
@@ -17959,19 +17694,14 @@ function renderCourts(){
           </div>
           <div class="no-print" style="display:flex; gap:6px; flex-wrap:wrap;">
             <button class="small" onclick="openBookingDetailModal('${warn.booking.id}')">Xem booking</button>
-            ${isSmartSocialMode
-              ? `<button class="small secondary" data-require-permission="BOOKING_FORCE_OVERRIDE" onclick="forceMatchDespiteBooking('${courtId}')">Ghép dù</button>`
-              : `<button class="small secondary" data-require-permission="BOOKING_FORCE_OVERRIDE" onclick="openManualStartMatchModal('${courtId}')">Xếp thủ công dù</button>`}
+            <button class="small secondary" data-require-permission="BOOKING_FORCE_OVERRIDE" onclick="openManualStartMatchModal('${courtId}')">Xếp thủ công dù</button>
           </div>
         `;
       } else {
         const nextBkHtml = nextBk ? `<div class="court-next-booking">Booking tiếp theo: ${fmtHourLabel(nextBk.startTime)} — ${nextBk.customerName}</div>` : '';
-        // §SOCIALMODE2026/§15 — SELF_PLAY: KHONG dua nut "Ghép ngay" (dung Smart Matchmaking engine) —
-        // thay bang "Xếp thủ công" (openManualStartMatchModal, Staff tu chon dung 4 nguoi, KHONG co
-        // de xuat/tu dong nao). SMART_SOCIAL: giu nguyen "Ghép ngay" nhu truoc.
-        const ctaBtn = isSmartSocialMode
-          ? `<button class="small" onclick="openMatchOptionsModal('${courtId}')">Ghép ngay</button>`
-          : `<button class="small" onclick="openManualStartMatchModal('${courtId}')">Xếp thủ công</button>`;
+        // §REMOVE-SMARTSOCIAL-2026 — TỰ CHƠI là chế độ duy nhất còn lại: luôn dùng "Xếp thủ công"
+        // (openManualStartMatchModal, Staff tự chọn đúng 4 người, không đề xuất/tự động gì).
+        const ctaBtn = `<button class="small" onclick="openManualStartMatchModal('${courtId}')">Xếp thủ công</button>`;
         box.innerHTML = `
           <div><div class="court-title">SÂN ${i} <span class="pill-status pill-out">TRỐNG</span></div>
           <div class="empty-hint">Sân trống</div>${nextBkHtml}</div>
@@ -18070,58 +17800,9 @@ function cancelReadyGroup(groupId){
   renderLiveTab();
 }
 
-function waitClass(min){ return min>=15?'wait-danger':(min>=10?'wait-warn':'wait-normal'); }
-
-/* §FIX-QUEUE-1 — user gui spec chi ro ROOT CAUSE tai day: filter cu "p.status!=='checked_out'" la
-   BLACKLIST chi loai 1 status duy nhat, nen 'paid_and_left' (player DA thanh toan xong qua markBillPaid())
-   van "lot" vao Hang cho — hien waitSince tu rat lau (hang chuc nghin phut cho vo ly, vi waitSince
-   khong con duoc cap nhat sau khi roi lifecycle) va status "?" (statusMap khong co entry rieng cho
-   'paid_and_left'). FIX: doi sang ALLOWLIST qua QUEUE_VISIBLE_STATUSES (dinh nghia gan
-   SESSION_ENDED_STATUSES, dung chung voi isPlayerQueueVisible()) — CHI 4 status waiting/ready/playing/
-   not_ready duoc coi la "con trong Hang cho". Moi status khac (checked_out, paid_and_left,
-   waiting_payment, away, hoac bat ky status la/legacy nao) TU DONG bi loai, KHONG can liet ke tung cai
-   can loai nhu blacklist cu — an toan hon cho tuong lai neu co status moi phat sinh ma chua kip cap
-   nhat filter. */
-function renderQueueTable(){
-  const tbody = document.getElementById('queueTableBody');
-  tbody.innerHTML = '';
-  const now = Date.now();
-  // §SOCIALMODEV2-2026 — DA BO khai niem "tham gia Social" ca nhan: sân chi con 2 trang thai TOAN
-  // CUC. Bang nay chi duoc render/hien khi socialMode==='SMART_SOCIAL' (xem noi goi renderQueueTable()),
-  // nen o day KHONG can loc them theo socialParticipation nua — TAT CA nguoi dang o hang cho hop le
-  // (QUEUE_VISIBLE_STATUSES qua isPlayerQueueVisible()) deu la ung vien ghep tran.
-  const visible = state.players.filter(isPlayerQueueVisible).slice().sort((a,b)=>{
-    const order = {waiting:0, ready:1, playing:2, not_ready:0};
-    return (order[a.status]??3) - (order[b.status]??3) || (a.waitSince||0)-(b.waitSince||0);
-  });
-  visible.forEach((p,idx)=>{
-    const waitMin = fmtWaitMin(now-(p.waitSince||now));
-    const statusMap = { waiting:['Đang chờ','pill-waiting'], ready:['Sẵn sàng','pill-ready'], playing:['Đang chơi','pill-playing'], not_ready:['Chưa sẵn sàng','pill-notready'] };
-    // §FIX-QUEUE-1 — fallback ['?','pill-out'] gio la BAT KHA THI trong dieu kien binh thuong (visible
-    // da loc qua QUEUE_VISIBLE_STATUSES nen p.status luon la 1 trong 4 key co san o statusMap) — GIU LAI
-    // chi de phong ngu du lieu loi cuc hiem (khong crash thay vi che het dong), khong con phai xu ly
-    // truong hop 'paid_and_left'/status la lot vao day nhu truoc nua.
-    const [label, cls] = statusMap[p.status] || ['?','pill-out'];
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${idx+1}</td>
-      <td><a href="#" onclick="openPlayerQuickActions('${p.id}'); return false;" style="color:var(--primary-dark); font-weight:700; text-decoration:none;">${p.name}</a>${p.restOneRound?' <span class="muted">(nghỉ 1 lượt)</span>':''}${playerRequestedFourTagHtml(p.id)}${playerGroupTagHtml(p.id)}</td>
-      <td class="${waitClass(waitMin)}">${p.status==='playing'?'-':waitMin+"'"}</td>
-      <td>${p.gamesPlayed||0}</td>
-      <td><span class="badge ${levelBadgeClass(getPlayerPpr(p))}">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span></td>
-      <td><span class="pill-status ${cls}">${label}</span></td>
-      <td>
-        ${p.status==='waiting' ? `<button class="small secondary" onclick="toggleRestOneRound('${p.id}')">${p.restOneRound?'Hủy nghỉ':'Nghỉ 1 lượt'}</button>` : ''}
-        ${p.status==='ready' ? `<button class="small secondary" onclick="markNotReady('${p.id}')">Chưa sẵn sàng</button>` : ''}
-        ${p.status==='not_ready' ? `<button class="small" onclick="markReadyAgain('${p.id}')">Đã sẵn sàng</button>` : ''}
-        ${p.status!=='playing' ? `<button class="small danger" onclick="endPlaying('${p.id}')">Kết thúc chơi</button>` : ''}
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
-  const countEl = document.getElementById('waitingQueueCount');
-  if(countEl) countEl.textContent = visible.length || '';
-}
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa waitClass()/renderQueueTable() (render bảng "Hàng chờ"
+   #queueTableBody/#waitingQueueCount — chỉ hiện khi SMART SOCIAL, card #waitingQueueCard trong HTML
+   đã xóa ở LIVE tab). Đã xóa call site renderLiveTab() tương ứng. */
 
 /* §FIX-ENDPLAYING-LISTENEROVERWRITE — toggleRestOneRound/markNotReady/markReadyAgain/markWaitingForPayment/
    markTempAway/returnFromAway deu doi p.status nhung TRUOC DAY khong goi markEntityDirty('players', id) —
@@ -18674,58 +18355,19 @@ function renderLiveTab(){
   renderCourts();
   renderRequestedFoursWaitingList(); // §SOCIAL4-23/24
   renderReadyQueue();
-  renderQueueTable();
   renderHistory();
-  if(typeof applySocialModeUI === 'function') applySocialModeUI(); // §SOCIALMODE2026 — sau cung, khong bi cac render() tren de len
   document.body.classList.toggle('tv-mode', localUi.tvMode);
   document.documentElement.classList.toggle('tv-mode', localUi.tvMode); // §FIX-TV-1 — chan scroll o ca <html> khi TV mode
   document.body.classList.toggle('tv-disconnected', localUi.tvMode && !isOnline); // §PROD-42
 }
 </script>
 <script>
-/* ================= MODAL: GHÉP NGAY (chọn 1 trong 3 phương án) ================= */
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa openMatchOptionsModal()/pickMatchOption() (modal "GHÉP NGAY" —
+   chọn 1 trong 3 phương án do engine SMART SOCIAL đề xuất, dùng suggestMatchOptions()/getTeamPprAvg()/
+   calculateMatchQuality()/computeGroupAffinityBonus()). TỰ CHƠI dùng openManualStartMatchModal() (Staff
+   tự chọn tay 4 người) — hoàn toàn độc lập, không đổi. modalTargetCourt vẫn giữ (dùng chung với
+   openManualStartMatchModal()). */
 let modalTargetCourt = null;
-function openMatchOptionsModal(courtId){
-  modalTargetCourt = courtId;
-  const options = suggestMatchOptions();
-  const box = document.getElementById('matchModalContent');
-  if(!options.length){
-    box.innerHTML = `<h2>Ghép sân ${courtId}</h2><p class="muted">Không đủ người đang chờ để ghép trận (cần tối thiểu 4 người).</p>
-      <button class="secondary" onclick="closeModal()">Đóng</button>`;
-  } else {
-    const labels = ['ĐỀ XUẤT TỐT NHẤT','Phương án B','Phương án C'];
-    box.innerHTML = `<h2>Ghép sân ${courtId}</h2>` + options.map((opt, i)=>{
-      const t1 = opt.team1.map(p=>p.name).join(' & ');
-      const t2 = opt.team2.map(p=>p.name).join(' & ');
-      const avg1 = getTeamPprAvg(opt.team1[0], opt.team1[1]).toFixed(2);
-      const avg2 = getTeamPprAvg(opt.team2[0], opt.team2[1]).toFixed(2);
-      const q = opt.quality || calculateMatchQuality(getTeamPprAvg(opt.team1[0],opt.team1[1]), getTeamPprAvg(opt.team2[0],opt.team2[1])); // §CA
-      return `<div class="option-card" onclick="pickMatchOption(${i})" id="opt-${i}">
-        <b>${labels[i]||('Phương án '+(i+1))}</b> <span class="muted" style="font-size:.78rem;">· Độ cân: ${q.label} (${q.score})</span>
-        <div class="team-line">${t1} <span class="muted">(PPR TB ${avg1})</span></div>
-        <div class="vs">vs</div>
-        <div class="team-line">${t2} <span class="muted">(PPR TB ${avg2})</span></div>
-      </div>`;
-    }).join('') + `<button class="secondary" onclick="closeModal()">Hủy</button>`;
-    window._matchOptions = options;
-  }
-  document.getElementById('matchModal').classList.add('show');
-}
-function pickMatchOption(i){
-  const opt = window._matchOptions[i];
-  const group = createReadyGroup(modalTargetCourt, opt.team1, opt.team2);
-  // §SOCIAL4-34 — chi log group_match_preferred KHI THAT SU co bonus nhom dang ke (>=2 nguoi cung
-  // nhom) trong 4 nguoi VUA duoc chon — tranh spam log moi lan ghep (khong phai moi lan render).
-  const bonus = computeGroupAffinityBonus(opt.four || [...opt.team1, ...opt.team2]);
-  if(bonus > 0){
-    const allIds = [...opt.team1, ...opt.team2].map(p=>p.id);
-    const g = getPlayerSocialGroup(allIds.find(id=>getPlayerSocialGroup(id)));
-    logOverride('group_match_preferred', 'Ghép sân ' + modalTargetCourt + ' ưu tiên cùng nhóm' + (g?' "'+g.name+'"':'') + ' (bonus ' + bonus.toFixed(2) + ')', 'court', modalTargetCourt);
-  }
-  closeModal();
-  renderLiveTab();
-  showToast('Đã tạo nhóm sẵn sàng cho sân ' + modalTargetCourt + ' — bấm VÀO SÂN khi sân trống thật.');
-}
 function closeModal(){
   document.getElementById('matchModal').classList.remove('show');
   window._matchOptions = null;
@@ -19342,43 +18984,10 @@ function removePlayerFromOperationalQueues(playerId, reason){
   });
 }
 
-/* §SOCIALMODE2026 — HANH DONG DUY NHAT bat/tat p.socialParticipation — DOC LAP hoan toan voi check-in/
-   visit/bill (dung FINAL BUSINESS INVARIANT cua yeu cau). Nut tren player card ("THAM GIA SOCIAL"/
-   "THAM GIA SMART SOCIAL"/"RỜI SOCIAL") deu goi thang 2 ham nay, khong tu viet logic rieng noi khac. */
-function joinSocialParticipation(playerId){
-  const p = playerById(playerId);
-  if(!p) return;
-  if(p.status !== 'waiting'){ showToast('Chỉ có thể tham gia Social khi đang ở trạng thái "Đang chờ".'); return; }
-  if(p.socialParticipation === true) return;
-  p.socialParticipation = true;
-  markEntityDirty('players', p.id);
-  logOverride('social_participation_join', playerName(p.id) + ' tham gia Smart Social.', 'player', p.id);
-  saveState();
-  // §SOCIALMODE2026 — day chinh la diem "opt-in" thuc su (thay vi check-in) kich hoat re-evaluate; neu
-  // dang o mode SELF_PLAY, autoFillAllEmptyCourtsAndStart()/evaluateAllPendingRequestedFours() se tu
-  // no-op an toan (xem guard socialMode o dau moi ham), khong can kiem tra mode rieng o day.
-  if(typeof evaluateAllPendingRequestedFours === 'function') evaluateAllPendingRequestedFours();
-  if(typeof autoFillAllEmptyCourtsAndStart === 'function') autoFillAllEmptyCourtsAndStart();
-  renderLiveTab();
-  if(typeof renderPresenceTab === 'function' && document.getElementById('tab-presence') && document.getElementById('tab-presence').classList.contains('active')) renderPresenceTab();
-  showToast('✅ Đã thêm ' + p.name + ' vào Smart Social.');
-}
-function leaveSocialParticipation(playerId){
-  const p = playerById(playerId);
-  if(!p) return;
-  if(p.socialParticipation !== true) return;
-  if(p.status === 'playing' || p.status === 'ready'){ showToast('Không thể rời Social khi đang trong nhóm/đang chơi — chờ trận kết thúc rồi thử lại.'); return; }
-  p.socialParticipation = false;
-  markEntityDirty('players', p.id);
-  // §12 — RỜI SOCIAL chi remove khoi matchmaking (queue/ready group/requested-four reservation),
-  // KHONG checkout, KHONG dong visit, KHONG dong bill — dung removePlayerFromOperationalQueues() co san.
-  if(typeof removePlayerFromOperationalQueues === 'function') removePlayerFromOperationalQueues(p.id, 'LEFT_SOCIAL');
-  logOverride('social_participation_leave', playerName(p.id) + ' rời khỏi Smart Social (vẫn ở sân, visit không đổi).', 'player', p.id);
-  saveState();
-  renderLiveTab();
-  if(typeof renderPresenceTab === 'function' && document.getElementById('tab-presence') && document.getElementById('tab-presence').classList.contains('active')) renderPresenceTab();
-  showToast('Đã đưa ' + p.name + ' ra khỏi Smart Social — vẫn ở sân.');
-}
+/* §REMOVE-SMARTSOCIAL-2026 — đã xóa joinSocialParticipation()/leaveSocialParticipation() (nút
+   THAM GIA SOCIAL/RỜI SOCIAL trên player card đã bị gỡ từ trước ở §SOCIALMODEV2-2026, 2 hàm này đã
+   orphan — không còn UI nào gọi tới — trước khi bị xóa hẳn ở đây). p.socialParticipation giữ nguyên
+   trong data model (mặc định false, tương thích ngược dữ liệu cũ) nhưng không còn ý nghĩa gate gì nữa. */
 
 /* SERVICE DUY NHAT de mo/mo-lai 1 player session — dung chung cho checkInPlayer() (nguoi moi
    HOAC nguoi cu bam check-in lai qua form ten) va quickReCheckIn() (nut "Check-in lai" tren
@@ -21090,77 +20699,13 @@ function savePricingSettings(){
 }
 
 /* ---- SOCIAL & GHEP TRAN ---- */
-/* §SOCIALMODE2026 — doi mode van hanh ngay tren LIVE. Staff (khong chi Admin) duoc phep chon thu cong
-   (yeu cau §7 "Staff chọn thủ công") — KHONG gate qua requirePermission() nhu cac setting Admin-only
-   khac. Chi luu 1 field duy nhat vao /settings (dung DataServiceSettings qua saveState(), y het pattern
-   autoStartNextMatch) — attachSettingsListener() da tu deep-merge + gọi renderLiveTab() cho MOI thiet bi
-   khac ngay khi co thay doi tren /settings, KHONG can them listener/reload rieng (§24 multi-device). */
-function setSocialMode(mode){
-  if(mode !== 'SELF_PLAY' && mode !== 'SMART_SOCIAL') return;
-  const old = state.settings.socialMode || 'SELF_PLAY';
-  if(old === mode){ return; } // khong log/ghi thua neu bam lai dung mode dang active
-  state.settings.socialMode = mode;
-  const oldLabel = old === 'SELF_PLAY' ? 'Tự chơi' : 'Smart Social';
-  const newLabel = mode === 'SELF_PLAY' ? 'Tự chơi' : 'Smart Social';
-  // §23 — MODE CHANGE AUDIT: from/to/actor/timestamp (actor+timestamp da co san trong logOverride()).
-  logOverride('social_mode_changed', 'Chế độ vận hành: ' + oldLabel + ' → ' + newLabel, 'settings', 'socialMode');
-  saveState();
-  // §SOCIALMODEV2-2026 — DA BO khai niem "tham gia Social" ca nhan: khi chuyen sang SMART_SOCIAL, TAT
-  // CA nguoi dang 'waiting' hop le deu la ung vien ghep tran NGAY (dung yeu cau moi "tất cả mọi người
-  // phải theo chế độ sắp xếp của smart social") — goi autoFillAllEmptyCourtsAndStart() de xet ghep ngay
-  // cho cac san dang trong, KHONG can Staff bam THAM GIA tung nguoi nua.
-  if(mode === 'SMART_SOCIAL' && typeof autoFillAllEmptyCourtsAndStart === 'function') autoFillAllEmptyCourtsAndStart();
-  renderLiveTab();
-  showToast(mode === 'SELF_PLAY' ? '🎮 Đã chuyển sang chế độ TỰ CHƠI' : '🤝 Đã chuyển sang chế độ SMART SOCIAL');
-}
-/* Cap nhat switch active + an/hien cac khoi UI chi danh cho SMART_SOCIAL (Chờ TB / khoi gop
-   "TÌNH TRẠNG SOCIAL" [Mức tải + Queue Health, §RESTRUCTURE2026-WS3 muc 98] / Hàng chờ — §13/§14).
-   KHONG dong requestedFoursWaitingCard khi isSmart=true (co logic hien/an rieng theo du lieu
-   trong renderRequestedFoursWaitingList(), khong duoc de len display dung da tinh o do). */
-function applySocialModeUI(){
-  const isSmart = (state.settings.socialMode||'SELF_PLAY') === 'SMART_SOCIAL';
-  const selfBtn = document.getElementById('smsSelfPlayBtn');
-  const smartBtn = document.getElementById('smsSmartSocialBtn');
-  if(selfBtn) selfBtn.classList.toggle('active', !isSmart);
-  if(smartBtn) smartBtn.classList.toggle('active', isSmart);
-  ['statAvgWaitBox','statTrafficBox','waitingQueueCard'].forEach(id=>{
-    const el = document.getElementById(id);
-    if(el) el.style.display = isSmart ? '' : 'none';
-  });
-  const readyCard = document.getElementById('readyQueueCard');
-  if(readyCard) readyCard.style.gridColumn = isSmart ? '' : '1 / -1';
-  // §16 — "4 NGƯỜI MUỐN ĐÁNH CÙNG" (requestedFoursWaitingCard) va socialQuickActions van GIU trong CA
-  // 2 mode: SMART_SOCIAL dung nhu truoc (uu tien matchmaking), SELF_PLAY dung nhu "tạo nhóm 4 người" de
-  // Staff tu tay đưa vào sân (activateRequestedFourToCourt van la thao tac THU CONG, khong bi chan boi
-  // guard autoStartBestNextMatch/autoFillAllEmptyCourtsAndStart) — KHONG an 2 khoi nay theo mode.
-}
-function saveMatchmakingSettings(){
-  if(!requirePermission(PERMISSION.WEIGHTS_EDIT)) return;
-  const oldW = JSON.stringify(state.settings.priorityWeights);
-  const oldTraffic = JSON.stringify(state.settings.trafficRatio);
-  state.settings.priorityWeights = {
-    wait: parseFloat(document.getElementById('wWait').value)||0,
-    behind: parseFloat(document.getElementById('wBehind').value)||0,
-    satOut: parseFloat(document.getElementById('wSatOut').value)||0,
-    justPlayedPenalty: parseFloat(document.getElementById('wJustPlayed').value)||0,
-    notReadyPenalty: parseFloat(document.getElementById('wNotReady').value)||0
-  };
-  state.settings.trafficRatio = {
-    low: parseFloat(document.getElementById('trafficLowInput').value)||state.settings.trafficRatio.low,
-    peak: parseFloat(document.getElementById('trafficPeakInput').value)||state.settings.trafficRatio.peak
-  };
-  const oldGroupW = state.settings.groupPreferenceWeight; // §SOCIAL4-21
-  state.settings.groupPreferenceWeight = Math.max(0, parseFloat(document.getElementById('wGroupPreference').value)||0);
-  const oldAutoStart = state.settings.autoStartNextMatch; // §AUTOMATCH-14
-  state.settings.autoStartNextMatch = !!document.getElementById('autoStartNextMatchToggle').checked;
-  logOverride('settings_update', 'Trọng số/traffic ghép sân: ' + oldW + ',' + oldTraffic + ' → ' + JSON.stringify(state.settings.priorityWeights) + ',' + JSON.stringify(state.settings.trafficRatio) + '; Ưu tiên cùng nhóm: ' + oldGroupW + ' → ' + state.settings.groupPreferenceWeight + '; Tự động ghép trận: ' + oldAutoStart + ' → ' + state.settings.autoStartNextMatch, 'settings', 'matchmaking');
-  saveState();
-  clearSettingsDirty('matchmaking');
-  showToast('Đã lưu cài đặt ghép trận');
-  // §AUTOMATCH-14 — vua BAT lai tinh nang: thu auto-fill ngay cac san dang trong (khong bat Staff
-  // phai tu bam Ghep ngay de "kich hoat" lai sau khi Admin vua On).
-  if(state.settings.autoStartNextMatch && typeof autoFillAllEmptyCourtsAndStart === 'function') autoFillAllEmptyCourtsAndStart();
-}
+/* §REMOVE-SMARTSOCIAL-2026 — Admin yêu cầu bỏ hẳn tính năng ghép trận tự động (SMART SOCIAL), chỉ giữ
+   TỰ CHƠI. Đã xóa: setSocialMode()/applySocialModeUI() (chuyển đổi + cập nhật UI 2 chế độ),
+   saveMatchmakingSettings() (lưu priorityWeights/trafficRatio/groupPreferenceWeight/autoStartNextMatch
+   — chỉ phục vụ engine buildFourOptions()/pickBestFourForAutoMatch(), nay cũng đã xóa, xem bên dưới).
+   state.settings.socialMode giữ nguyên mặc định 'SELF_PLAY' trong data model (không xóa field, tránh
+   rủi ro migrate dữ liệu cũ) nhưng từ nay không còn cách nào đổi khỏi 'SELF_PLAY' được nữa — app vĩnh
+   viễn vận hành theo TỰ CHƠI. Chi tiết đầy đủ ở CHANGELOG đầu file. */
 function renderLevelMapBox(){
   const box = document.getElementById('levelMapBox');
   const canEdit = can(PERMISSION.LEVEL_MAP_EDIT);
@@ -39409,6 +38954,15 @@ function attachSettingsListener(){
     if(!val) return;
     isRemoteUpdate = true;
     state.settings = deepMerge(defaultState().settings, val);
+    /* §REMOVE-SMARTSOCIAL-2026 — migrate 1 chieu: neu du lieu cu tren server van con
+       socialMode:'SMART_SOCIAL' (vd tu truoc khi tinh nang nay bi xoa hoan toan — chinh la truong hop
+       cua club nay, dang o SMART_SOCIAL luc phat sinh bug "san ma" AUTO_MATCH), ep ve lai 'SELF_PLAY'
+       ngay khi phat hien va ghi lai — tranh con lai vai mieu ta UI "SMART_SOCIAL" khong nhat quan (vd
+       nhan "Cho TB" tren the nguoi choi) do khong con nut/duong nao doi duoc gia tri nay ve dung nua. */
+    if(state.settings.socialMode === 'SMART_SOCIAL'){
+      state.settings.socialMode = 'SELF_PLAY';
+      if(typeof saveState === 'function') saveState();
+    }
     /* §HOTFIX-QUOTA — xem giai thich o attachEntityListener; bat loi rieng va van phai reset
        isRemoteUpdate de khong khoa dong bo vinh vien. §HOTFIX-QUOTA3 — dung tryCacheStateLocally()
        dung chung (circuit-breaker). */
