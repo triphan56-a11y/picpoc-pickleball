@@ -2,6 +2,29 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.18 (2026-09-19) — §HOTFIX-BOOKINGBILL-WRONGBILL-2026. Admin báo: trong ĐẶT SÂN, bấm "THANH TOÁN"
+  cho 1 booking rõ ràng có giá 120.000đ và chưa thu tiền, nhưng modal Bill lại hiện "Chưa phát sinh khoản
+  nào." ROOT CAUSE (đọc code, không đoán): 2 nút "XEM BILL"/"THANH TOÁN" trong Chi tiết booking
+  (bookingBillActionsHtml()) gọi openBillModal(bill.playerId) — dù đã có sẵn đúng object `bill` (tra theo
+  b.billId) trong tay, lại KHÔNG truyền bill.id — buộc openBillModal() phải tự "đoán" lại bill qua
+  getOpenBillForPlayer(playerId)/getMostRelevantBillForPlayer(playerId) thay vì mở đúng bill đã biết chắc
+  chắn. Khách đặt sân dùng playerId giả dạng "book_..." (theo SĐT hoặc tên), có thể trùng với bill khác
+  (vd đặt nhiều sân cùng lúc, hoặc có bill rỗng khác cùng customerId) khiến hàm đoán sai/đoán hụt. Đây
+  đúng là loại lỗi mà chính comment gốc của openBillModal() đã cảnh báo từ trước ("PHẢI mở ĐÚNG bill của
+  dòng đó, KHÔNG được tự động lấy bill mới nhất/bill đang mở của player") nhưng chỗ gọi này lại bỏ sót,
+  chưa dùng tham số explicitBillId sẵn có. FIX: truyền thẳng bill.id qua explicitBillId ở cả 2 nút — mở
+  đúng bill đã biết, không đoán lại nữa; KHÔNG đổi logic openBillModal()/getOpenBillForPlayer() nào khác
+  (các chỗ gọi khác trong app không bị ảnh hưởng).
+  Đồng thời Admin yêu cầu thêm nút "Thêm nước" ngay trong Chi tiết booking để tính tiền tiện hơn. Vì
+  playerId của khách đặt sân là customerId GIẢ (không có bản ghi trong state.players), không thể tái
+  dùng thẳng openAddProductToBillModal()/addBillItem() hiện có (2 hàm này đều bắt buộc playerById(id)
+  thành công mới chạy) — viết riêng 1 cặp hàm tương đương: openAddProductToBookingBillModal()/
+  addProductToBookingBill() (danh sách sản phẩm + trừ kho + hoàn tác khi hết hàng giữa chừng, y hệt luồng
+  "+ SẢN PHẨM" cho người chơi thường) và addItemToBillById() — bản addBillItem() rút gọn nhận thẳng
+  billId thay vì playerId, GIỮ NGUYÊN cơ chế đồng bộ Firebase transaction APPEND-BY-ID an toàn (không tạo
+  cơ chế đồng bộ mới). Nút "➕ Thêm nước" hiện cạnh XEM BILL/THANH TOÁN khi bill còn đang mở. Đã kiểm tra:
+  script tag 14/9 khớp, Node syntax check 0 lỗi, không có hàm trùng tên.
+
   v1.44.17 (2026-09-19) — §HIDELIVE-2026. Admin yêu cầu: "bỏ tab live luôn đi". CÁCH LÀM (đã hỏi Admin
   chọn trước khi sửa, do lần xóa hẳn code SMART SOCIAL trước đó — v1.44.13 — từng làm sập app vì các hàm
   dùng chung bị xóa mà nơi khác vẫn gọi tới): Admin chọn "Ẩn khỏi menu" thay vì xóa hẳn code, vì tab LIVE
@@ -8621,7 +8644,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.17'; // §HIDELIVE-2026 — bỏ tab LIVE khỏi menu điều hướng (không xóa code), ĐANG Ở SÂN thành tab mặc định — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.18'; // §HOTFIX-BOOKINGBILL-WRONGBILL-2026 — sửa THANH TOÁN/XEM BILL ở Đặt sân mở nhầm/mở hụt bill + thêm nút "Thêm nước" — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -31954,16 +31977,120 @@ function openBookingDetailModal(bookingId){
 }
 
 /* §A.10 — action XEM BILL / THANH TOAN trong Booking Detail, an/hien theo trang thai bill
-   (chi hien khi booking da co bill that su, khong tao bill moi tu day). */
+   (chi hien khi booking da co bill that su, khong tao bill moi tu day).
+   §HOTFIX-BOOKINGBILL-WRONGBILL-2026 — Admin phản ánh: bấm "THANH TOÁN" cho 1 booking đã có giá
+   120.000đ, chưa thu tiền, nhưng modal Bill lại hiện "Chưa phát sinh khoản nào." TRƯỚC ĐÂY 2 nút này gọi
+   openBillModal(bill.playerId) — KHÔNG truyền bill.id — nên openBillModal() phải TỰ ĐOÁN lại bill qua
+   getOpenBillForPlayer(playerId)/getMostRelevantBillForPlayer(playerId) thay vì dùng đúng bill đã biết
+   sẵn ở đây (đúng loại lỗi mà chính comment gốc của openBillModal() đã cảnh báo: "PHẢI mở ĐÚNG bill của
+   dòng đó, KHÔNG được tự động lấy bill mới nhất/bill đang mở của player" — nhưng chỗ gọi này lại chưa áp
+   dụng). Khách đặt sân dùng 1 "customerId" giả (book_...) có thể trùng nhiều bill/nhiều booking cùng lúc,
+   khiến hàm đoán sai bill. FIX: truyền THẲNG bill.id đã có sẵn qua tham số explicitBillId — mở đúng bill
+   này, không đoán nữa. Đồng thời thêm nút "➕ Thêm nước" (yêu cầu Admin) để tính tiền nước/sản phẩm ngay
+   trong lúc thanh toán booking, không cần rời màn. */
 function bookingBillActionsHtml(b){
   if(!b.billId) return '';
   const bill = state.bills.find(x=>x.id===b.billId);
   if(!bill) return '';
-  let html = `<button class="secondary" onclick="closeModal(); openBillModal('${bill.playerId}')">🧾 XEM BILL</button>`;
+  let html = `<button class="secondary" onclick="closeModal(); openBillModal('${bill.playerId}', '${bill.id}')">🧾 XEM BILL</button>`;
   if(bill.status === 'open'){
-    html += `<button onclick="closeModal(); openBillModal('${bill.playerId}')">💳 THANH TOÁN</button>`;
+    html += `<button class="secondary" onclick="openAddProductToBookingBillModal('${b.id}')">➕ Thêm nước</button>`;
+    html += `<button onclick="closeModal(); openBillModal('${bill.playerId}', '${bill.id}')">💳 THANH TOÁN</button>`;
   }
   return html;
+}
+/* §HOTFIX-BOOKINGBILL-WRONGBILL-2026 — modal "Thêm nước" riêng cho khách ĐẶT SÂN, vì playerId của
+   booking là 1 "customerId" giả (book_...), KHÔNG có bản ghi trong state.players — nên KHÔNG dùng lại
+   được openAddProductToBillModal()/addBillItem() (cả 2 đều bắt buộc playerById(playerId) thành công mới
+   chạy, xem guard "if(!player) return null"). Viết riêng 1 cặp hàm nhỏ tương đương (cùng cách trừ kho +
+   đồng bộ Firebase transaction an toàn như addBillItem() gốc — xem addItemToBillById() ngay bên dưới),
+   không đụng gì tới luồng addBillItem()/openAddProductToBillModal() hiện có cho người chơi thường. */
+function openAddProductToBookingBillModal(bookingId){
+  const b = state.bookings.find(x=>x.id===bookingId);
+  if(!b || !b.billId) return;
+  const bill = state.bills.find(x=>x.id===b.billId);
+  if(!bill) return;
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm vào bill — ${escapeHtml(b.customerName||'')}</h2>
+    <input type="text" placeholder="Tìm sản phẩm..." oninput="renderAddProductToBookingBillGrid('${bookingId}', this.value)" style="margin-bottom:10px; width:100%;">
+    <div id="addProductToBookingBillGrid" style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow:auto;"></div>
+    <button class="secondary" style="width:100%; margin-top:10px;" onclick="closeModal(); openBillModal('${bill.playerId}','${bill.id}')">Xem Bill</button>
+    <button class="secondary" style="width:100%;" onclick="closeModal()">Đóng</button>
+  `;
+  document.getElementById('matchModal').classList.add('show');
+  renderAddProductToBookingBillGrid(bookingId, '');
+}
+function renderAddProductToBookingBillGrid(bookingId, q){
+  const grid = document.getElementById('addProductToBookingBillGrid');
+  if(!grid) return;
+  q = (q||'').trim().toLowerCase();
+  let list = state.products.filter(p=>p.active!==false);
+  if(q) list = list.filter(p=>(p.name||'').toLowerCase().includes(q));
+  if(!list.length){ grid.innerHTML = '<div class="muted" style="text-align:center; padding:16px;">Không tìm thấy sản phẩm.</div>'; return; }
+  grid.innerHTML = list.map(p=>{
+    const disabled = p.stock<=0;
+    return `<div class="bill-line" style="align-items:center;">
+      <span>${escapeHtml(p.name)} <span class="muted" style="font-size:.8rem;">(còn ${p.stock})</span></span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <b>${fmtVnd(p.price)}</b>
+        <button class="small" ${disabled?'disabled':''} onclick="addProductToBookingBill('${bookingId}','${p.id}')">${disabled?'HẾT':'+'}</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+function addProductToBookingBill(bookingId, productId){
+  const b = state.bookings.find(x=>x.id===bookingId);
+  if(!b || !b.billId) return;
+  const p = state.products.find(x=>x.id===productId);
+  if(!p) return;
+  if(p.stock <= 0){ showToast('Sản phẩm đã hết hàng'); return; }
+  const stockBefore = p.stock;
+  p.stock -= 1;
+  const logId = uid('inv');
+  state.inventoryLog.unshift({ id: logId, type:'bill_product_add', productId:p.id, name:p.name,
+    qtyChange:-1, stockBefore, stockAfter:p.stock, note:'Thêm vào bill (đặt sân) '+b.customerName, timestamp: Date.now() });
+  const bill = addItemToBillById(b.billId, { type:'product', label:p.name, unitPrice:p.price, amount:p.price, qty:1, meta:{ productId:p.id } });
+  const addedItemId = bill ? bill.items[bill.items.length-1].id : null;
+  saveState();
+  confirmStockDeductionsAtomic([{ productId: p.id, qty: 1, logId }], function rollbackAddProductToBookingBill(){
+    if(bill && addedItemId){
+      const bb = state.bills.find(x=>x.id===bill.id);
+      if(bb) bb.items = bb.items.filter(it=>it.id!==addedItemId);
+    }
+    const idx = state.inventoryLog.findIndex(l=>l.id===logId); if(idx>=0) state.inventoryLog.splice(idx,1);
+    saveState();
+    if(typeof renderBookingTab === 'function') renderBookingTab();
+    if(typeof renderProductsKho === 'function') renderProductsKho();
+    if(typeof renderMoneyTab === 'function') renderMoneyTab();
+    showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã hoàn tác.');
+  });
+  const searchInput = document.querySelector('#addProductToBookingBillGrid')?.previousElementSibling;
+  renderAddProductToBookingBillGrid(bookingId, searchInput && searchInput.tagName==='INPUT' ? searchInput.value : '');
+  showToast('Đã thêm ' + p.name);
+}
+/* §HOTFIX-BOOKINGBILL-WRONGBILL-2026 — bản rút gọn của addBillItem() (line ~13978), bỏ yêu cầu
+   playerById(playerId) vì khách đặt sân không có bản ghi player thật — nhận thẳng billId, giữ NGUYÊN
+   cơ chế đồng bộ Firebase transaction APPEND-BY-ID an toàn y hệt addBillItem() gốc (không tạo cơ chế
+   đồng bộ mới/khác). Dùng cho mọi trường hợp cần thêm 1 dòng vào bill nhưng KHÔNG có player thật gắn
+   với bill đó (hiện tại: chỉ booking, nhưng đặt tên chung để tái dùng được nếu phát sinh case tương tự). */
+function addItemToBillById(billId, item){
+  const bill = state.bills.find(x=>x.id===billId);
+  if(!bill) return null;
+  const newItem = Object.assign({ id: uid('bi'), timestamp: Date.now() }, item);
+  bill.items.push(newItem);
+  if(SYNC_ENABLED && dbRoot){
+    DataService.bills.transaction(bill.id, remoteBill=>{
+      if(remoteBill === null) return sanitizeForFirebase(bill);
+      remoteBill.items = remoteBill.items || [];
+      if(!remoteBill.items.some(it=>it && it.id===newItem.id)) remoteBill.items.push(sanitizeForFirebase(newItem));
+      return remoteBill;
+    }).then(result=>{
+      if(result && result.committed) markEntitySynced('bills', bill.id);
+      else console.error('[addItemToBillById] sync transaction not committed for bill', bill.id, '— se duoc luoi an toan debounce (diffAndFlushEntities) xu ly lai sau.');
+    }).catch(err=>{ console.error('[addItemToBillById] sync error', err); handleWriteError('bills','transaction',err); });
+  }
+  return bill;
 }
 
 function cancelBookingOccurrence(bookingId){
