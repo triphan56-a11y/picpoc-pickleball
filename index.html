@@ -2,6 +2,17 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.20 (2026-09-19) — §HOTFIX-ADDITEMBYID-UNDEFINEDITEMS-2026. Admin chạy script vá tay bill cũ của
+  "C Hòa" (theo hướng dẫn ở bản v1.44.19) thì bị crash Console: "Cannot read properties of undefined
+  (reading 'push')" ngay tại addItemToBillById(). ROOT CAUSE: bill cũ đó thật sự KHÔNG CÓ field "items"
+  (undefined, không phải mảng rỗng — đúng như dump Console trước đó đã cho thấy), trong khi
+  addItemToBillById() (hàm mới thêm ở v1.44.18) lại giả định items luôn là mảng sẵn có rồi gọi thẳng
+  `.push()` — không có guard như billTotal() đã làm từ trước ("(bill.items||[])"). FIX: thêm 1 dòng
+  `bill.items = bill.items || [];` trước khi push — để hàm này dùng an toàn được cho cả các bill dữ liệu
+  cũ bị thiếu field items, không chỉ bill tạo mới bình thường. KHÔNG đổi hành vi với bill bình thường (đã
+  có items thì giữ nguyên mảng cũ). Đã kiểm tra: script tag 14/9 khớp, Node syntax check 0 lỗi. Sau bản
+  này, Admin chạy LẠI đúng script vá tay đã được hướng dẫn cho bill của C Hòa sẽ không còn crash nữa.
+
   v1.44.19 (2026-09-19) — §HOTFIX-BOOKINGITEM-SYNCRACE-2026. Admin báo TIẾP sau bản v1.44.18 (đã sửa mở
   đúng bill qua explicitBillId): booking "C Hòa" vẫn hiện Bill 0đ. Điều tra qua Console (dump trực tiếp
   state.bills, KHÔNG đoán) xác nhận bill_mu8er1c1bm72k của C Hòa tồn tại thật, đã đồng bộ lên Firebase,
@@ -8664,7 +8675,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.19'; // §HOTFIX-BOOKINGITEM-SYNCRACE-2026 — sửa item bill booking (Thuê sân) có thể bị mất khi đồng bộ Firebase lúc tạo booking — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.20'; // §HOTFIX-ADDITEMBYID-UNDEFINEDITEMS-2026 — addItemToBillById() không còn crash với bill cũ thiếu field items — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -32114,6 +32125,14 @@ function addProductToBookingBill(bookingId, productId){
 function addItemToBillById(billId, item){
   const bill = state.bills.find(x=>x.id===billId);
   if(!bill) return null;
+  // §HOTFIX-ADDITEMBYID-UNDEFINEDITEMS-2026 — Admin chạy script vá bill cũ của "C Hòa" (bill mất field
+  // "items" hoàn toàn — xem §HOTFIX-BOOKINGITEM-SYNCRACE-2026 ở CHANGENLOG) bị crash "Cannot read
+  // properties of undefined (reading 'push')" ngay tại dòng .push() dưới đây — vì bill.items lúc đó THẬT
+  // SỰ là undefined (không phải mảng rỗng), không phải giả định sai. billTotal() đã tự guard kiểu này từ
+  // trước ("(bill.items||[])"), nhưng addItemToBillById() (hàm mới thêm) lại chưa — bổ sung guard tương
+  // tự ở đây để hàm này dùng an toàn được cho CẢ những bill dữ liệu cũ bị thiếu field items, không chỉ
+  // bill mới tạo bình thường.
+  bill.items = bill.items || [];
   const newItem = Object.assign({ id: uid('bi'), timestamp: Date.now() }, item);
   bill.items.push(newItem);
   if(SYNC_ENABLED && dbRoot){
