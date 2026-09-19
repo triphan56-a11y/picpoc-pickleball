@@ -2,6 +2,22 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.12 (2026-09-19) — §FIX-FINISHMATCH-GHOST-COURT-REFEQ. Admin báo: Sân 1/2/3 hiện "ĐANG CHƠI" với
+  1 trận từ ~11 ngày trước, bấm nút "Kết thúc" rất nhiều lần vẫn không hết, tải lại trang trận vẫn "sống
+  lại" y hệt. Gốc rễ: logic dọn "sân ma" đã có sẵn trong finishMatch() (§FIX-FINISHMATCH-GHOST-COURT,
+  bản trước) dùng phép so sánh THAM CHIẾU OBJECT `state.courts[courtId] === m` để quyết định có thực sự
+  xóa sân cục bộ hay không sau khi transaction lên Firebase bị hủy. Nhưng listener đồng bộ realtime của
+  node 'courts' gán lại TOÀN BỘ `state.courts` thành object hoàn toàn mới mỗi khi CÓ BẤT KỲ thay đổi nào
+  ở /courts trên server (kể cả 1 sân khác hoàn toàn không liên quan vừa bắt đầu/kết thúc trận) — trong
+  lúc chờ transaction() bất đồng bộ phản hồi, chỉ cần listener bắn 1 lần (rất dễ xảy ra ở club đông sân
+  chơi liên tục) là state.courts[courtId] trở thành object MỚI (nội dung có thể giống hệt) → so sánh ===
+  LUÔN SAI → code luôn rơi vào nhánh chỉ hiện toast suông, KHÔNG BAO GIỜ thực sự xóa sân "ma" khỏi máy →
+  đúng 100% triệu chứng Admin gặp (bấm "Kết thúc" bao nhiêu lần cũng vô tác dụng). FIX: thay so sánh
+  THAM CHIẾU OBJECT bằng so sánh THEO matchId (chỉ cần sân cục bộ hiện tại vẫn đang là ĐÚNG trận ta vừa
+  cố kết thúc, bất kể object reference có đổi hay không) — vẫn giữ nguyên mục đích an toàn ban đầu (không
+  đụng vào nếu 1 trận THẬT SỰ MỚI vừa được gán cho sân này trong lúc chờ). Đã sửa xong; Admin cần bấm lại
+  "Kết thúc" 1 lần cho Sân 1/2/3 để dọn sạch 3 trận "ma" hiện tại — nếu vẫn còn hiện lại, báo lại ngay.
+
   v1.44.11 (2026-09-19) — §FIX-ADJUSTSTOCK-SILENT-OFFLINE-LOSS. Admin yêu cầu rà thêm các sản phẩm khác
   ngoài Nước sâm (§FIX-STOCKLOG-STALE-READ, v1.44.10) — quét lịch sử toàn bộ 40+ sản phẩm phát hiện 10
   sản phẩm có nghi vấn lệch. 9/10 sản phẩm (Aquafina, Nước suối TH, Cuốn cán Bumbee, Aquarius, Dừa xiêm,
@@ -8544,7 +8560,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.11'; // §FIX-ADJUSTSTOCK-SILENT-OFFLINE-LOSS — chặn "Điều chỉnh tồn" khi offline để tránh ghi mất âm thầm — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.12'; // §FIX-FINISHMATCH-GHOST-COURT-REFEQ — sửa lỗi "sân ma" không xóa được do so sánh tham chiếu object sai — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -16135,7 +16151,25 @@ function finishMatch(courtId, matchResult){
       // ghost nay khoi local NGAY TAI DAY (KHONG goi applyFinishMatchLocally — khong tao history/gamesPlayed/
       // PPR gia cho 1 tran ma server chua bao gio xac nhan la co that). Chi dong vao neu chua co code
       // nao khac (vd 1 tran moi vua duoc gan) ghi de state.courts[courtId] ngay giua luc cho transaction.
-      if(state.courts[courtId] === m){
+      //
+      // §FIX-FINISHMATCH-GHOST-COURT-REFEQ (2026-09-19): Admin bao tiep: bam "Ket thuc" RAT NHIEU LAN
+      // (nhieu ngay lien tuc) van khong an tac dung, san "ma" van hien lai y het sau khi tai lai trang.
+      // NGUYEN NHAN GOC (moi, khac voi ban vien cua fix tren): dieu kien `state.courts[courtId] === m`
+      // la SO SANH THAM CHIEU OBJECT. Nhung attachEntityListener() (lang nghe realtime cho node
+      // 'courts') GAN LAI TOAN BO `state.courts = val` (tao object HOAN TOAN MOI) MOI KHI CO BAT KY
+      // THAY DOI GI o node /courts tren Firebase — vd 1 san KHAC (San 4) vua bat dau/ket thuc 1 tran
+      // khac hoan toan khong lien quan. Vi transaction() ben tren la BAT DONG BO (cho server phan hoi),
+      // chi can listener no 1 lan trong luc cho (rat de xay ra o club dong san, san choi lien tuc) la
+      // state.courts[courtId] tro thanh 1 object MOI (noi dung co the giong het) → phep so sanh === voi
+      // `m` (bien cu, chup truoc do) LUON SAI → code luon roi vao nhanh else "chi hien toast suong" ben
+      // duoi → khong bao gio thuc su xoa san "ma" khoi local → dung 100% trieu chung Admin gap (bam Ket
+      // thuc nhieu lan van vo tac dung). FIX: thay so sanh THAM CHIEU OBJECT bang so sanh THEO matchId
+      // (chi can san cuc bo HIEN TAI van dang la DUNG tran ta vua co ket thuc — bat ke object reference
+      // co doi hay khong) — giu nguyen y nghia an toan ban dau (khong dong vao neu 1 tran THAT SU MOI
+      // vua duoc gan cho san nay) ma khong con bi loi tham chieu lam that bai.
+      const curCourt = state.courts[courtId];
+      const sameMatchStillLocal = curCourt && (!matchId || curCourt.matchId === matchId);
+      if(sameMatchStillLocal){
         const serverVal = result ? result.snapshot : null;
         if(serverVal && serverVal.matchId && serverVal.matchId !== matchId){
           state.courts[courtId] = serverVal;
@@ -16146,8 +16180,10 @@ function finishMatch(courtId, matchResult){
         }
         saveState();
         renderLiveTab();
-      } else {
+      } else if(!curCourt){
         showToast('Trận này vừa được kết thúc trên thiết bị khác.');
+      } else {
+        showToast('Sân này vừa được dùng cho trận mới — không cần dọn nữa.');
       }
     }
   }).catch(err=>{ console.error('[match] finish confirm error', err); handleWriteError('courts','transaction',err); applyFinishMatchLocally(courtId, m, matchResult); });
