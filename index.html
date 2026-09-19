@@ -2,6 +2,22 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.14 (2026-09-19) — §HOTFIX-REMOVE-SMARTSOCIAL-CRASH. Admin báo ngay sau bản v1.44.13: "ko vô đc
+  app luôn" — app kẹt ở màn hình đang tải, không mở lên được nữa. ROOT CAUSE: v1.44.13 xóa hẳn nhiều
+  element HTML thuộc tính năng SMART SOCIAL (2 stat box "Chờ TB"/"Tình trạng Social" trên LIVE, card cài
+  đặt "Trọng số ưu tiên ghép sân/Tự động ghép trận" trong CÀI ĐẶT) nhưng SÓT LẠI 2 đoạn JS vẫn ghi thẳng
+  vào các element đó mà KHÔNG kiểm tra null trước — (1) renderStatsStrip() ghi vào #statAvgWait/
+  #statAvgWaitBox/#statAvgWaitSub — hàm này chạy NGAY LÚC BOOT vì LIVE là tab mặc định, ném
+  TypeError "Cannot set properties of null" ngay từ lần render đầu tiên, chặn đứng toàn bộ luồng khởi
+  tạo phía sau — ĐÂY LÀ NGUYÊN NHÂN CHÍNH của "kẹt ở màn hình đang tải"; (2) renderSettingsTab() ghi vào
+  #wWait/#wBehind/#wSatOut/#wJustPlayed/#wNotReady/#trafficLowInput/#trafficPeakInput/
+  #wGroupPreference/#autoStartNextMatchToggle — lỗi tương tự, kích hoạt mỗi khi attachSettingsListener()
+  nhận snapshot settings đầu tiên từ Firebase lúc boot (không cần bấm vào tab CÀI ĐẶT). FIX: xóa hẳn cả
+  2 đoạn JS không còn element để ghi vào nữa — không đổi bất kỳ business logic nào khác. Đã kiểm tra lại
+  toàn bộ ID element đã xóa ở v1.44.13, xác nhận không còn chỗ nào khác tham chiếu tới chúng. Script
+  tag 14/9 khớp, Node syntax check 0 lỗi. Admin cần tải lại (F5/hard refresh) sau khi bản này lên để
+  nhận bản vá.
+
   v1.44.13 (2026-09-19) — §REMOVE-SMARTSOCIAL-2026. Admin yêu cầu: "bỏ phần ghép trận smart social đi,
   ko cần ghép trận nữa". Đã xóa hẳn toàn bộ tính năng SMART SOCIAL (ghép trận tự động) — Picpoc từ nay
   chỉ còn 1 chế độ vận hành duy nhất: TỰ CHƠI (Staff tự tay xếp 4 người vào sân qua "Xếp thủ công").
@@ -8536,7 +8552,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.13'; // §REMOVE-SMARTSOCIAL-2026 — bỏ hẳn tính năng ghép trận tự động SMART SOCIAL, chỉ còn TỰ CHƠI — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.14'; // §HOTFIX-REMOVE-SMARTSOCIAL-CRASH — sửa lỗi app không mở được (kẹt màn hình tải) do sót JS ghi vào element HTML đã xóa ở v1.44.13 — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -17506,11 +17522,13 @@ function renderStatsStrip(){
   document.getElementById('statWaiting').textContent = waiting;
   const longWaitCount = waitingOnly.filter(p=>fmtWaitMin(now-(p.waitSince||now))>=15).length;
   document.getElementById('statWaitingSub').textContent = longWaitCount ? longWaitCount + ' chờ >15p' : '';
-  document.getElementById('statAvgWait').textContent = avgWait + "'";
-  const avgWaitBox = document.getElementById('statAvgWaitBox');
-  avgWaitBox.classList.toggle('danger', maxWait>=15);
-  avgWaitBox.classList.toggle('warn', maxWait>=10 && maxWait<15);
-  document.getElementById('statAvgWaitSub').textContent = maxWait>=15 ? 'Cần xử lý' : (maxWait>=10 ? 'Cần chú ý' : 'Ổn định');
+  // §REMOVE-SMARTSOCIAL-2026 — HOTFIX (2026-09-19): đã xóa việc ghi vào #statAvgWait/#statAvgWaitBox/
+  // #statAvgWaitSub — cả 3 element này nằm trong stat box "Chờ TB" đã bị xóa khỏi HTML ở v1.44.13,
+  // nhưng SÓT LẠI đoạn JS này (không kiểm tra null) khiến renderLiveTab() NÉM LỖI ngay từ lần render
+  // ĐẦU TIÊN lúc boot (LIVE là tab mặc định) — đây mới là NGUYÊN NHÂN GỐC THẬT SỰ của "kẹt ở màn hình
+  // đang tải" Admin báo (nặng hơn lỗi renderSettingsTab() cũng vừa sửa, vì lỗi này chặn TAB ĐẦU TIÊN
+  // render lúc mở app, không phải đợi Admin bấm vào CÀI ĐẶT). FIX: xóa hẳn 3 dòng ghi vào element đã
+  // không còn tồn tại.
   const TRAFFIC_LABELS = {LOW:'Thấp', NORMAL:'Trung bình', PEAK:'Cao'};
   const trafficEl = document.getElementById('statTraffic');
   if(trafficEl) trafficEl.textContent = TRAFFIC_LABELS[traffic] || traffic;
@@ -20498,20 +20516,15 @@ function renderSettingsTab(){
   clearSettingsDirty('pricing');
   document.getElementById('pricingTierError').style.display = 'none';
 
-  // SOCIAL & GHEP TRAN
-  const w = state.settings.priorityWeights;
-  document.getElementById('wWait').value = w.wait;
-  document.getElementById('wBehind').value = w.behind;
-  document.getElementById('wSatOut').value = w.satOut;
-  document.getElementById('wJustPlayed').value = w.justPlayedPenalty;
-  document.getElementById('wNotReady').value = w.notReadyPenalty;
-  document.getElementById('trafficLowInput').value = state.settings.trafficRatio.low;
-  document.getElementById('trafficPeakInput').value = state.settings.trafficRatio.peak;
-  document.getElementById('wGroupPreference').value = (typeof state.settings.groupPreferenceWeight === 'number') ? state.settings.groupPreferenceWeight : 1.5; // §SOCIAL4-21
-  document.getElementById('autoStartNextMatchToggle').checked = state.settings.autoStartNextMatch !== false; // §AUTOMATCH-14
-  ['wWait','wBehind','wSatOut','wJustPlayed','wNotReady','trafficLowInput','trafficPeakInput','wGroupPreference','autoStartNextMatchToggle'].forEach(id=>{
-    document.getElementById(id).disabled = !canEditWeights;
-  });
+  // §REMOVE-SMARTSOCIAL-2026 — HOTFIX (2026-09-19): đã xóa khối đổ dữ liệu vào wWait/wBehind/wSatOut/
+  // wJustPlayed/wNotReady/trafficLowInput/trafficPeakInput/wGroupPreference/autoStartNextMatchToggle —
+  // các input này đã bị xóa khỏi HTML (card "Trọng số ưu tiên ghép sân/Tự động ghép trận") ở v1.44.13
+  // nhưng SÓT LẠI đoạn JS này vẫn gọi document.getElementById(...).value KHÔNG kiểm tra null, khiến
+  // renderSettingsTab() NÉM LỖI ngay khi chạy (TypeError: Cannot set properties of null) — chặn đứng
+  // toàn bộ chuỗi khởi tạo app phía sau (đúng triệu chứng Admin báo "kẹt ở màn hình đang tải", vì
+  // attachSettingsListener() gọi renderSettingsTab() ngay khi có snapshot settings đầu tiên từ Firebase
+  // lúc boot). ROOT CAUSE: xóa HTML nhưng bỏ sót đúng 1 chỗ JS ghi vào các input đó. FIX: xóa hẳn khối
+  // JS này (không còn input nào để đổ dữ liệu vào nữa).
   levelMapDraft = Object.assign({}, getPprSettings().seedMap); // §174 — sua tu state.settings.levelMap (da CHET) sang settings.ppr.seedMap (nguon that duoc pickLevel() dung)
   renderLevelMapBox();
   clearSettingsDirty('matchmaking');
