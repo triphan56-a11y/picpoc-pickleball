@@ -2,6 +2,43 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.17 (2026-09-19) — §HIDELIVE-2026. Admin yêu cầu: "bỏ tab live luôn đi". CÁCH LÀM (đã hỏi Admin
+  chọn trước khi sửa, do lần xóa hẳn code SMART SOCIAL trước đó — v1.44.13 — từng làm sập app vì các hàm
+  dùng chung bị xóa mà nơi khác vẫn gọi tới): Admin chọn "Ẩn khỏi menu" thay vì xóa hẳn code, vì tab LIVE
+  (sân/trận/hàng chờ) có nhiều hàm dùng chung với TV Mode (renderCourts()/#courtsStatusCard là chính nội
+  dung màn hình TV — xác nhận qua CSS `body.tv-mode #tab-live{display:block!important}`) và khả năng còn
+  dùng chung với Booking/Tournament — xóa hẳn sẽ lặp lại đúng sự cố cũ. THAY ĐỔI: (1) Bỏ nút "LIVE" khỏi
+  thanh tab điều hướng (#clubTabs) — KHÔNG xóa section #tab-live hay bất kỳ hàm JS nào (renderCourts()/
+  finishMatch()/computePriority()/renderLiveTab()/... giữ nguyên 100%, vẫn chạy ngầm qua renderAll() như
+  trước — xác nhận renderAll() gọi renderLiveTab() VÔ ĐIỀU KIỆN, không phụ thuộc tab nào đang active, nên
+  TV Mode/dữ liệu vẫn luôn mới dù không ai vào tab LIVE nữa). (2) Đổi tab mặc định khi mở app từ "LIVE"
+  sang "ĐANG Ở SÂN" (chuyển class "active" giữa 2 nút/2 section — CSS `.tab-content.active{display:block}`
+  đã có sẵn, xác nhận #tab-live không có rule CSS ID nào khác ép hiện vô điều kiện ngoài phạm vi tv-mode).
+  (3) Do tab LIVE không còn vào được nữa, ĐÃ CHUYỂN 4 phần tử quan trọng từ #tab-live sang #tab-presence
+  để Admin không mất cảnh báo/chức năng: startOfDayBanner ("Phiên hôm qua chưa đóng"), alertBox (cảnh báo
+  Data Health), nút "Chế độ TV" và "MỞ TV" — GIỮ NGUYÊN id/onclick, chỉ đổi vị trí DOM, không đổi hàm nào
+  ghi/đọc các phần tử này. KHÔNG đụng: Tournament/Booking/TV Mode Engine/PPR — section #tab-live vẫn tồn
+  tại nguyên vẹn trong file (ẩn qua CSS), chỉ không còn đường điều hướng tới từ menu Staff nữa. Đã kiểm
+  tra kỹ: `.tab-btn[data-tab="live"]` chỉ còn 1 chỗ dùng trong JS (runTvModeEnterEffects(), đã có sẵn
+  guard `if(liveBtn)` nên không lỗi khi nút không còn tồn tại), không còn id trùng lặp (startOfDayBanner/
+  alertBox mỗi cái đúng 1 lần), script tag 14/9 khớp, Node syntax check 0 lỗi.
+
+  v1.44.16 (2026-09-19) — §PROFILE-SOCIALPASS-VISIBILITY-2026. Admin báo: khách "A Lâm" check-in xong
+  Bill hiện 0đ, tưởng nhầm là thiếu thu tiền. Điều tra qua Console (đọc trực tiếp state.players/
+  playerVisits/bills/socialPassPackages/socialPassUsages của A Lâm — KHÔNG đoán mò) xác nhận: đây KHÔNG
+  PHẢI lỗi — A Lâm có 1 Gói Social 15+1 nhập liệu cũ (16 lượt, đã dùng 14 lượt trước khi vào hệ thống,
+  còn đúng 2 lượt lúc nhập), và 2 lần check-in gần nhất (kể cả lần bị phản ánh) đã dùng nốt đúng 2 lượt
+  cuối này — hệ thống tự trừ lượt gói thay vì tính 30k tiền mặt, đúng thiết kế của ensureOpenBillForPlayer()/
+  consumeSocialPassForVisit() (đã có từ trước, không đổi logic tiêu lượt/tính tiền nào ở đây). ROOT CAUSE
+  của sự NHẦM LẪN: hàm getPlayerSocialPassPackages() đã tồn tại sẵn trong code nhưng CHƯA TỪNG được gọi ở
+  bất kỳ đâu trong UI Hồ sơ người chơi — nên Admin không có cách nào tự tra cứu khách đang/đã có gói Social
+  nào để đối chiếu khi thấy Bill 0đ bất thường. FIX (chỉ thêm hiển thị, không đổi business logic): thêm
+  hàm renderPlayerSocialPassPackagesPanel() + gắn vào renderPlayerDetail() — Hồ sơ giờ hiện 1 panel
+  "🎟️ GÓI SOCIAL 15+1" liệt kê TẤT CẢ gói của khách đó, gồm CẢ gói còn hoạt động (còn lượt) LẪN gói đã
+  dùng hết/hết hạn, mỗi dòng có nút "CHI TIẾT" tái dùng nguyên modal openSocialPassDetailModal() có sẵn.
+  Panel chỉ hiện khi khách có ít nhất 1 gói (không làm rối Hồ sơ của khách chưa từng mua/nhập gói). Đã
+  kiểm tra: script tag 14/9 khớp, Node syntax check 0 lỗi.
+
   v1.44.15 (2026-09-19) — §SIMPLECHECKIN-2026. Admin yêu cầu làm lại quy trình tab "ĐANG Ở SÂN": bỏ hết
   các trạng thái/nút lọc (Tất cả/Đang chơi/Đang chờ/Ready/Tạm nghỉ/Đã nghỉ/Chờ tính tiền), mỗi khách chỉ
   còn ĐÚNG 2 hành động — "➕ SẢN PHẨM" và "🧾 BILL" — bất kể trạng thái hiện tại. THAY ĐỔI: (1) Xóa toàn bộ
@@ -6397,8 +6434,12 @@
     <button class="tournament-nav-btn" data-tournamenttab="history" onclick="setTournamentWorkspaceSubtab('history')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg><span>LỊCH SỬ</span></button>
   </nav>
   <div class="tabs" id="clubTabs">
-    <button class="tab-btn active" data-tab="live"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg><span>LIVE</span></button>
-    <button class="tab-btn" data-tab="presence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3 3-5 7-5s7 2 7 5"/><circle cx="17" cy="8" r="2.5"/><path d="M17 13c2.5 0 5 1.6 5 4"/></svg><span>ĐANG Ở SÂN</span></button>
+    <!-- §HIDELIVE-2026 — nut LIVE da BO KHOI MENU theo yeu cau ("bo tab live luon di") — KHONG xoa
+         section #tab-live/JS ben duoi (renderCourts/finishMatch/computePriority... dung chung voi TV
+         mode/Tournament, xoa se lap lai dung sự cố sập app cua SMART_SOCIAL truoc do). "ĐANG Ở SÂN" gio
+         la tab mac dinh (active) khi mo app — xem thay doi tuong ung o #tab-presence/#tab-live
+         (class active) va syncTopbarTitle() ben duoi. Chi tiet o CHANGELOG dau file. -->
+    <button class="tab-btn active" data-tab="presence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3 3-5 7-5s7 2 7 5"/><circle cx="17" cy="8" r="2.5"/><path d="M17 13c2.5 0 5 1.6 5 4"/></svg><span>ĐANG Ở SÂN</span></button>
     <!-- §RESTRUCTURE2026-WS3 muc 2/86 — go tab-btn CHECK-IN rieng (da gop vao KHACH TAI SAN, xem nut
          "+ CHECK-IN" trong #tab-presence + #checkinModalOverlay). -->
     <button class="tab-btn" data-tab="booking"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2"/></svg><span>ĐẶT SÂN</span></button>
@@ -6495,14 +6536,16 @@
 <main>
 
   <!-- ==================== TAB: LIVE ==================== -->
-  <section id="tab-live" class="tab-content active">
+  <section id="tab-live" class="tab-content">
     <div class="page-header">
       <div><h1 class="page-title">LIVE</h1><p class="page-desc">Quản lý sân theo thời gian thực</p></div>
       <!-- §REMOVE-SMARTSOCIAL-2026 — Admin yêu cầu bỏ hẳn tính năng ghép trận tự động (SMART SOCIAL),
            chỉ giữ TỰ CHƠI. Đã xóa nút chuyển chế độ (#socialModeSwitch) — app giờ luôn vận hành theo
            TỰ CHƠI, không còn cách nào bật lại SMART SOCIAL từ UI nữa. Chi tiết đầy đủ ở CHANGELOG đầu file. -->
     </div>
-    <div id="startOfDayBanner" class="presence-warn" style="display:none; margin-bottom:12px;"></div>
+    <!-- §HIDELIVE-2026 — startOfDayBanner/alertBox/nút TV đã CHUYỂN sang tab ĐANG Ở SÂN (xem
+         renderPresenceTab()/#tab-presence) vì tab LIVE này không còn trong menu điều hướng nữa — xem
+         chi tiết đầy đủ ở CHANGELOG đầu file (§HIDELIVE-2026). -->
     <div class="stats-strip">
       <div class="stat-box stat-box-icon">
         <div class="stat-icon stat-icon-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></div>
@@ -6519,13 +6562,10 @@
       <!-- §REMOVE-SMARTSOCIAL-2026 — đã xóa 2 stat box "Chờ TB"/"Tình trạng Social" (chỉ có ý nghĩa khi
            SMART SOCIAL, nay tính năng đã bị bỏ hẳn). -->
     </div>
-    <div class="card no-print" id="alertBox" style="display:none;"></div>
 
     <div class="card" id="courtsStatusCard">
       <div class="flex-between">
         <h2><span class="section-dot section-dot-teal"></span>Tình trạng sân</h2>
-        <button class="secondary small tv-mode-btn" onclick="toggleTvMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg><span>Chế độ TV</span></button>
-        <button class="secondary small tv-mode-btn" title="Mở TV ở cửa sổ/tab riêng — Staff App vẫn dùng bình thường ở đây" onclick="openTvInNewWindow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg><span>MỞ TV</span></button>
       </div>
       <!-- §SOCIAL4-14 — XEP SAN NHANH: 2 quick action gon canh header, khong lam Live roi. -->
       <div class="no-print" id="socialQuickActions" data-require-permission="MATCHMAKING" style="display:flex; gap:8px; flex-wrap:wrap; margin:-4px 0 10px;">
@@ -7244,7 +7284,7 @@
   </section>
 
   <!-- ==================== TAB: DANG O SAN ==================== -->
-  <section id="tab-presence" class="tab-content">
+  <section id="tab-presence" class="tab-content active">
     <div class="page-header">
       <div><h1 class="page-title">ĐANG Ở SÂN</h1><p class="page-desc">Người chơi đang ở sân</p></div>
       <!-- §WATERREMOVE-7 — "+ Ghi độ nước" chuyển từ tab NƯỚC (đã bị gỡ) sang đây, tái dùng NGUYÊN
@@ -7254,11 +7294,21 @@
            chung bi chia deu ra 3 vi tri cach xa nhau (Admin phan hoi qua anh chup). Khong doi onclick/logic. -->
       <div class="page-header-actions" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
       <button class="secondary" onclick="openAddManualWaterLossModal()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l-1.2 15.5A2 2 0 0 1 14.8 20H9.2a2 2 0 0 1-2-1.5L6 3Z"/><path d="M5 8h14"/></svg>+ Ghi độ nước</button>
+      <!-- §HIDELIVE-2026 — 2 nút TV (Chế độ TV/MỞ TV) chuyển từ tab LIVE (đã ẩn khỏi menu) sang đây,
+           tái dùng NGUYÊN VẸN toggleTvMode()/openTvInNewWindow() có sẵn (không đổi logic TV mode nào). -->
+      <button class="secondary small tv-mode-btn" onclick="toggleTvMode()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg><span>Chế độ TV</span></button>
+      <button class="secondary small tv-mode-btn" title="Mở TV ở cửa sổ/tab riêng — Staff App vẫn dùng bình thường ở đây" onclick="openTvInNewWindow()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg><span>MỞ TV</span></button>
       <!-- §RESTRUCTURE2026-WS3 muc 2/86 — "+ CHECK-IN" gop CHECK-IN vao thang man KHACH TAI SAN,
            mo modal inline (KHONG chuyen tab) — xem #checkinModalOverlay/openCheckinModal(). -->
       <button class="big" onclick="openCheckinModal()" style="display:inline-flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>CHECK-IN</button>
       </div>
     </div>
+    <!-- §HIDELIVE-2026 — startOfDayBanner ("Phiên hôm qua chưa đóng")/alertBox (cảnh báo Data Health)
+         chuyển từ tab LIVE (đã ẩn khỏi menu) sang đây — GIỮ NGUYÊN id, KHÔNG đổi hàm nào ghi vào 2 phần
+         tử này (checkStartOfDay()/renderStatsStrip() hay hàm cảnh báo khác vẫn getElementById y hệt),
+         chỉ đổi vị trí DOM để Staff không mất cảnh báo quan trọng khi vào thẳng ĐANG Ở SÂN mỗi ngày. -->
+    <div id="startOfDayBanner" class="presence-warn" style="display:none; margin-bottom:12px;"></div>
+    <div class="card no-print" id="alertBox" style="display:none;"></div>
     <div class="card no-print" id="presenceCrowdWarn" style="display:none; background:var(--danger); color:#fff; font-weight:800; padding:10px 14px; border-radius:10px;"></div>
     <!-- §FIX-GROUPPAY-1 — user yeu cau: "1 nguoi tra tien chung cho ca nhom" truoc day phai chuyen sang
          tab BÁN HÀNG & TÍNH TIỀN bam "Thanh toán nhiều người" — them thanh chon nhom NGAY TAI Diem danh,
@@ -8571,7 +8621,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.15'; // §SIMPLECHECKIN-2026 — đơn giản hóa tab ĐANG Ở SÂN: bỏ bộ lọc trạng thái, mỗi khách chỉ còn 2 nút Thêm sản phẩm/Bill — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.17'; // §HIDELIVE-2026 — bỏ tab LIVE khỏi menu điều hướng (không xóa code), ĐANG Ở SÂN thành tab mặc định — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -12486,6 +12536,39 @@ function getActiveSocialPassForPlayer(playerId){
 }
 function getPlayerSocialPassPackages(playerId){
   return (state.socialPassPackages||[]).filter(pkg=>pkg.playerId===playerId).sort((a,b)=>(b.purchasedAt||0)-(a.purchasedAt||0));
+}
+/* §PROFILE-SOCIALPASS-VISIBILITY-2026 — Admin phản ánh (vụ "A Lâm"): Bill 0đ sau check-in làm tưởng
+   nhầm là thiếu thu tiền, trong khi thực ra hệ thống đã tự trừ đúng 1 lượt trong Gói Social 15+1 của
+   khách — nhưng Hồ sơ người chơi TRƯỚC NAY không hiển thị gói nào cả (getPlayerSocialPassPackages() đã
+   có sẵn nhưng chưa từng được gọi ở đâu trong UI Hồ sơ), nên Admin không có cách nào tự tra cứu để biết
+   khách đang/đã có gói. FIX: thêm hẳn 1 panel "🎟️ GÓI SOCIAL 15+1" trong Hồ sơ, liệt kê TẤT CẢ gói của
+   khách này — CẢ gói còn hoạt động (ACTIVE, còn lượt) LẪN gói đã dùng hết (USED_UP)/đã hết hạn — mỗi
+   dòng có nút "CHI TIẾT" tái dùng NGUYÊN VẸN openSocialPassDetailModal() đã có sẵn (không viết modal
+   mới, không đổi logic tiêu lượt/mua gói/nhập gói nào). Panel chỉ hiện khi khách CÓ ít nhất 1 gói (không
+   làm rối Hồ sơ của đa số khách chưa từng mua gói). */
+function renderPlayerSocialPassPackagesPanel(p){
+  const pkgs = getPlayerSocialPassPackages(p.id);
+  if(!pkgs.length) return '';
+  const now = Date.now();
+  const rows = pkgs.map(pkg=>{
+    const isExpired = !!(pkg.expiresAt && pkg.expiresAt <= now);
+    const isActive = pkg.status === 'ACTIVE' && !isExpired && (pkg.remainingSessions||0) > 0;
+    const statusLabel = isActive ? 'Còn hoạt động' : (isExpired ? 'Đã hết hạn' : 'Đã dùng hết');
+    const statusColor = isActive ? 'var(--color-primary,#0F766E)' : 'var(--muted,#8a8a8a)';
+    const dateMs = pkg.source === 'LEGACY_IMPORT' ? (pkg.importedAt||pkg.purchasedAt) : pkg.purchasedAt;
+    const dateLabel = (pkg.source === 'LEGACY_IMPORT' ? 'Nhập ' : 'Mua ') + new Date(dateMs).toLocaleDateString('vi-VN');
+    return `<div class="pp-inline-row" style="align-items:center; flex-wrap:wrap; gap:6px;">
+      <span>🎟️ Gói ${pkg.paidSessions}+${pkg.bonusSessions} <span class="muted" style="font-size:.78rem;">(${dateLabel})</span></span>
+      <span style="display:flex; align-items:center; gap:8px;">
+        <span style="color:${statusColor}; font-weight:700; font-size:.85rem;">${statusLabel} — ${pkg.remainingSessions}/${pkg.totalSessions}</span>
+        <button class="small secondary" onclick="openSocialPassDetailModal('${pkg.id}')">CHI TIẾT</button>
+      </span>
+    </div>`;
+  }).join('');
+  return `<div class="pp-panel" style="margin-top:10px;">
+    <div class="pp-panel-title">🎟️ GÓI SOCIAL 15+1</div>
+    ${rows}
+  </div>`;
 }
 /* §SOCIALPASSMOVE2026/§16/§19 — "appUsedSessions" (so luot da tieu THAT SU tren app, KHAC voi
    usedBeforeImport la so lieu du lieu cu khai bao luc nhap) = dem usage con hieu luc (chua reversed)
@@ -17020,7 +17103,7 @@ function syncTopbarTitle(){
     el.textContent = 'Academy / ' + title.charAt(0) + title.slice(1).toLowerCase();
   } else {
     const activeBtn = document.querySelector('.tab-btn.active');
-    const key = activeBtn ? activeBtn.dataset.tab : 'live';
+    const key = activeBtn ? activeBtn.dataset.tab : 'presence'; // §HIDELIVE-2026 — doi fallback tu 'live' (tab da an khoi menu) sang 'presence' (tab mac dinh moi)
     const title = CLUB_TAB_TITLES[key] || 'PICPOC';
     el.textContent = 'Club / ' + title.charAt(0) + title.slice(1).toLowerCase();
   }
@@ -38144,6 +38227,8 @@ function renderPlayerDetail(){
         `}
       </div>
     </div>
+
+    ${renderPlayerSocialPassPackagesPanel(p)}
 
     <div id="playerTagsBox" style="margin-top:10px;">${renderPlayerTagsHtml(p)}</div>
 
