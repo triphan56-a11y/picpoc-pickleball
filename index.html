@@ -2,6 +2,129 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.11 (2026-09-19) — §FIX-ADJUSTSTOCK-SILENT-OFFLINE-LOSS. Admin yêu cầu rà thêm các sản phẩm khác
+  ngoài Nước sâm (§FIX-STOCKLOG-STALE-READ, v1.44.10) — quét lịch sử toàn bộ 40+ sản phẩm phát hiện 10
+  sản phẩm có nghi vấn lệch. 9/10 sản phẩm (Aquafina, Nước suối TH, Cuốn cán Bumbee, Aquarius, Dừa xiêm,
+  Waterboost, Thạch Bích, Nước sâm, Revive Chanh Muối) lệch nhỏ (1-22 đơn vị) — đúng loại lỗi đã sửa ở
+  v1.44.10, sẽ không tái diễn.
+  Riêng "Revive" có 2 lỗi khác hẳn, lệch lớn bất thường (-81, +62...): dump toàn bộ lịch sử raw phát
+  hiện ngày 9/9, Admin "Điều chỉnh tồn" (Kiểm kho) 28→110 rồi 28→109, nhưng SUỐT 8 NGÀY SAU ĐÓ mọi giao
+  dịch khác vẫn tiếp tục đọc nền 28 cũ — quá lâu để giải thích bằng độ trễ đồng bộ mạng bình thường.
+  ĐIỀU TRA `submitAdjustStock()` xác nhận nguyên nhân thật: hàm chỉ gọi `markEntityDirty('products',
+  p.id)` — ghi thẳng lên server, và hàm này TỰ BỎ QUA HOÀN TOÀN nếu lúc đó máy đang offline/mất kết nối
+  Firebase (`if(!SYNC_ENABLED || !dbRoot) return;`) — KHÔNG có cảnh báo nào cho Admin biết. Khớp đúng dữ
+  liệu: lần Kiểm kho đó chỉ thành công CỤC BỘ trên máy Admin lúc đó (màn hình họ vẫn hiện đúng số vừa
+  nhập), nhưng không thực sự lên được server — mọi thiết bị khác (và cả máy đó sau khi tải lại) vẫn thấy
+  số cũ 28, Admin thì tưởng đã Kiểm kho xong.
+  FIX: `submitAdjustStock()` giờ gọi `blockIfOffline('điều chỉnh tồn kho')` ngay từ đầu — cùng 1 pattern
+  đã dùng cho 5+ hành động tiền/kho quan trọng khác (thanh toán, bán hàng, đặt sân...) — chặn NGAY và
+  báo rõ bằng tiếng Việt nếu đang mất mạng, thay vì để thao tác Kiểm kho âm thầm không lên server.
+  LƯU Ý QUAN TRỌNG: KHÔNG tự sửa số tồn hiện tại của Revive (77) — vì log đã chứng minh không đáng tin ở
+  đoạn 9/9-17/9 (thiếu 1 sự kiện nhập/điều chỉnh không để lại dấu vết khoảng 17→79, và 1 khoảng 74→77
+  gần đây cũng không có dòng lịch sử nào). Đề nghị Admin tự đếm lại thực tế kho Revive rồi bấm "Điều
+  chỉnh tồn" lại (lúc chắc chắn đang online) để có số đúng — không nên tin số 77 hiện tại là chính xác.
+  Đã verify 14/9 thẻ script và chạy syntax-check — 0 lỗi.
+
+  v1.44.10 (2026-09-19) — §FIX-STOCKLOG-STALE-READ. Admin báo: xem "Lịch sử — Nước sâm" thấy khách đã
+  check-in trừ tồn bình thường, nhưng bán "Khách lẻ" (bán lẻ POS) trông như không trừ đủ tồn. Điều tra
+  qua console dump toàn bộ inventoryLog của "Nước sâm" (nối stockAfter dòng trước với stockBefore dòng
+  sau theo thời gian) xác nhận: chuỗi số liệu khớp liên tục suốt từ 7/9 đến 15/9 — cho đến đúng 1 dòng
+  "Khách lẻ" lúc 21:16:47 15/9 ghi stockBefore=38 (đáng lẽ phải là 35, dòng ngay trước đó đã kết thúc ở
+  35) — chênh lệch +3 khớp chính xác với 3 khoản "Thêm vào bill" của khách check-in đã trừ trước đó
+  trong ngày mà giao dịch bán lẻ này "không thấy".
+  NGUYÊN NHÂN GỐC: khi bấm "Bán lẻ"/"Ghi vào bill"/"Thêm vào bill"/"Sửa dòng bill", app tính số tồn
+  bằng `state.products` đang lưu CỤC BỘ trên máy đó tại thời điểm bấm để ghi ngay vào inventoryLog
+  (hiển thị lạc quan, không đợi mạng) — nếu máy đó vừa lúc đó CHƯA kịp nhận cập nhật tồn kho mới nhất từ
+  máy khác qua listener (độ trễ vài giây là bình thường), số dùng để ghi log sẽ bị CŨ. Bước xác nhận
+  thật với server sau đó (`confirmStockDeductionsAtomic`, đã có từ trước — vẫn LUÔN tính đúng trên số
+  tồn THẬT của server, không bao giờ bán vượt tồn) nhưng KHÔNG hề đồng bộ ngược kết quả thật đó lại vào
+  `state.products` cục bộ lẫn dòng lịch sử đã ghi lạc quan trước đó — khiến cả tồn kho hiển thị và lịch
+  sử trên máy đó có thể tiếp tục sai cho đến khi có 1 lần F5/đồng bộ lại tình cờ sửa đúng.
+  FIX: `confirmStockDeductionsAtomic()` giờ nhận thêm `logId` (tuỳ chọn) cho từng deduction — sau khi
+  Firebase transaction xác nhận thành công, dùng ĐÚNG số tồn THẬT server vừa trả về để (1) đồng bộ lại
+  `state.products` cục bộ nếu có sai lệch, và (2) sửa lại đúng `stockBefore`/`stockAfter` của dòng lịch
+  sử tương ứng rồi đẩy lại (markEntityDirty) — đảm bảo cả tồn kho hiển thị lẫn lịch sử luôn phản ánh
+  đúng số liệu thật trên server. Đã cập nhật cả 8 nơi gọi hàm này (Thêm vào bill, Xuất độ nước theo
+  khoản đã ghi, Ghi độ nước ngay, Sửa dòng bill, Ghi vào bill từ giỏ hàng POS, Bán lẻ, Nước kèm vé giải
+  ×2) để truyền kèm đúng logId của dòng lịch sử chúng vừa tạo.
+  KIỂM CHỨNG: viết mô phỏng Node.js lặp lại chính xác số liệu đã báo cáo (local cache cũ 38, server
+  thật 35, bán 2) — sau reconcile, tồn cục bộ và lịch sử đều ra đúng 33/35→33 như tính tay, khớp hoàn
+  toàn với những gì đáng lẽ phải xảy ra trên dữ liệu thật của Admin. Đây là kiểm chứng LOGIC (MANUAL
+  VERIFIED qua mô phỏng), không thay thế test đa thiết bị thật với Firebase.
+  Đã verify 14/9 thẻ script và chạy syntax-check — 0 lỗi.
+
+  v1.44.9 (2026-09-19) — §FIX-BILLITEM-MERGE-RACE. Tiếp tục audit, phát hiện: khi 2 nhân viên trên 2
+  thiết bị khác nhau CÙNG thêm khoản vào CHÍNH 1 bill đang mở của 1 khách gần như đồng thời (vd 1 người
+  bấm "Thuê máy bắn bóng", người kia bấm "Nước" hoặc "Khoản khác" cho cùng khách đó trong vài giây) —
+  `markEntityDirty('bills', bill.id)` trước đây là 1 `.set()` GHI ĐÈ TOÀN BỘ object bill (gồm cả mảng
+  items), không merge với những gì server đã có. Bên ghi SAU sẽ đè mất khoản của bên ghi TRƯỚC mà
+  không ai biết — rủi ro thấp hơn nhiều so với lỗi Credit/Tồn kho đã sửa (cần đúng 2 người sửa CHÍNH 1
+  bill trong vài giây) nhưng vẫn là 1 loại mất dữ liệu thật; đã hỏi và Admin xác nhận muốn sửa ngay.
+  FIX: `addBillItem()` — điểm vào DUY NHẤT để thêm 1 dòng vào bill, dùng ở mọi nơi trong app — giờ tự
+  đồng bộ ngay qua 1 Firebase transaction() kiểu APPEND-BY-ID: đọc lại bill THẬT SỰ trên server, CHỈ
+  thêm đúng 1 item MỚI (theo id, tự idempotent nếu Firebase retry do tranh chấp) vào mảng items HIỆN
+  CÓ của server — giữ nguyên mọi item khác đã có do thiết bị khác thêm — thay vì ghi đè toàn bộ. Đã bỏ
+  3 lệnh `markEntityDirty('bills', bill.id)` dư thừa (và có hại — sẽ đè lên kết quả transaction) ngay
+  sau addBillItem() ở addProductToActiveBill/confirmOtherCharge/confirmAddBallMachineRental.
+  KIỂM CHỨNG: sandbox này không có Firebase thật để test 2 thiết bị trực tiếp — đã viết 1 mô phỏng
+  Node.js giả lập ĐÚNG ngữ nghĩa `.transaction()` (đọc-sửa-ghi có phát hiện xung đột + tự động retry
+  như Firebase thật, không phải last-write-wins giả lập đơn giản) và chạy 2 kịch bản: (1) 2 "thiết bị"
+  thêm 2 khoản khác nhau gần như đồng thời — cả 2 khoản đều còn nguyên sau cùng; (2) thêm 1 lần ghi xen
+  từ "thiết bị thứ 3" ngay giữa lúc thiết bị A đang xử lý — transaction tự retry đúng 1 lần và cả 3
+  khoản đều còn nguyên. Cả 2 kịch bản đều PASS. Đây là kiểm chứng LOGIC (MANUAL VERIFIED qua mô phỏng),
+  KHÔNG thay thế được test 2 thiết bị thật — đề nghị Admin tự test tay 1 lần sau khi deploy: mở app
+  trên 2 trình duyệt/thiết bị, đăng nhập 2 tài khoản Staff khác nhau, cùng mở bill của 1 khách, mỗi bên
+  thêm 1 khoản khác nhau trong vài giây, F5 cả 2 máy và xác nhận bill có đủ cả 2 khoản.
+  Đã verify 14/9 thẻ script và chạy syntax-check — 0 lỗi.
+
+  v1.44.8 (2026-09-19) — Tiếp tục FULL DEEP AUDIT (v1.44.7): rà lại TOÀN BỘ các điểm `p.stock -=/+=`
+  còn lại trong source (grep triệt để, không sót) để tìm nốt phần còn lại của cùng lớp lỗi race đa
+  thiết bị vừa sửa. Phát hiện 2 điểm còn lại: `confirmFulfillWaterLoss()` (xuất hàng cho khoản độ
+  nước ĐÃ ghi nhận trước — khác `submitManualWaterLoss()` đã sửa ở v1.44.7 là ghi+xuất ngay) và
+  `issueTournamentIncludedWater()` (giao nước kèm vé giải). Cả 2 hàm này đã có transaction bảo vệ
+  RIÊNG cho thực thể của chính nó (waterLoss.fulfillmentStatus / participant.waterIssuedQty — chống
+  hàm tự chạy 2 lần), nhưng bước trừ tồn kho sau đó vẫn `markEntityDirty('products', ...)` trực tiếp
+  — không chống được trường hợp SẢN PHẨM đó bị 1 nguồn KHÁC (waterLoss khác, POS, bán lẻ) trừ trùng
+  gần như đồng thời trên máy khác. Đã bọc thêm `confirmStockDeductionsAtomic()` sau bước transaction
+  hiện có; nếu bị từ chối thật (hết hàng thật trên server), hoàn tác CẢ tồn kho LẪN trạng thái của
+  thực thể gốc (gọi transaction bù trừ riêng để trả `fulfillmentStatus`/`waterIssuedQty` về như cũ,
+  tránh để lại "đã xuất hàng" giả trên UI). Đã rà lại toàn bộ danh sách `.stock -=/+=` trong source —
+  không còn điểm nào bỏ sót thuộc lớp lỗi này. Đã verify 14/9 thẻ script và chạy syntax-check — 0 lỗi.
+
+  v1.44.7 (2026-09-19) — FULL DEEP AUDIT (idempotency đa thiết bị + phân quyền Data Health). Theo yêu
+  cầu audit toàn diện, đã dùng 3 subagent rà soát song song (idempotency/race đa thiết bị, rò rỉ
+  listener Firebase, phân quyền tầng hành động) rồi TỰ ĐỌC LẠI source để xác nhận độc lập từng phát
+  hiện trước khi sửa — không sửa theo suy đoán. Kết quả:
+  (1) §FIX-CREDIT-RACE-TRANSACTION — `redeemCreditsFEFO()` (trừ Picpoc Credits theo FEFO khi thanh
+  toán) trước đây trừ `remainingAmount` cục bộ rồi `.set()` thẳng lên Firebase qua markEntityDirty,
+  KHÔNG dùng `DataService.creditLots.transaction()` như Social Pass (`consumeSocialPassForVisit()`) đã
+  làm — 2 thiết bị cùng trừ 1 lot Credit gần hết trong khoảng trễ đồng bộ có thể "bốc hơi" 1 lần trừ
+  (khách bị trừ Credit nhưng số dư thật trên server không giảm đúng vậy). FIX: giữ nguyên trừ cục bộ
+  cho UI phản hồi ngay, nhưng xác nhận LẠI qua Firebase transaction() trên từng lot vừa trừ — nếu bị từ
+  chối thật sự (xung đột đa thiết bị có thật, rất hiếm), hoàn TOÀN BỘ lần redeem này bằng cơ chế
+  `rollbackBillPayment()` đã có sẵn (tái sử dụng nguyên, không viết lại logic hoàn tiền).
+  (2) §FIX-STOCK-RACE-* — 4 điểm trừ/cộng tồn kho vẫn dùng markEntityDirty trực tiếp (cùng lớp rủi ro
+  đã sửa trước đó ở POS/Bán lẻ/Nhập kho): "Thêm vào bill" (addProductToActiveBill), "Ghi độ nước"
+  (submitManualWaterLoss), "Sửa dòng bill" (confirmEditBillItem — chiều tăng số lượng), và "Nước kèm
+  vé giải" (applyTournamentExtraStockUpdates). Cả 4 đã chuyển sang dùng `confirmStockDeductionsAtomic()`
+  — hàm atomic đã được chứng minh an toàn, đang dùng cho giỏ hàng POS và Bán lẻ — kèm rollback đầy đủ
+  (bill item, inventory log, tồn kho) nếu server từ chối vì hết hàng thật trên máy khác.
+  (3) §FIX-DATAHEALTH-PERMISSION — nút "SỬA AN TOÀN"/"SỬA CÁC LỖI AN TOÀN" trong Kiểm tra dữ liệu (Data
+  Health) — có thể sửa trực tiếp Bill/Tồn kho/Credit lệch — trước đây KHÔNG kiểm tra quyền, STAFF bấm
+  được y hệt ADMIN. Đã hỏi trực tiếp Admin và theo lựa chọn: giới hạn CHỈ ADMIN được sửa (thêm quyền
+  DATA_HEALTH_REPAIR, chặn cả ở hàm `runSafeRepairForIssue()`/`__dataIntegrityRunRepair()`/
+  `__dataIntegrityRunBulkRepair()` lẫn ẩn nút trên UI với STAFF).
+  (4) Đã tự đọc lại và XÁC NHẬN ĐỘC LẬP báo cáo "rò rỉ listener Firebase" của subagent: cơ chế
+  `attachAllBusinessEntityListenersOnce()`/`detachAllBusinessEntityListeners()` (§AUTHFIX2026) đã được
+  vá đúng từ phiên trước — gọi `.off()` đầy đủ khi mất phiên/đăng xuất, không phát hiện rò rỉ mới —
+  MANUAL VERIFIED (không phải suy đoán từ báo cáo subagent).
+  Phạm vi audit 141 mục theo yêu cầu là RẤT LỚN — phiên này ưu tiên xác minh + sửa các mục rủi ro cao
+  nhất liên quan trực tiếp tiền/tồn kho/quyền hạn (đúng tinh thần "P0 trước"), CHƯA rà soát lại toàn bộ
+  141 mục theo nghĩa đen do giới hạn thời gian một phiên — các mục còn lại (Tournament bracket/ranking,
+  Booking overlap, Academy, TV Announcer, v.v.) đã được audit kỹ ở các phiên trước đó (xem các entry
+  v1.43.x/v1.44.x bên dưới) và không có báo cáo lỗi mới từ Admin ở các khu vực này. Đã verify 14/9 thẻ
+  script và chạy syntax-check — 0 lỗi.
+
   v1.44.6 (2026-09-19) — §FIX-REPORTS-ADJUSTMENT-DOUBLECOUNT — Admin báo: "hôm nay chưa có gì hết mà sao
   doanh thu 118k và còn phải thu 118k". Điều tra qua console dump `buildReportContext()` xác nhận: 118k
   đến từ 4 item loại "Điều chỉnh dữ liệu lịch sử (khớp số đã thu trước đó)" (A Vũ Sữa 46k, A Quốc Oppo
@@ -8121,12 +8244,15 @@ function markEntitySynced(node, id){
    duoc ap dung TUAN TU (khong Promise.all song song) de neu 1 san pham bi tu choi giua chung, ta
    biet chinh xac nhung san pham NAO da tru thanh cong tren server ma can hoan tra lai — dam bao
    ca gio hang thanh cong hoac hoan toan khong ai bi tru (§14: "khong duoc mot phan deduct roi fail").
-   deductions = [{productId, qty}]. rollbackFn() duoc goi de hoan tac PHAN LOCAL (sale/bill/log da
+   deductions = [{productId, qty, logId?}]. logId (tuy chon) la id cua dong state.inventoryLog da
+   ghi LAC QUAN cho deduction nay — dung de SUA LAI dung so that sau khi transaction xac nhan (xem
+   §FIX-STOCKLOG-STALE-READ ben duoi). rollbackFn() duoc goi de hoan tac PHAN LOCAL (sale/bill/log da
    ghi lac quan) khi server tu choi. */
 function confirmStockDeductionsAtomic(deductions, rollbackFn){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve();
   const fb = fbNodeNameFor('products');
   const succeededIds = [];
+  const reconciled = []; // {productId, logId, stockAfter} — so THAT server vua xac nhan cho tung san pham
   let aborted = false;
   const run = deductions.reduce((chain, d)=>{
     return chain.then(()=>{
@@ -8138,7 +8264,11 @@ function confirmStockDeductionsAtomic(deductions, rollbackFn){
         return remoteP;
       }).then(result=>{
         if(!result || !result.committed) aborted = true;
-        else succeededIds.push(d.productId);
+        else{
+          succeededIds.push(d.productId);
+          const finalVal = result.snapshot && result.snapshot.val();
+          if(finalVal) reconciled.push({ productId: d.productId, logId: d.logId||null, stockAfter: finalVal.stock||0 });
+        }
       });
     });
   }, Promise.resolve());
@@ -8162,6 +8292,37 @@ function confirmStockDeductionsAtomic(deductions, rollbackFn){
       // duoc goi SAU khi transaction thanh cong — van doi sang markEntitySynced de dong nhat kien truc
       // va loai han nguy co ghi de ket qua cua thiet bi khac trong truong hop dua nhau).
       deductions.forEach(d=> markEntitySynced('products', d.productId));
+      /* §FIX-STOCKLOG-STALE-READ (2026-09-19) — Admin bao: lich su "Nuoc sam" co 1 dong Ban le ghi sai
+         stockBefore/stockAfter (vd before=38 thay vi dung phai la 35) — dieu tra qua console dump xac
+         nhan: local state.products luc bam Ban le/Ghi vao bill/Them vao bill co the DA CU (thiet bi
+         khac vua tru qua thao tac khac nhung chua kip nhan cap nhat qua listener) — dong inventoryLog
+         duoc tinh/ghi LAC QUAN dua tren so CU nay TRUOC khi transaction o tren chay. Transaction luon
+         tinh DUNG tren gia tri THAT tren server (khong bao gio ban vuot ton — an toan), nhung KHONG tu
+         dong sua lai so da lo ghi sai o local/log. FIX: dung DUNG so stock THAT server vua xac nhan
+         (result.snapshot) de dong bo lai p.stock cuc bo VA sua lai dung stockBefore/stockAfter cua
+         dong lich su tuong ung (qua logId neu caller co truyen) — dam bao ca ton kho hien thi lan lich
+         su deu phan anh dung con so THAT su tren server, khong con giu lai so tam tinh sai luc dau. */
+      if(reconciled.length){
+        let changed = false;
+        reconciled.forEach(r=>{
+          const p = state.products.find(x=>x.id===r.productId);
+          if(p && p.stock !== r.stockAfter){ p.stock = r.stockAfter; changed = true; }
+          if(r.logId){
+            const log = state.inventoryLog.find(l=>l.id===r.logId);
+            if(log && log.stockAfter !== r.stockAfter){
+              log.stockBefore = r.stockAfter - (log.qtyChange||0); // qtyChange am (tru) nen tru se thanh cong
+              log.stockAfter = r.stockAfter;
+              markEntityDirty('inventoryLog', log.id);
+              changed = true;
+            }
+          }
+        });
+        if(changed){
+          saveState();
+          if(typeof renderProductsKho === 'function') renderProductsKho();
+          if(typeof renderPosGrid === 'function') renderPosGrid();
+        }
+      }
     }
   }).catch(err=>{ console.error('[stock] confirm error', err); handleWriteError('products','transaction',err); });
 }
@@ -8383,7 +8544,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.6'; // §FIX-REPORTS-ADJUSTMENT-DOUBLECOUNT — loại trừ item "Điều chỉnh dữ liệu lịch sử" khỏi Doanh thu/Còn phải thu theo ngày — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.11'; // §FIX-ADJUSTSTOCK-SILENT-OFFLINE-LOSS — chặn "Điều chỉnh tồn" khi offline để tránh ghi mất âm thầm — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -10772,7 +10933,12 @@ const PERMISSION = {
   // §FINANCE1 — module TAI CHINH V1: STAFF duoc xem + ghi "THU KHAC"; "CHI" va "HOAN TAC giao dich"
   // CHI ADMIN duoc phep (theo huong an toan spec de xuat §36 "chi ADMIN duoc ghi Chi").
   FINANCE_VIEW:'FINANCE_VIEW', FINANCE_MANUAL_INCOME:'FINANCE_MANUAL_INCOME',
-  FINANCE_MANUAL_EXPENSE:'FINANCE_MANUAL_EXPENSE', FINANCE_REVERSE:'FINANCE_REVERSE'
+  FINANCE_MANUAL_EXPENSE:'FINANCE_MANUAL_EXPENSE', FINANCE_REVERSE:'FINANCE_REVERSE',
+  // §FIX-DATAHEALTH-PERMISSION (2026-09-19) — nut "SUA AN TOAN"/"SUA CAC LOI AN TOAN" trong Data
+  // Health co the sua truc tiep Bill/Ton kho/Credit — theo yeu cau Admin (xac nhan qua hoi truc tiep),
+  // CHI ADMIN duoc phep bam. KHONG dua vao whitelist STAFF ben duoi -> STAFF mac dinh bi tu choi
+  // (can() tra ve true cho ADMIN vo dieu kien, false cho STAFF neu khong co trong whitelist).
+  DATA_HEALTH_REPAIR:'DATA_HEALTH_REPAIR'
 };
 /* §7 — Danh sach STAFF la WHITELIST tuong minh (khong doan ngam). ADMIN = '*' (tat ca). */
 const PERMISSIONS = {
@@ -13172,10 +13338,51 @@ function redeemCreditsFEFO(opts){
       sourceType:null, sourceId:null, billId: opts.billId||null, paymentId: opts.paymentId||null,
       createdAt: now, createdBy: opts.createdBy||'staff', operationId: opts.operationId||null };
     state.creditTransactions.push(tx);
-    markEntityDirty('creditLots', lot.id);
+    // §FIX-CREDIT-RACE-TRANSACTION (2026-09-19) — KHONG con markEntityDirty('creditLots', lot.id) truc
+    // tiep o day nua — dung PATTERN DA DUOC CHUNG MINH AN TOAN cua Social Pass (xem
+    // §HOTFIX-DOUBLEDECREMENT tai consumeSocialPassForVisit()): ghi thang .set() luc nay se DE cho
+    // Firebase transaction() ben duoi (nguon ghi CANONICAL, co kiem tra xung dot) bi mat tac dung (transaction
+    // se doc lai gia tri VUA bi .set() nay ghi de, khong con phat hien duoc 2 thiet bi cung tru 1 luc).
     markEntityDirty('creditTransactions', tx.id);
   }
   saveState();
+  /* §FIX-CREDIT-RACE-TRANSACTION (2026-09-19) — Audit "FULL DEEP AUDIT" phat hien: redeemCreditsFEFO()
+     truoc day CHI doc/tru state.creditLots CUC BO roi .set() thang len Firebase (qua markEntityDirty),
+     KHONG dung DataService.creditLots.transaction() nhu bills (payBill)/Social Pass (consumeSocialPassForVisit)
+     da lam — 2 thiet bi cung tru Credit tu CHUNG 1 lot (vd lot con dung 50.000d) trong khoang tre dong bo
+     se CA HAI doc duoc remainingAmount=50000, CA HAI tru cuc bo thanh cong, va lan .set() SAU CUNG se
+     THANG the — mot trong hai lan tru "boc hoi" (mat tien that: khach da bi tinh la da dung Credit qua
+     bill/bien lai, nhung so du Credit khong giam dung nhu vay). FIX: sau khi da tru cuc bo (giu nguyen,
+     cho UI phan hoi ngay khong doi mang), xac nhan LAI qua Firebase transaction() TREN TUNG lot vua tru —
+     y het pattern da chung minh an toan cua consumeSocialPassForVisit()/payBill(). Neu bi tu choi (that
+     su co 1 thiet bi khac da tru mat truoc) — day la XUNG DOT DA THIET BI THAT (rat hiem), hoan TOAN BO
+     redeem nay (khong chi rieng lot loi, tranh trang thai nua-vay-nua-khong giua nhieu lot) bang chinh
+     rollbackBillPayment() da co san (ham nay da tu goi reverseCreditsForPayment() ben trong — khong viet
+     lai logic hoan tra, tai su dung nguyen). CHI CO 1 noi goi ham nay (payBillWithCredit()) nen luon co
+     billId/paymentId hop le de rollback dung chuan. */
+  if(SYNC_ENABLED && dbRoot && allocations.length){
+    Promise.all(allocations.map(a=>
+      DataService.creditLots.transaction(a.lotId, remoteLot=>{
+        if(!remoteLot || (remoteLot.remainingAmount||0) < a.amount) return undefined; // tu choi transaction — remote khong con du (thiet bi khac vua tru truoc)
+        remoteLot.remainingAmount -= a.amount;
+        if(remoteLot.remainingAmount<=0) remoteLot.status = 'USED';
+        return remoteLot;
+      }).then(r=> !!(r && r.committed))
+    )).then(results=>{
+      if(results.every(ok=>ok)) return; // tat ca lot xac nhan thanh cong — khong can lam gi them
+      const bill = opts.billId ? state.bills.find(b=>b.id===opts.billId) : null;
+      const payment = opts.paymentId ? state.payments.find(p=>p.id===opts.paymentId) : null;
+      if(bill && payment){
+        rollbackBillPayment(bill, payment, 'Có xung đột đa thiết bị khi trừ Picpoc Credits (2 thiết bị cùng trừ 1 lúc) — đã hoàn tác thanh toán này, vui lòng thử lại.');
+      } else {
+        // du phong — ham nay hien chi co 1 noi goi (payBillWithCredit(), luon co billId/paymentId),
+        // nhung neu sau nay co noi goi khac khong truyen billId/paymentId, van phai hoan lai Credit
+        // (khong de "boc hoi") du khong the rollback ca payment qua co che chuan.
+        reverseCreditsForPayment(opts.paymentId, 'system_rollback_credit_race');
+        if(typeof logSystemError === 'function') logSystemError('credit', 'redeemCreditsFEFO: xung đột đa thiết bị nhưng thiếu billId/paymentId để rollback theo chuẩn — đã tự hoàn Credit qua reverseCreditsForPayment().', null);
+      }
+    });
+  }
   return { ok:true, allocations };
 }
 /* §44/§45/§86 — Void 1 payment CREDIT: hoan DUNG cac lot da tieu (theo dung allocation ghi trong
@@ -13644,11 +13851,37 @@ function getPlayerFavoriteDays(playerId, topN){
     .sort((a,b)=>b.count-a.count).slice(0, topN);
 }
 
+/* §FIX-BILLITEM-MERGE-RACE (2026-09-19) — TRUOC DAY: caller tu goi markEntityDirty('bills', bill.id)
+   ngay sau addBillItem() o tung noi rieng le — day la 1 .set() GHI DE TOAN BO object bill (bao gom CA
+   mang items), KHONG merge voi nhung gi da co tren server. Neu 2 thiet bi KHAC NHAU cung them 2 khoan
+   KHAC NHAU vao CHINH 1 bill dang mo gan nhu dong thoi (vd 1 nguoi them "Thue may ban bong", nguoi kia
+   them "Nuoc" cho cung 1 khach trong vai giay), ben ghi SAU se DE LEN ben truoc tren server — khoan cua
+   ben truoc "bien mat" ma khong ai biet. Rui ro thap hon nhieu so voi Credit/Ton kho da fix truoc do
+   (can dung 2 nguoi sua CHINH 1 bill trong vai giay) nhung van la 1 loai mat du lieu that — Admin xac
+   nhan muon sua ngay du chi test duoc bang mo phong logic (khong co Firebase that trong sandbox nay).
+   FIX: addBillItem() (diem vao DUY NHAT de them 1 dong vao bill, dung o moi noi trong app) tu dong bo
+   NGAY qua 1 Firebase transaction() APPEND-BY-ID — doc lai bill THAT SU tren server, CHI them dung 1
+   item MOI nay (theo id, idempotent neu Firebase tu retry do tranh chap) vao mang items HIEN CO cua
+   server (giu nguyen moi item khac da co do thiet bi khac them vao), thay vi ghi de toan bo object.
+   CAC NOI GOI addBillItem() khong can (va khong duoc) tu markEntityDirty('bills', bill.id) rieng cho
+   viec them item nua — da bo o tung call site tuong ung. */
 function addBillItem(playerId, item){
   const player = playerById(playerId);
   if(!player) return null;
   const bill = ensureOpenBillForPlayer(player);
-  bill.items.push(Object.assign({ id: uid('bi'), timestamp: Date.now() }, item));
+  const newItem = Object.assign({ id: uid('bi'), timestamp: Date.now() }, item);
+  bill.items.push(newItem);
+  if(SYNC_ENABLED && dbRoot){
+    DataService.bills.transaction(bill.id, remoteBill=>{
+      if(remoteBill === null) return sanitizeForFirebase(bill); // bill chua tung sync len server — ghi ca object (lan dau, giong het hanh vi cu)
+      remoteBill.items = remoteBill.items || [];
+      if(!remoteBill.items.some(it=>it && it.id===newItem.id)) remoteBill.items.push(sanitizeForFirebase(newItem));
+      return remoteBill;
+    }).then(result=>{
+      if(result && result.committed) markEntitySynced('bills', bill.id);
+      else console.error('[addBillItem] sync transaction not committed for bill', bill.id, '— se duoc luoi an toan debounce (diffAndFlushEntities) xu ly lai sau.');
+    }).catch(err=>{ console.error('[addBillItem] sync error', err); handleWriteError('bills','transaction',err); });
+  }
   return bill;
 }
 
@@ -13719,9 +13952,27 @@ function addProductToActiveBill(playerId, productId){
   state.inventoryLog.unshift({ id: logId, type:'bill_product_add', productId:p.id, name:p.name,
     qtyChange:-1, stockBefore, stockAfter:p.stock, note:'Thêm vào bill '+player.name, timestamp: Date.now() });
   const bill = addBillItem(playerId, { type:'product', label:p.name, unitPrice:p.price, amount:p.price, qty:1, meta:{ productId:p.id } });
+  const __addToBillItemId = bill ? bill.items[bill.items.length-1].id : null;
   saveState();
-  if(bill) markEntityDirty('bills', bill.id);
-  markEntityDirty('products', p.id);
+  // §FIX-BILLITEM-MERGE-RACE — addBillItem() da tu dong bo item nay qua transaction rieng, KHONG can
+  // markEntityDirty('bills', bill.id) o day nua (se ghi de mat khoan cua thiet bi khac neu co).
+  /* §FIX-STOCK-RACE-ADDTOBILL (2026-09-19) — truoc day markEntityDirty('products', p.id) ghi thang
+     (.set()), khong kiem tra remote — cung nhom rui ro voi bug da fix o "Ghi vao bill" (POS)/"Ban le":
+     2 thiet bi cung tru 1 san pham gan het hang co the trung nhau, ben ghi SAU se DE len ben truoc
+     (mat 1 lan tru that su tren server). Dung lai confirmStockDeductionsAtomic() da duoc chung minh
+     an toan thay vi markEntityDirty truc tiep. */
+  confirmStockDeductionsAtomic([{ productId: p.id, qty: 1, logId }], function rollbackAddProductToBill(){
+    if(bill && __addToBillItemId){
+      const b = state.bills.find(x=>x.id===bill.id);
+      if(b) b.items = b.items.filter(it=>it.id!==__addToBillItemId);
+    }
+    const idx = state.inventoryLog.findIndex(l=>l.id===logId); if(idx>=0) state.inventoryLog.splice(idx,1);
+    saveState();
+    if(typeof renderPresenceTab === 'function') renderPresenceTab();
+    if(typeof renderProductsKho === 'function') renderProductsKho();
+    if(typeof renderMoneyTab === 'function') renderMoneyTab();
+    showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã hoàn tác.');
+  });
   const searchInput = document.querySelector('#addProductToBillGrid')?.previousElementSibling;
   renderAddProductToBillGrid(playerId, searchInput && searchInput.tagName==='INPUT' ? searchInput.value : '');
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
@@ -14422,6 +14673,11 @@ function repairGhostCourtAllPlayersEnded(args){
   return { ok:true };
 }
 function runSafeRepairForIssue(issue){
+  // §FIX-DATAHEALTH-PERMISSION (2026-09-19) — day la DIEM VAO CHUNG cho MOI thao tac tu sua Data
+  // Health (sua tung issue + sua hang loat), truoc day KHONG co kiem tra quyen — STAFF bam duoc y het
+  // ADMIN du day la hanh dong sua truc tiep Bill/Ton kho/Credit. Chan NGAY tai day (khong chi o UI)
+  // de an toan du sau nay co them loi goi khac chua tinh den.
+  if(!requirePermission(PERMISSION.DATA_HEALTH_REPAIR)) return { ok:false, reason:'Không có quyền tự sửa dữ liệu (cần ADMIN).' };
   if(!issue || !issue.repairable || issue.repairConfidence !== 'DETERMINISTIC' || !issue.repairFn) return { ok:false, reason:'Issue này không đủ điều kiện tự sửa an toàn.' };
   const fn = DATA_INTEGRITY_REPAIR_FNS[issue.repairFn];
   if(typeof fn !== 'function') return { ok:false, reason:'Không tìm thấy hàm sửa tương ứng.' };
@@ -20092,9 +20348,30 @@ function confirmFulfillWaterLoss(waterLossId){
       saveState();
       renderWaterTab(); renderProductsKho(); renderPosGrid();
       showToast('⚠️ Khoản độ nước này vừa được xuất hàng trên máy khác. Đã hoàn tác.');
-    } else {
-      markEntityDirty('products', p.id);
+      return;
     }
+    /* §FIX-STOCK-RACE-WATERFULFILL (2026-09-19) — transaction o tren CHI bao ve chinh khoan waterLoss
+       nay khoi bi xuat 2 lan (double-fulfill) — no KHONG bao ve san pham p khoi bi 1 khoan waterLoss
+       KHAC (hoac POS/Ban le) tru CUNG luc tren thiet bi khac (cung lop rui ro voi cac diem da fix
+       o addProductToActiveBill/submitManualWaterLoss/confirmEditBillItem). Xac nhan THEM qua
+       confirmStockDeductionsAtomic() thay vi markEntityDirty truc tiep; neu that su het hang tren
+       server, hoan tac CA HAI: ton kho VA trang thai FULFILLED cua khoan waterLoss nay (goi lai 1
+       transaction rieng de tra fulfillmentStatus, tranh de lai trang thai "da xuat hang" gia). */
+    confirmStockDeductionsAtomic([{ productId: p.id, qty, logId }], function rollbackWaterFulfillStock(){
+      p.stock += qty;
+      const idx = state.inventoryLog.findIndex(l=>l.id===logId); if(idx>=0) state.inventoryLog.splice(idx,1);
+      wl.fulfillmentStatus = prevStatus; wl.fulfilledProductId = null; wl.fulfilledProductName = null; wl.fulfilledQty = null; wl.fulfilledAt = null;
+      saveState();
+      renderWaterTab(); renderProductsKho(); renderPosGrid();
+      showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã hoàn tác việc xuất độ nước.');
+      if(SYNC_ENABLED && dbRoot){
+        DataService.waterLoss.transaction(waterLossId, remoteWl=>{
+          if(!remoteWl) return remoteWl;
+          remoteWl.fulfillmentStatus = prevStatus; remoteWl.fulfilledProductId = null; remoteWl.fulfilledProductName = null; remoteWl.fulfilledQty = null; remoteWl.fulfilledAt = null;
+          return remoteWl;
+        }).catch(err=>{ console.error('[water] rollback status error', err); });
+      }
+    });
   }).catch(err=>{ console.error('[water] confirm error', err); handleWriteError('waterLoss','transaction',err); });
 }
 
@@ -20217,7 +20494,7 @@ function confirmOtherCharge(fromPlayerId){
   if(!desc || !amount){ showToast('Nhập đủ mô tả và số tiền'); return; }
   const bill = addBillItem(playerId, { type, label: desc, amount, qty:1, unitPrice: amount, meta:{} });
   saveState();
-  if(bill) markEntityDirty('bills', bill.id);
+  // §FIX-BILLITEM-MERGE-RACE — addBillItem() da tu dong bo item nay qua transaction rieng.
   showToast('Đã ghi ' + fmtVnd(amount) + ' vào bill');
   if(fromPlayerId){
     // §MERGE-OTHERCHARGE2026 — vao tu loi tat trong "+ SẢN PHẨM" cua 1 nguoi choi cu the: quay ve
@@ -20273,15 +20550,39 @@ function submitManualWaterLoss(){
   state.inventoryLog.unshift({ id: invLogId, type:'water_fulfill', productId, name:p.name, qtyChange:-qty, stockBefore, stockAfter:p.stock, referenceId: wl.id, note:'Ghi độ nước (đã giao ngay) cho ' + playerName(playerId), timestamp: fulfilledAt, createdBy:'staff' });
   const bill = addBillItem(playerId, { type:'water', label:'Độ nước '+p.name, amount: qty*p.price, qty, unitPrice: p.price, meta:{ waterLossId: wl.id, productId } });
   if(bill){ wl.billItemId = bill.items[bill.items.length-1].id; markEntityDirty('waterLoss', wl.id); }
-  markEntityDirty('products', p.id);
   saveState();
   closeModal();
   renderWaterTab();
   if(typeof renderProductsKho === 'function') renderProductsKho();
   if(typeof renderPosGrid === 'function') renderPosGrid();
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
-  showUndoToast('✓ Đã ghi độ nước ' + p.name + ' ×' + qty + ' cho ' + playerName(playerId) + ' (đã trừ kho)', function(){
+  /* §FIX-STOCK-RACE-WATERLOSS (2026-09-19) — thay markEntityDirty('products', p.id) truc tiep (khong
+     kiem tra remote) bang confirmStockDeductionsAtomic() da duoc chung minh an toan o POS/Ban le. Neu
+     bi tu choi that su (thiet bi khac vua tru het) VA nhan vien CHUA kip bam "Hoàn tác" thu cong, tu
+     dong hoan tac giong het logic nut Hoan tac (kiem tra wl.canceled truoc de tranh hoan 2 lan neu
+     nhan vien lo bam Hoan tac dung luc). */
+  confirmStockDeductionsAtomic([{ productId: p.id, qty, logId: invLogId }], function rollbackWaterLoss(){
+    if(wl.canceled) return; // da duoc hoan tac thu cong roi, tranh cong lai ton kho 2 lan
     wl.canceled = true;
+    markEntityDirty('waterLoss', wl.id);
+    p.stock += qty;
+    const idx = state.inventoryLog.findIndex(l=>l.id===invLogId); if(idx>=0) state.inventoryLog.splice(idx,1);
+    if(bill && wl.billItemId){
+      const b = state.bills.find(x=>x.id===bill.id);
+      if(b) b.items = b.items.filter(it=>it.id!==wl.billItemId);
+    }
+    saveState();
+    renderWaterTab();
+    if(typeof renderProductsKho === 'function') renderProductsKho();
+    if(typeof renderPosGrid === 'function') renderPosGrid();
+    if(typeof renderMoneyTab === 'function') renderMoneyTab();
+    if(typeof renderPresenceTab === 'function') renderPresenceTab();
+    showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã tự hoàn tác độ nước cho ' + playerName(playerId) + '.');
+  });
+  showUndoToast('✓ Đã ghi độ nước ' + p.name + ' ×' + qty + ' cho ' + playerName(playerId) + ' (đã trừ kho)', function(){
+    if(wl.canceled) return; // §FIX-STOCK-RACE-WATERLOSS — da bi tu dong hoan tac do het hang tren may khac, tranh cong lai ton kho 2 lan
+    wl.canceled = true;
+    markEntityDirty('waterLoss', wl.id);
     p.stock += qty; // hoan lai ton kho vi da tru ngay luc ghi (khac hanh vi cu)
     const idx = state.inventoryLog.findIndex(l=>l.id===invLogId); if(idx>=0) state.inventoryLog.splice(idx,1);
     if(bill && wl.billItemId){
@@ -20324,10 +20625,13 @@ function confirmEditBillItem(billId, itemId){
   const productId = item.meta && item.meta.productId;
   const p = productId ? state.products.find(x=>x.id===productId) : null;
   const diff = newQty - item.qty; // duong = lay them, am = tra bot
+  const prevQty = item.qty; // §FIX-STOCK-RACE-EDITBILLITEM — luu lai de rollback dung neu bi tu choi
+  let editLogId = null;
   if(p){
     if(diff > 0 && diff > p.stock){ showToast('Không đủ tồn kho để tăng thêm'); return; }
     p.stock -= diff; // lay them thi tru them, tra bot thi cong lai
-    state.inventoryLog.unshift({ id: uid('inv'), type:'bill_item_edit', productId:p.id, name:p.name, qtyChange:-diff, stockAfter:p.stock, note:'Sửa dòng bill '+bill.playerName, timestamp: Date.now() });
+    editLogId = uid('inv');
+    state.inventoryLog.unshift({ id: editLogId, type:'bill_item_edit', productId:p.id, name:p.name, qtyChange:-diff, stockAfter:p.stock, note:'Sửa dòng bill '+bill.playerName, timestamp: Date.now() });
   }
   logOverride('edit_bill_item', bill.playerName + ' — ' + item.label + ': ' + item.qty + ' → ' + newQty);
   if(newQty === 0){
@@ -20339,6 +20643,35 @@ function confirmEditBillItem(billId, itemId){
   saveState();
   closeModal();
   renderSalesTab();
+  /* §FIX-STOCK-RACE-EDITBILLITEM (2026-09-19) — truoc day markEntityDirty('products', p.id) (ghi
+     thang, khong kiem tra remote) sau khi da tru them ton kho cuc bo — cung nhom rui ro voi bug da
+     fix o "Ghi vao bill"(POS)/"Ban le"/"Them vao bill". Neu diff>0 (lay THEM san pham) — day la
+     truong hop RUI RO THAT SU (co the ban vuot ton kho neu thiet bi khac vua ban het) — dung lai
+     confirmStockDeductionsAtomic() da duoc chung minh an toan. Neu diff<0 (tra bot) — cong lai ton
+     kho luon AN TOAN (khong bao gio am), chi can 1 Firebase transaction don gian, khong can dieu
+     kien huy. */
+  if(p && diff > 0){
+    confirmStockDeductionsAtomic([{ productId: p.id, qty: diff, logId: editLogId }], function rollbackEditBillItemIncrease(){
+      p.stock += diff;
+      item.qty = prevQty;
+      item.amount = item.unitPrice * prevQty;
+      saveState();
+      renderSalesTab();
+      if(typeof renderProductsKho === 'function') renderProductsKho();
+      showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã hoàn tác việc sửa dòng bill.');
+    });
+  } else if(p && diff < 0 && SYNC_ENABLED && dbRoot){
+    const fb = fbNodeNameFor('products');
+    dbRoot.child(fb).child(p.id).transaction(remoteP=>{
+      if(remoteP === null) return remoteP;
+      remoteP.stock = (remoteP.stock||0) + (-diff);
+      return remoteP;
+    }).then(result=>{
+      if(result && result.committed) markEntitySynced('products', p.id);
+    }).catch(err=>{ console.error('[stock] edit-bill-item add-back error', err); handleWriteError('products','transaction',err); });
+  } else if(p){
+    markEntityDirty('products', p.id); // offline hoac diff===0 — fallback hanh vi cu
+  }
   showToast('Đã cập nhật dòng bill');
 }
 
@@ -29501,7 +29834,7 @@ function ghiVaoBill(){
     const logId = uid('inv');
     state.inventoryLog.unshift({ id: logId, type:'bill_item', productId: p.id, name:p.name, qtyChange:-qty, stockAfter:p.stock, timestamp: Date.now() });
     inventoryLogIdsForConfirm.push(logId);
-    deductionsForConfirm.push({ productId: p.id, qty });
+    deductionsForConfirm.push({ productId: p.id, qty, logId });
     if(bill){
       const item = bill.items[bill.items.length-1];
       undoEntries.push({ billId: bill.id, billItemId: item.id, productId: p.id, qty });
@@ -29822,7 +30155,7 @@ function confirmAddBallMachineRental(playerId){
   if(btn){ btn.disabled = true; btn.textContent = 'ĐANG THÊM...'; } // chong double-click tao trung khoan thue may
   const bill = addBillItem(playerId, { type:'ball_machine_rental', label:'Thuê máy bắn bóng', amount, qty:1, unitPrice:amount });
   if(!bill) return;
-  markEntityDirty('bills', bill.id);
+  // §FIX-BILLITEM-MERGE-RACE — addBillItem() da tu dong bo item nay qua transaction rieng.
   saveState();
   showToast('Đã thêm Thuê máy bắn bóng vào bill.');
   openBillModal(playerId);
@@ -30183,6 +30516,7 @@ function confirmRetailCheckout(){
   const saleId = uid('sale');
 
   const inventoryLogIds = [];
+  const inventoryLogIdByProduct = {}; // §FIX-STOCKLOG-STALE-READ — zip dung theo productId, khong dua vao vi tri (items co the bi skip neu !p)
   items.forEach(it=>{
     const p = state.products.find(x=>x.id===it.productId);
     if(!p) return;
@@ -30192,6 +30526,7 @@ function confirmRetailCheckout(){
     state.inventoryLog.unshift({ id: logId, type:'retail_sale', productId: p.id, name: p.name,
       qtyChange: -it.qty, stockBefore, stockAfter: p.stock, saleId, buyerName, timestamp: Date.now() });
     inventoryLogIds.push(logId);
+    inventoryLogIdByProduct[it.productId] = logId;
   });
 
   // §CORE-DATA-29/30/32 — day la ban le POS THAT SU (khac voi snapshot o markBillPaid()).
@@ -30216,7 +30551,7 @@ function confirmRetailCheckout(){
      hang; neu bat ky san pham nao het hang THAT SU tren server (thiet bi khac vua ban truoc) ->
      huy TOAN BO giao dich nay (khong duoc mot phan tru mot phan khong), hoan tra lai local
      (cong lai stock, xoa sale/payment/inventoryLog "ma" vua tao), bao loi ro bang tieng Viet. */
-  return confirmStockDeductionsAtomic(items.map(it=>({ productId: it.productId, qty: it.qty })), function rollbackRetailSale(){
+  return confirmStockDeductionsAtomic(items.map(it=>({ productId: it.productId, qty: it.qty, logId: inventoryLogIdByProduct[it.productId]||null })), function rollbackRetailSale(){
     items.forEach(it=>{
       const p = state.products.find(x=>x.id===it.productId);
       if(p) p.stock += it.qty;
@@ -30561,6 +30896,17 @@ function openAdjustStockModal(productId){
 }
 function submitAdjustStock(productId){
   if(!requirePermission(PERMISSION.STOCK_ADJUST)) return; // §9 — guard lai o business logic, khong chi tin UI da an nut
+  /* §FIX-ADJUSTSTOCK-SILENT-OFFLINE-LOSS (2026-09-19) — Admin bao lich su "Revive" cho thay 1 lan
+     "Điều chỉnh tồn" (Kiểm kho, 28 -> 109) SAU DO khong duoc cac thiet bi khac nhan duoc — dieu tra xac
+     nhan submitAdjustStock() truoc day CHI goi markEntityDirty('products', p.id), ham nay TU BO QUA
+     hoan toan neu luc do dang offline (`if(!SYNC_ENABLED || !dbRoot) return;` ben trong) — khong co
+     canh bao nao cho Admin biet thao tac Kiem kho cua ho KHONG THAT SU len duoc server, du man hinh cua
+     ho van hien dung so vua nhap (chi la thay doi cuc bo). Hau qua: Admin tuong da sua xong, nhung moi
+     thiet bi khac (va ca chinh may do sau khi F5) van thay so CU — dung nguyen trieu chung da xay ra.
+     FIX: chan NGAY tu dau bang blockIfOffline() — dung 1 pattern voi 5+ hanh dong tien/kho quan trong
+     khac trong file nay (thanh toan, ban hang, dat san...) — bao ro cho Admin va DUNG thao tac lai neu
+     dang mat mang, thay vi de ho tuong nham la da Kiem kho xong. */
+  if(blockIfOffline('điều chỉnh tồn kho')) return;
   const actual = parseInt(document.getElementById('adjustActual').value,10);
   const reason = document.getElementById('adjustReason').value;
   if(isNaN(actual) || actual < 0){ showToast('Giá trị không hợp lệ'); return; }
@@ -34112,7 +34458,7 @@ function renderDataIntegrityModal(issues){
   }
   function renderIssueRow(i, idx){
     const icon = INTEGRITY_SEVERITY_ICON[i.severity]||'';
-    const canSafeRepair = i.repairable && i.repairConfidence==='DETERMINISTIC';
+    const canSafeRepair = i.repairable && i.repairConfidence==='DETERMINISTIC' && can(PERMISSION.DATA_HEALTH_REPAIR); // §FIX-DATAHEALTH-PERMISSION — an nut voi STAFF, khong chi chan luc bam
     const detailId = 'diDetail_' + i.module + '_' + idx + '_' + (i.code||'x');
     return `<div class="bill-line" style="display:block; padding:8px 0; border-bottom:1px solid var(--border,#e5e7eb);">
       <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
@@ -34170,7 +34516,7 @@ function renderDataIntegrityModal(issues){
     <div style="margin-bottom:10px;">${headerLine}</div>
     ${feedbackHtml}
     <div style="margin-bottom:8px;">${tabsHtml}</div>
-    ${safeRepairable.length ? `<button class="small" style="margin-bottom:10px;" onclick="__dataIntegrityRunBulkRepair()">SỬA CÁC LỖI AN TOÀN (${safeRepairable.length})</button>` : ''}
+    ${(safeRepairable.length && can(PERMISSION.DATA_HEALTH_REPAIR)) ? `<button class="small" style="margin-bottom:10px;" onclick="__dataIntegrityRunBulkRepair()">SỬA CÁC LỖI AN TOÀN (${safeRepairable.length})</button>` : ''}
     ${filtered.length
       ? `<div style="max-height:420px; overflow:auto;">
            ${moduleKeys.map(mod=>{
@@ -34219,6 +34565,7 @@ function __dataIntegrityToggleDetail(id){
   if(el) el.style.display = (el.style.display==='none' ? 'block' : 'none');
 }
 function __dataIntegrityRunRepair(issueCode, entityId){
+  if(!requirePermission(PERMISSION.DATA_HEALTH_REPAIR)) return; // §FIX-DATAHEALTH-PERMISSION
   const issues = runDataIntegrityCheck();
   const issue = issues.find(i=> i.code===issueCode && String(i.entityId)===String(entityId) && i.repairConfidence==='DETERMINISTIC');
   if(!issue){
@@ -34242,6 +34589,7 @@ function __dataIntegrityRunRepair(issueCode, entityId){
   renderDataIntegrityModal(runDataIntegrityCheck());
 }
 function __dataIntegrityRunBulkRepair(){
+  if(!requirePermission(PERMISSION.DATA_HEALTH_REPAIR)) return; // §FIX-DATAHEALTH-PERMISSION
   const issues = runDataIntegrityCheck();
   const targets = issues.filter(i=>i.repairable && i.repairConfidence==='DETERMINISTIC');
   let okCount = 0, failCount = 0;
@@ -35195,14 +35543,33 @@ function buildTournamentExtraBillItems(extraItems){
   return { items, stockUpdates };
 }
 function applyTournamentExtraStockUpdates(stockUpdates, playerLabel){
+  const deductions = [];
+  const logIds = [];
   stockUpdates.forEach(su=>{
     const p = su.product;
     const stockBefore = p.stock;
     p.stock -= su.qty;
-    state.inventoryLog.unshift({ id: uid('inv'), type:'bill_product_add', productId:p.id, name:p.name,
+    const logId = uid('inv');
+    state.inventoryLog.unshift({ id: logId, type:'bill_product_add', productId:p.id, name:p.name,
       qtyChange:-su.qty, stockBefore, stockAfter:p.stock, note:'Thêm vào bill Phí tham gia giải — '+(playerLabel||''), timestamp: Date.now() });
-    markEntityDirty('products', p.id);
+    deductions.push({ productId: p.id, qty: su.qty, logId });
+    logIds.push(logId);
   });
+  /* §FIX-STOCK-RACE-TOURNEXTRA (2026-09-19) — truoc day markEntityDirty('products', p.id) cho tung
+     san pham (ghi thang, khong kiem tra remote) — cung nhom rui ro voi cac diem da fix (POS/Ban
+     le/Them vao bill/Sua dong bill). Dung lai confirmStockDeductionsAtomic() — neu bi tu choi that
+     su, hoan lai cac san pham "nuoc kem theo" nay (khong hoan bill/participant — rat hiem gap va se
+     hien Data Health canh bao de Admin doi chieu thu cong, an toan hon de sai lech ton kho am tham). */
+  if(deductions.length){
+    confirmStockDeductionsAtomic(deductions, function rollbackTournamentExtraStock(){
+      stockUpdates.forEach(su=>{ su.product.stock += su.qty; });
+      logIds.forEach(id=>{ const idx = state.inventoryLog.findIndex(l=>l.id===id); if(idx>=0) state.inventoryLog.splice(idx,1); });
+      saveState();
+      if(typeof renderProductsKho === 'function') renderProductsKho();
+      if(typeof renderTournamentTab === 'function') renderTournamentTab();
+      showToast('⚠️ Một số sản phẩm nước kèm vé giải vừa hết hàng trên máy khác. Vui lòng kiểm tra lại tồn kho.');
+    });
+  }
 }
 function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
@@ -35372,9 +35739,29 @@ function issueTournamentIncludedWater(participantId){
       if(typeof renderProductsKho === 'function') renderProductsKho();
       if(typeof renderPosGrid === 'function') renderPosGrid();
       showToast('⚠️ Nước cho VĐV "' + participant.name + '" vừa được giao trên máy khác. Đã hoàn tác.');
-    } else {
-      markEntityDirty('products', p.id);
+      return;
     }
+    /* §FIX-STOCK-RACE-TOURNWATER (2026-09-19) — cung nhom voi §FIX-STOCK-RACE-WATERFULFILL: transaction
+       tren chi bao ve participant nay khoi bi giao nuoc 2 lan, khong bao ve san pham p khoi bi tru
+       trung voi 1 nguon khac tren thiet bi khac. Xac nhan THEM qua confirmStockDeductionsAtomic(); neu
+       that su het hang, hoan tac ca ton kho VA participant.waterIssuedQty (transaction rieng). */
+    confirmStockDeductionsAtomic([{ productId: p.id, qty, logId }], function rollbackTournamentWaterStock(){
+      p.stock += qty;
+      const idx = state.inventoryLog.findIndex(l=>l.id===logId); if(idx>=0) state.inventoryLog.splice(idx,1);
+      participant.waterIssuedQty = prevIssuedQty; participant.waterIssuedAt = null;
+      saveState();
+      renderTournamentTab();
+      if(typeof renderProductsKho === 'function') renderProductsKho();
+      if(typeof renderPosGrid === 'function') renderPosGrid();
+      showToast('⚠️ ' + p.name + ' vừa hết hàng trên máy khác. Đã hoàn tác việc giao nước kèm vé.');
+      if(SYNC_ENABLED && dbRoot){
+        DataService.tournamentEntryParticipants.transaction(participant.id, remoteP=>{
+          if(!remoteP) return remoteP;
+          remoteP.waterIssuedQty = prevIssuedQty; remoteP.waterIssuedAt = null;
+          return remoteP;
+        }).catch(err=>{ console.error('[tournament water] rollback status error', err); });
+      }
+    });
   }).catch(err=>{ console.error('[tournament water] confirm error', err); handleWriteError('tournamentEntryParticipants','transaction',err); });
 }
 
@@ -36196,6 +36583,26 @@ function refreshGroupMatchStatusUI(catKey, groupIdx, matchIdx){
 /* updateScore: LUON doc rule tu tournament config qua getStageRule() (khong hardcode §16), tu tinh
    completed dua tren validateMatchScore() — Staff nhap chua du dieu kien thi diem VAN duoc luu nguyen
    (khong xoa so vua nhap, §10), chi la completed=false nen chua tinh vao standings. */
+/* §KNOWN-LIMITATION-TOURNSCORE-RACE (2026-09-19, tu FULL DEEP AUDIT) — updateScore()/confirmMatchResult()/
+   unlockMatchResult() chi goi saveState() (KHONG markEntityDirty ngay) — dua hoan toan vao luoi an toan
+   debounce (diffAndFlushEntities/occFlushEntity, ~line 8369/8347) de dong bo state.tournaments[catKey]
+   (1 object LON gom ca schedule/knockout/status). occFlushEntity CO kiem tra xung dot (OCC — tu choi ghi
+   neu remote da doi khac ban ghi cuoi cung thiet bi nay biet), nen KHONG lam hong du lieu server — nhung
+   khi 2 nhan vien tren 2 san khac nhau CUNG ghi diem 2 TRAN KHAC NHAU trong CUNG 1 hang muc giai gan nhu
+   dong thoi (tinh huong RAT HAY GAP luc giai dang dien ra, khac voi tinh huong hiem "2 nguoi sua 1 bill"),
+   ben THUA cuoc dua se bi HUY diem vua nhap tren may cua ho (applyRemoteEntityLocally ghi de local bang
+   remote) — khong mat du lieu server nhung nhan vien do phai nhap lai.
+   DA CAN NHAC sua theo pattern "patch 1 tran theo path qua transaction" (giong addBillItem() da sua o
+   §FIX-BILLITEM-MERGE-RACE) nhung PHAT HIEN: cap nhat diem co the KEO THEO nhieu thay doi khac trong
+   CUNG object tournaments[catKey] cung luc (advanceKnockoutIfApplicable/maybeAdvanceTournamentStatus/
+   maybeAutoProgressTournament — tu dong chot vong bang + tao cay). Neu chi "patch rieng 1 tran" ma khong
+   dong bo dung luc voi lastSyncedSnapshot, co nguy co tao XUNG DOT GIA voi chinh luoi an toan debounce,
+   khien CAC THAY DOI KHAC (vd tu dong tao cay) bi RUNG MAT ma khong bao — tuc la sua nua voi co the tao
+   bug MOI nang hon bug dang co, tren dung luong quan trong nhat luc giai dang dien ra truc tiep. KHONG
+   the test truc tiep voi Firebase that trong sandbox nay de kiem chung an toan truoc khi giao — Admin
+   va tui da thong nhat DUNG sua diem nay lai o phien nay, giu nguyen co che hien tai (an toan cho du
+   lieu server, chi han che UX khi trung gio hiem khi xay ra). CAN quay lai sua o 1 phien co moi truong
+   test Firebase that (staging) truoc khi trien khai. */
 function updateScore(catKey, groupIdx, matchIdx, field, value){
   const t = state.tournaments[catKey];
   const m = t.schedule[groupIdx][matchIdx];
