@@ -2,6 +2,26 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.19 (2026-09-19) — §HOTFIX-BOOKINGITEM-SYNCRACE-2026. Admin báo TIẾP sau bản v1.44.18 (đã sửa mở
+  đúng bill qua explicitBillId): booking "C Hòa" vẫn hiện Bill 0đ. Điều tra qua Console (dump trực tiếp
+  state.bills, KHÔNG đoán) xác nhận bill_mu8er1c1bm72k của C Hòa tồn tại thật, đã đồng bộ lên Firebase,
+  status 'open', nhưng KHÔNG CÓ field "items" nào — tức bill có thật nhưng dòng "Thuê sân" 120.000đ chưa
+  từng lên được server. ROOT CAUSE: đây là biến thể của đúng lớp lỗi đã vá trước đó cho addBillItem()
+  (§FIX-BILLITEM-MERGE-RACE) và ensureOpenBillForPlayer() (§HOTFIX-BILLSYNC1) — nhưng lần này ở đường
+  Booking, CHƯA từng được vá. ensureOpenBillForCustomer() gọi markEntityDirty('bills', bill.id) NGAY LÚC
+  TẠO bill, khi bill.items vẫn đang rỗng ([]) — dòng "Thuê sân" chỉ được push vào SAU đó trong
+  addBookingBillItem() bằng .push() thô, không có cơ chế đồng bộ transaction riêng. Nếu lưới an toàn
+  debounce (diffAndFlushEntities) flush đúng lúc bill còn rỗng (hoặc có ghi đè khác chen vào khoảng hở
+  này), item vừa thêm cục bộ bị bỏ lại, không bao giờ lên server — đúng triệu chứng quan sát được. FIX:
+  addBookingBillItem() bỏ hẳn `bill.items.push()` thô, dùng lại addItemToBillById() (hàm mới thêm ở bản
+  v1.44.18, cùng cơ chế Firebase transaction APPEND-BY-ID an toàn y hệt addBillItem() gốc) — áp dụng cho
+  CẢ 3 đường tạo booking (đặt lẻ/sửa buổi/chuỗi cố định tháng, cả 3 đều gọi chung addBookingBillItem()),
+  không đổi chữ ký hàm { bill, itemId } nên không cần sửa nơi gọi nào khác. LƯU Ý: bản vá này chỉ ngăn
+  LỖI MỚI phát sinh từ nay — bill_mu8er1c1bm72k của C Hòa (dữ liệu cũ, đã lỡ mất item) cần vá tay 1 lần
+  qua Console (đã hướng dẫn riêng cho Admin, không tự động chạy hàng loạt vì đây là sửa dữ liệu tiền đã
+  tồn tại — theo đúng nguyên tắc không tự ý đụng dữ liệu tiền/lịch sử mà không xác nhận). Đã kiểm tra:
+  script tag 14/9 khớp, Node syntax check 0 lỗi.
+
   v1.44.18 (2026-09-19) — §HOTFIX-BOOKINGBILL-WRONGBILL-2026. Admin báo: trong ĐẶT SÂN, bấm "THANH TOÁN"
   cho 1 booking rõ ràng có giá 120.000đ và chưa thu tiền, nhưng modal Bill lại hiện "Chưa phát sinh khoản
   nào." ROOT CAUSE (đọc code, không đoán): 2 nút "XEM BILL"/"THANH TOÁN" trong Chi tiết booking
@@ -8644,7 +8664,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.18'; // §HOTFIX-BOOKINGBILL-WRONGBILL-2026 — sửa THANH TOÁN/XEM BILL ở Đặt sân mở nhầm/mở hụt bill + thêm nút "Thêm nước" — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.19'; // §HOTFIX-BOOKINGITEM-SYNCRACE-2026 — sửa item bill booking (Thuê sân) có thể bị mất khi đồng bộ Firebase lúc tạo booking — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -30992,11 +31012,28 @@ function ensureOpenBillForCustomer(customerId, customerName){
   markEntityDirty('bills', bill.id);
   return bill;
 }
+/* §HOTFIX-BOOKINGITEM-SYNCRACE-2026 — Admin báo: booking của "C Hòa" (Sân 1, 17:00–18:00, 120.000đ,
+   chưa thu tiền) mở Bill vẫn hiện "Chưa phát sinh khoản nào." dù bản vá trước (mở đúng bill qua
+   explicitBillId) đã lên. Dump trực tiếp state.bills qua Console xác nhận: bill_mu8er1c1bm72k của C Hòa
+   tồn tại thật (status:'open', playerId:'book_name_c_hòa') nhưng KHÔNG CÓ field "items" nào cả — tức bản
+   thân bill đã đồng bộ lên Firebase mà KHÔNG mang theo dòng "Thuê sân" 120.000đ đáng lẽ phải có.
+   ROOT CAUSE (cùng lớp lỗi đã từng vá ở §FIX-BILLITEM-MERGE-RACE cho addBillItem() và §HOTFIX-BILLSYNC1
+   cho ensureOpenBillForPlayer(), nhưng CHƯA từng áp dụng cho đường Booking này): ensureOpenBillForCustomer()
+   gọi markEntityDirty('bills', bill.id) NGAY LÚC TẠO bill — tại thời điểm đó bill.items VẪN ĐANG RỖNG
+   ([]), vì dòng "Thuê sân"/"Vé Social"... chỉ được push vào SAU đó, ở đúng hàm này. Nếu lưới an toàn
+   debounce (diffAndFlushEntities) flush bill lên Firebase ĐÚNG NGAY thời điểm còn rỗng đó (hoặc 1 snapshot
+   .set() ghi đè từ nơi khác đến trong khoảng hở này), item vừa push cục bộ bị "bỏ lại" — không bao giờ lên
+   được server, y hệt kiểu lỗi đã ghi nhận trước đây. FIX: bỏ hẳn `bill.items.push()` thô ở đây — dùng
+   LẠI addItemToBillById() (đã thêm ở bản vá trước, cùng cơ chế Firebase transaction APPEND-BY-ID an toàn
+   y hệt addBillItem() gốc) để thêm item, đảm bảo item luôn được xác nhận ghi lên server đúng cách, không
+   phụ thuộc lưới an toàn debounce nữa — áp dụng cho MỌI đường tạo booking (đặt lẻ/sửa/chuỗi cố định, cả 3
+   đều gọi chung hàm này). KHÔNG đổi chữ ký hàm { bill, itemId } — mọi nơi gọi addBookingBillItem() giữ
+   nguyên 100%, không cần sửa gì thêm. */
 function addBookingBillItem(customerId, customerName, item){
   const bill = ensureOpenBillForCustomer(customerId, customerName);
-  const created = Object.assign({ id: uid('bi'), timestamp: Date.now() }, item);
-  bill.items.push(created);
-  return { bill, itemId: created.id };
+  const updatedBill = addItemToBillById(bill.id, item) || bill;
+  const created = updatedBill.items[updatedBill.items.length-1];
+  return { bill: updatedBill, itemId: created ? created.id : null };
 }
 function removeBillItemById(billId, itemId){
   const bill = state.bills.find(b=>b.id===billId);
