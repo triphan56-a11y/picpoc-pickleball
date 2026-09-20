@@ -2,6 +2,39 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.22 (2026-09-20) — §FIX-MARKDIRTY-CAS-2026. Admin yêu cầu "kiểm tra kỹ lại" 3 cảnh báo còn sót
+  trong Data Health (Chị Vi Lá Coffee, Tú Anh, Béo — status='paid_and_left' nhưng Visit vẫn ACTIVE kèm
+  bill thật còn nợ 37.000đ/64.000đ/44.000đ), thay vì chấp nhận lời giải thích ban đầu (tưởng là ca "chờ
+  thanh toán" bình thường). ĐIỀU TRA (đọc lại toàn bộ 7 vị trí gán status='paid_and_left' trong code +
+  đối chiếu dữ liệu thật do Admin chạy console): xác nhận CẢ 3 ca đều có finishedPlayingAt và
+  paidAndLeftAt cách nhau chỉ 2-3 giây — đúng "chữ ký" của nhánh tự đóng phiên khi bill về 0đ trong
+  endPlaying(), tức Visit ĐÃ được đóng đúng (COMPLETED) ngay lúc đó. Vậy tại sao Visit lại hiện ACTIVE?
+  ROOT CAUSE THẬT SỰ (khác hẳn lỗi đã sửa ở v1.44.21): markEntityDirty() — hàm đẩy dữ liệu tức thời lên
+  Firebase mỗi khi 1 trường quan trọng thay đổi (dùng ở HÀNG CHỤC nơi: đóng Visit, thanh toán bill, check-
+  in, v.v.) — trước đây ghi thẳng bằng .set() KHÔNG kiểm tra dữ liệu trên server có bị đổi khác hay chưa,
+  khác hẳn luồng đồng bộ nền diffAndFlushEntities()/occFlushEntity() vốn ĐÃ dùng Firebase transaction có
+  so khớp (§FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE, vá từ trước). Hậu quả: nếu đúng lúc 1 thiết bị vừa đóng
+  xong 1 Visit, mà có 1 thiết bị KHÁC đang giữ bản sao CŨ HƠN của đúng Visit đó (status vẫn ACTIVE — vd do
+  đứng máy lâu chưa nhận cập nhật mới) và thiết bị đó gọi markEntityDirty('playerVisits', ...) cho BẤT KỲ
+  thay đổi nào khác trên cùng Visit, nó sẽ ghi đè nguyên bản CŨ (ACTIVE) lên bản vừa đóng — "hồi sinh"
+  Visit về ACTIVE một cách âm thầm, không hành động nghiệp vụ nào được ghi log (giải thích vì sao
+  overrideLog trống — đây là 1 cú ghi đồng bộ thô, không phải 1 thao tác Admin/Staff bấm). player.status
+  vẫn đúng 'paid_and_left' vì trường đó được ghi ở luồng khác, không bị ảnh hưởng — tạo ra đúng tổ hợp lệch
+  pha quan sát được. FIX TẬN GỐC (theo yêu cầu Admin — vá toàn diện thay vì chỉ 1 điểm): viết lại
+  markEntityDirty() dùng flushDirtyEntityCAS() — Firebase .transaction() so khớp với lastSyncedSnapshot
+  (giá trị server mà THIẾT BỊ NÀY tin là đúng lúc đồng bộ gần nhất) trước khi cho ghi; nếu server đã đổi
+  khác (bị thiết bị khác ghi trước), HUỶ ghi và kéo đúng bản MỚI NHẤT từ server về local thay vì âm thầm
+  đè lên — không còn "ai ghi sau thắng" nữa. Xử lý thêm rủi ro phát sinh khi tự làm CAS thủ công: nhiều
+  hàm gọi markEntityDirty() LIÊN TIẾP cho CÙNG 1 id trong CÙNG 1 lượt xử lý (vd completePlayerVisit() +
+  endPlaying() cùng đẩy 'playerVisits' cho cùng Visit) — nếu mở 2 transaction song song sẽ tự loại nhau
+  (mất đúng thay đổi của chính mình) — GIẢI PHÁP: dùng pendingEntityWrites có sẵn để phát hiện đang có 1
+  lượt CAS bay dở cho đúng id, xếp hàng (markDirtyQueued) và tự flush lại đúng 1 lần cuối với dữ liệu MỚI
+  NHẤT ngay sau khi lượt đang bay xong — không bỏ sót, không tự loại nhau. KHÔNG đụng đến
+  diffAndFlushEntities()/occFlushEntity() (luồng nền đã an toàn từ trước, giữ nguyên để giảm phạm vi rủi
+  ro). KHÔNG đổi logic nghiệp vụ/tài chính nào khác. XỬ LÝ 3 CA CŨ: chưa đụng dữ liệu — tiền nợ thật
+  (37k/64k/44k) vẫn cần thu qua Bill bình thường trước, Visit sẽ tự đóng đúng khi thanh toán xong (không
+  ép đóng Visit khi còn nợ thật, theo đúng nguyên tắc AMBIGUOUS của Data Health).
+
   v1.44.21 (2026-09-20) — §HOTFIX-BILLBTN-ENDSSESSION-2026 [NGHIÊM TRỌNG]. Admin chạy Kiểm tra dữ liệu,
   phát hiện 15 khách check-in trong ngày (18-20/9/2026) bị hệ thống tự chuyển nhầm sang "đã rời sân"
   (paid_and_left) dù Visit vẫn đang ACTIVE — tức app nghĩ họ đã về trong khi thực tế vẫn đang ở sân.
@@ -8338,6 +8371,14 @@ function markEntityPendingWrite(node, id){
 function clearEntityPendingWrite(node, id){
   if(pendingEntityWrites[node]) pendingEntityWrites[node].delete(id);
 }
+/* §FIX-MARKDIRTY-CAS-2026 — id nao dang co 1 luot flush CAS (flushDirtyEntityCAS) BAY DO (chua round-trip
+   xong) ma lai co THEM 1 markEntityDirty() nua goi toi CUNG id trong luc do (rat pho bien — vd
+   completePlayerVisit() va endPlaying() cung day 'playerVisits' cho CUNG 1 Visit lien tiep trong cung 1
+   ham) — se duoc xep vao day thay vi mo 1 transaction THU 2 song song (2 transaction song song se tu choi
+   lan nhau vi cung so voi 1 prevJson "cu" giong het nhau, gay MAT du lieu oan uong cua chinh thiet bi minh,
+   xem giai thich day du o flushDirtyEntityCAS). Sau khi luot dang bay xong, tu dong flush lai DUNG 1 LAN
+   NUA voi du lieu MOI NHAT luc do — dam bao khong bo sot thay doi. */
+let markDirtyQueued = {}; // node -> Set(id)
 /* §FIX-MARKDIRTY-LISTENEROVERWRITE — Admin bao "check-in nhieu nguoi luc dong khach, 1 nguoi (Chị Vi Lá
    Coffee) bi tao toi 15 bill trung nhau cung ngay" — dieu tra tiep tu §FIX-CHECKIN-LISTENEROVERWRITE
    (v1.43.20, chi vá rieng player.status) phat hien GOC RE RONG HON: markEntityDirty() — CHOKE POINT dung
@@ -8366,14 +8407,64 @@ function markEntityDirty(node, id){
     dbRoot.child(fb).child(id).remove()
       .catch(err=>handleWriteError(node,'remove',err))
       .finally(()=>clearEntityPendingWrite(node, id));
+    if(lastSyncedSnapshot[node]) delete lastSyncedSnapshot[node][id];
     return;
   }
+  /* §FIX-MARKDIRTY-CAS-2026 — Admin yeu cau "kiem tra ky lai" phat hien 3 truong hop Visit bi "hoi sinh"
+     ve ACTIVE ngay sau khi vua duoc dong (endPlaying() tu dong dong khi bill ve 0d) du player.status van
+     dung 'paid_and_left' — 2 truong lech pha nhau, KHONG co dong log nghiep vu nao giai thich duoc (khong
+     phai 1 hanh dong Admin/Staff bam, ma la 1 cu ghi dong bo tho). Doc lai toan bo cac diem gan
+     status='paid_and_left' (7 vi tri) xac nhan KHONG co duong nao trong code nghiep vu tao ra duoc to hop
+     nay — GOC RE THAT SU nam o chinh ham nay: truoc day markEntityDirty() ghi thang bang .set() KHONG CO
+     kiem tra du lieu server co doi khac hay chua (khac han diffAndFlushEntities()/occFlushEntity() dung
+     transaction CO kiem tra §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE). Neu dung luc 1 thiet bi vua dong xong
+     1 Visit (markEntityDirty ghi 'playerVisits' voi status COMPLETED), MA co 1 thiet bi KHAC dang giu 1
+     ban sao CU HON cua CHINH Visit do (status van ACTIVE, vd do dung may lau chua nhan duoc cap nhat moi
+     nhat) va thiet bi do thuc hien BAT KY thao tac nao khac cung goi markEntityDirty('playerVisits', ...)
+     cho id nay, no se DE THANG ban cu (ACTIVE) len ban vua dong — "hoi sinh" Visit ma khong ai hay biet,
+     khong log nao ghi lai (dung 1 lop loi voi §FIX-MARKDIRTY-LISTENEROVERWRITE nhung o TANG WRITE thay vi
+     tang LISTENER). FIX TAN GOC: chuyen sang flushDirtyEntityCAS() — dung Firebase .transaction() so khop
+     voi lastSyncedSnapshot (gia tri server ma THIET BI NAY tin la dung luc dong bo gan nhat) TRUOC khi cho
+     ghi; neu server da doi khac (vd bi thiet bi khac ghi truoc), HUY ghi va keo dung ban server MOI NHAT ve
+     local (applyRemoteEntityLocally) thay vi am tham de len — khong con "ai ghi sau thang" nua. */
+  if(pendingEntityWrites[node] && pendingEntityWrites[node].has(id)){
+    if(!markDirtyQueued[node]) markDirtyQueued[node] = new Set();
+    markDirtyQueued[node].add(id);
+    return;
+  }
+  flushDirtyEntityCAS(node, fb, id);
+}
+/* §FIX-MARKDIRTY-CAS-2026 — xem giai thich day du o markEntityDirty(). Doc lai entity MOI NHAT tu
+   state[node] NGAY LUC BAT DAU flush (khong dung tham chieu cu truyen tu truoc) de dam bao neu co
+   markDirtyQueued xep hang, lan flush lai luon lay dung du lieu MOI NHAT tai thoi diem do. */
+function flushDirtyEntityCAS(node, fb, id){
+  const arr = state[node];
+  let entity = null;
+  if(Array.isArray(arr)) entity = arr.find(e=>e && e.id===id);
+  else if(arr && typeof arr === 'object') entity = arr[id];
+  if(entity === undefined || entity === null) return;
+  const prevJson = (lastSyncedSnapshot[node] && Object.prototype.hasOwnProperty.call(lastSyncedSnapshot[node], id))
+    ? lastSyncedSnapshot[node][id] : undefined;
   markEntityPendingWrite(node, id);
-  dbRoot.child(fb).child(id).set(sanitizeForFirebase(entity))
-    .catch(err=>handleWriteError(node,'set',err))
-    .finally(()=>clearEntityPendingWrite(node, id));
-  if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
-  lastSyncedSnapshot[node][id] = JSON.stringify(entity);
+  dbRoot.child(fb).child(id).transaction(remote=>{
+    const remoteJson = (remote === null || remote === undefined) ? null : JSON.stringify(remote);
+    if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // server da doi khac tu lan dong bo cuoi cua thiet bi nay -> huy, khong ghi de
+    return sanitizeForFirebase(entity);
+  }).then(result=>{
+    if(!result || !result.committed){
+      applyRemoteEntityLocally(node, id, result && result.snapshot ? result.snapshot.val() : null);
+    } else {
+      if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
+      lastSyncedSnapshot[node][id] = JSON.stringify(entity);
+    }
+  }).catch(err=>{ console.error('[markDirty] CAS error', node, id, err); handleWriteError(node,'set',err); })
+  .finally(()=>{
+    clearEntityPendingWrite(node, id);
+    if(markDirtyQueued[node] && markDirtyQueued[node].has(id)){
+      markDirtyQueued[node].delete(id);
+      flushDirtyEntityCAS(node, fb, id); // co thay doi moi phat sinh trong luc dang bay -> flush lai 1 lan cuoi voi du lieu MOI NHAT, khong bo sot
+    }
+  });
 }
 /* §INV-FIX2026 — danh dau 1 entity la "da dong bo" MA KHONG ghi .set() len Firebase — dung SAU KHI
    mot Firebase transaction (VD confirmStockImportAtomic/confirmStockDeductionsAtomic) da tu ghi ket
@@ -8701,7 +8792,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.21'; // §HOTFIX-BILLBTN-ENDSSESSION-2026 [NGHIÊM TRỌNG] — nút Bill không còn âm thầm kết thúc phiên khi chỉ xem — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.22'; // §FIX-MARKDIRTY-CAS-2026 — markEntityDirty() giờ ghi qua Firebase transaction có kiểm tra (CAS), chặn lỗi thiết bị cũ ghi đè "hồi sinh" Visit đã đóng — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
