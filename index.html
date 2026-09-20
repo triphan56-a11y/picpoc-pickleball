@@ -2,6 +2,46 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.23 (2026-09-20) — §FIX-MARKDIRTY-CAS-2026 (tiếp). Admin yêu cầu "kiểm tra chuyên sâu lại toàn bộ
+  app 1 lần nữa" sau v1.44.22 — chạy 5 mũi audit độc lập (đồng bộ dữ liệu, tiền/bill/nợ, vòng đời Visit,
+  Credits/thưởng, tồn kho + Data Health) rà lại toàn bộ code. KHÔNG tìm thêm bug tiền bạc mới (double-charge,
+  payment mất, Credit phát trùng) — engine tiền bạc đã nhất quán, mọi write đều qua markEntityDirty()/CAS
+  hoặc transaction riêng. Xác nhận: reason 'DEBT_RECONCILE' dùng thủ công cho 3 ca Vi Lá Coffee/Tú Anh/Béo
+  KHÔNG khớp 'PAID'/'DEBT' nên KHÔNG phát Credit sai — an toàn.
+  TÌM RA VÀ VÁ 5 VẤN ĐỀ THẬT (không lý thuyết):
+  (1) P0 — confirmCheckInAtomic(): khi 2 thiết bị check-in trùng 1 khách gần như đồng thời, nhánh rollback
+  (server từ chối) trước đây chỉ đóng Visit "thua" CỤC BỘ (v.status='COMPLETED', chỉ saveState() local) mà
+  KHÔNG BAO GIỜ đẩy lên Firebase (markEntityDirty() bị thiếu) — để lại 1 Visit "ma" mãi mãi ACTIVE trên
+  server, đúng lớp lỗi "Visit hồi sinh" vừa xử lý nhưng nguồn gốc khác hẳn (thiếu ghi, không phải ghi đè).
+  FIX: thêm markEntityDirty('playerVisits', v.id) ngay trong nhánh rollback.
+  (2) P1 — occFlushEntity()/diffAndFlushEntities() (luồng nền định kỳ) trước đây KHÔNG biết về
+  pendingEntityWrites, có thể mở transaction CAS thứ 2 song song với đúng lúc flushDirtyEntityCAS() (luồng
+  nhanh, v1.44.22) đang bay cho CÙNG 1 id — 2 transaction độc lập dựa trên 2 "bản đã đồng bộ cuối" lệch
+  nhau, bên chạy sau tự CAS-reject NHẦM chính thay đổi hợp lệ của mình, kéo dữ liệu lùi về bản cũ hơn (tự
+  lặp lại chính lớp lỗi §FIX-MARKDIRTY-CAS-2026 định xoá, chỉ đổi 2 bên đụng độ). FIX: occFlushEntity() giờ
+  dùng chung pendingEntityWrites/markDirtyQueued với flushDirtyEntityCAS() — không mở transaction song
+  song, xếp hàng flush lại 1 lần cuối sau khi lượt đang bay xong.
+  (3) P1 — diffAndFlushEntities() trước đây gán lastSyncedSnapshot[node]=nextMap NGAY SAU KHI BẮN
+  (fire) các occFlushEntity() bất đồng bộ — coi như "đã đồng bộ xong" TRƯỚC KHI server thật sự xác nhận.
+  Trong cửa sổ chờ đó, nếu có 1 lượt flushDirtyEntityCAS() khác đọc lastSyncedSnapshot làm mốc so sánh
+  (prevJson) trong khi giá trị đó vẫn chỉ là "lạc quan", CAS có thể từ chối NHẦM 1 thay đổi hợp lệ. FIX:
+  nextMap giờ bắt đầu từ bản CŨ (đã xác nhận), KHÔNG cập nhật lạc quan cho id đang bay — chỉ
+  occFlushEntity() tự cập nhật CHÍNH XÁC sau khi có kết quả THẬT từ server (thành công hay bị từ chối đều
+  cập nhật đúng).
+  (4) P1 — cancelWaterLoss() (hoàn tồn kho khi hủy khoản độ nước) trước đây cộng dồn bằng "p.stock += qty"
+  cục bộ rồi ghi CẢ OBJECT sản phẩm qua markEntityDirty() (CAS tuyệt đối) — nếu đúng lúc 1 thiết bị khác
+  cũng đang sửa CHÍNH sản phẩm đó (bán hàng/nhập kho), CAS có thể từ chối và kéo state cục bộ về bản
+  server (không có phần hoàn tồn), làm MẤT ÂM THẦM phần hoàn kho vừa tính, không cảnh báo. FIX: thêm hàm
+  confirmStockRefundAtomic() — transaction CỘNG DỒN riêng chỉ trên field 'stock' (cùng cơ chế với
+  confirmStockImportAtomic() có sẵn), idempotent qua operationId, không còn đi qua markEntityDirty() cho
+  bước hoàn kho này.
+  (5) P1 — Data Health: thêm 3 check mới để phát hiện SỚM nếu lớp lỗi "Visit hồi sinh"/dữ liệu hỏng tái
+  diễn ở đâu đó chưa lường tới: BILL_MALFORMED_ITEMS (bill thiếu/hỏng field items — đúng loại lỗi từng gặp
+  thật ở booking C Hòa), DUPLICATE_ACTIVE_VISIT (1 player có >1 Visit ACTIVE cùng lúc), VISIT_RESURRECTED_ACTIVE
+  (1 Visit đang ACTIVE nhưng đã có dấu vết từng bị đóng — checkOutAt/closeReason). Cả 3 đều chỉ CẢNH BÁO
+  (AMBIGUOUS, cần Admin xem), KHÔNG tự sửa.
+  KHÔNG đổi logic nghiệp vụ/tài chính nào khác ngoài 5 điểm trên.
+
   v1.44.22 (2026-09-20) — §FIX-MARKDIRTY-CAS-2026. Admin yêu cầu "kiểm tra kỹ lại" 3 cảnh báo còn sót
   trong Data Health (Chị Vi Lá Coffee, Tú Anh, Béo — status='paid_and_left' nhưng Visit vẫn ACTIVE kèm
   bill thật còn nợ 37.000đ/64.000đ/44.000đ), thay vì chấp nhận lời giải thích ban đầu (tưởng là ca "chờ
@@ -8632,6 +8672,31 @@ function confirmStockImportAtomic(productId, qty, unitCost, operationId){
     throw err;
   });
 }
+/* §FIX-WATERLOSS-STOCK-CAS-2026 — audit chuyen sau (sau v1.44.22) phat hien cancelWaterLoss() hoan tra
+   ton kho bang p.stock += qty (delta) roi markEntityDirty('products', p.id) (ghi TUYET DOI ca object qua
+   CAS whole-object) — neu dung luc 2 thiet bi cung sua CHINH san pham nay gan nhu dong thoi (vd 1 ben dang
+   ban hang tru kho, 1 ben huy do nuoc hoan kho), CAS co the tu choi 1 trong 2 (do prevJson lech nhau), va
+   applyRemoteEntityLocally() se GHI DE TOAN BO local bang snapshot server — lam MAT LUON phan hoan tra vua
+   tinh, am tham, khong canh bao, khong retry. FIX: dung 1 transaction CONG DON rieng CHI tren field
+   'stock' (cung pattern voi confirmStockImportAtomic() o tren — cong THEM qty vao gia tri THAT tren server
+   tai thoi diem transaction chay, khong phu thuoc snapshot cuc bo cu), idempotent qua operationId
+   (lastStockRefundOpId) de an toan neu bi goi lai (retry/F5). */
+function confirmStockRefundAtomic(productId, qty, operationId){
+  if(!SYNC_ENABLED || !dbRoot) return Promise.resolve({ committed:true, offline:true });
+  const fb = fbNodeNameFor('products');
+  return dbRoot.child(fb).child(productId).transaction(remoteP=>{
+    if(remoteP === null) return remoteP; // san pham chua tung sync len server — bo qua, giu hanh vi best-effort
+    if(remoteP.lastStockRefundOpId === operationId) return remoteP; // da xu ly operationId nay roi — idempotent, khong cong lan 2
+    remoteP.stock = (remoteP.stock||0) + qty;
+    remoteP.updatedAt = Date.now();
+    remoteP.lastStockRefundOpId = operationId;
+    return remoteP;
+  }).then(result=>{
+    if(!result || !result.committed) return { committed:false };
+    const finalVal = (result.snapshot && result.snapshot.val()) || null;
+    return { committed:true, stockAfter: finalVal ? (finalVal.stock||0) : null };
+  }).catch(err=>{ console.error('[stock-refund] confirm error', err); handleWriteError('products','transaction',err); return { committed:false, error:err }; });
+}
 
 /* §DATA-ARCH-43/63 — CHONG 2 THIET BI CUNG DAT TRUNG 1 KHUNG GIO/SAN. findOverlapBooking() cu
    chi doc state.bookings LOCAL nen khong an toan da thiet bi (2 device cung pass check local roi
@@ -8705,8 +8770,35 @@ function applyRemoteEntityLocally(node, id, remoteVal){
   if(typeof tryCacheStateLocally === 'function') tryCacheStateLocally('applyRemoteEntityLocally');
   if(typeof scopedRenderFor === 'function') scopedRenderFor(node);
 }
+/* §FIX-DIFFFLUSH-CAS-RACE-2026 — audit chuyen sau sau v1.44.22 (§FIX-MARKDIRTY-CAS-2026) phat hien 2 lo
+   hong con sot lai o CHINH luoi an toan nay (khac voi markEntityDirty da vá):
+   (1) occFlushEntity() truoc day KHONG kiem tra pendingEntityWrites truoc khi mo transaction — neu dung
+   luc 1 id dang co 1 luot flushDirtyEntityCAS() (duong nhanh) bay dang do CHO id nay, ma diffAndFlushEntities()
+   (chu ky nen) cung chay va goi occFlushEntity() cho DUNG id do, 2 transaction Firebase doc lap se dua
+   tren 2 "prevJson" co the LECH nhau (1 ben con cu) — ben chay SAU se tu CAS-reject chinh thay doi hop le
+   cua minh, keo state cuc bo lui ve ban CU HON — dung 1 lop loi "tu ghi de chinh minh" nhu markEntityDirty
+   cu, chi khac la giua duong nhanh va duong nen thay vi giua 2 lan goi duong nhanh.
+   (2) diffAndFlushEntities() truoc day GAN lastSyncedSnapshot[node]=nextMap NGAY SAU KHI BAN (fire) cac
+   occFlushEntity() bat dong bo — tuc coi nhu "da dong bo xong" TRUOC KHI server thuc su xac nhan commit.
+   Trong khoang cho do, neu 1 loi goi flushDirtyEntityCAS() khac (duong nhanh) doc lastSyncedSnapshot lam
+   prevJson, no se dung 1 gia tri "lac quan" CHUA CHAC da len server that — neu server luc do van con gia
+   tri CU, CAS se tu choi NHAM 1 thay doi hop le, keo state lui ve ban cu hon.
+   FIX CA 2: occFlushEntity() gio dung chung pendingEntityWrites/markDirtyQueued voi flushDirtyEntityCAS()
+   (khong mo 2 transaction song song cho cung id, xep hang flush lai 1 lan cuoi qua flushDirtyEntityCAS()
+   sau khi luot dang bay xong — luon doc state MOI NHAT luc do). diffAndFlushEntities() gio KHONG con gan
+   nextMap[id] lac quan cho cac id VUA duoc ban di (changed/deleted) — GIU NGUYEN gia tri CU (tu prevMap)
+   cho toi khi occFlushEntity() tu cap nhat CHINH XAC sau khi server XAC NHAN THAT (thanh cong hoac bi tu
+   choi deu tu cap nhat dung, xem occFlushEntity). Neu chu ky sau chay lai truoc khi flush cu xong, no se
+   thay "van con khac" va goi lai occFlushEntity() — nhung gio da duoc chan boi pendingEntityWrites nen
+   KHONG mo transaction thu 2, chi xep hang — an toan, khong con race. */
 function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
   if(!SYNC_ENABLED || !dbRoot) return;
+  if(pendingEntityWrites[node] && pendingEntityWrites[node].has(id)){
+    if(!markDirtyQueued[node]) markDirtyQueued[node] = new Set();
+    markDirtyQueued[node].add(id);
+    return;
+  }
+  markEntityPendingWrite(node, id);
   dbRoot.child(fb).child(id).transaction(remote=>{
     const remoteJson = (remote === null || remote === undefined) ? null : JSON.stringify(remote);
     if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — remote da doi khac tu lan dong bo cuoi cua thiet bi nay, huy
@@ -8725,7 +8817,14 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
     if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
     if(desiredEntityOrNull === null) delete lastSyncedSnapshot[node][id];
     else lastSyncedSnapshot[node][id] = JSON.stringify(desiredEntityOrNull);
-  }).catch(err=>{ console.error('[diffFlush] occ error', node, id, err); handleWriteError(node,'transaction',err); });
+  }).catch(err=>{ console.error('[diffFlush] occ error', node, id, err); handleWriteError(node,'transaction',err); })
+  .finally(()=>{
+    clearEntityPendingWrite(node, id);
+    if(markDirtyQueued[node] && markDirtyQueued[node].has(id)){
+      markDirtyQueued[node].delete(id);
+      flushDirtyEntityCAS(node, fb, id); // co thay doi moi phat sinh trong luc dang bay -> flush lai 1 lan cuoi voi du lieu MOI NHAT tu state
+    }
+  });
 }
 function diffAndFlushEntities(){
   if(!SYNC_ENABLED || !dbRoot) return;
@@ -8734,17 +8833,18 @@ function diffAndFlushEntities(){
     if(!Array.isArray(arr)) return;
     const fb = fbNodeNameFor(node);
     const prevMap = lastSyncedSnapshot[node] || {};
-    const nextMap = {};
+    const nextMap = Object.assign({}, prevMap); // §FIX-DIFFFLUSH-CAS-RACE-2026 — bat dau tu ban CU (da xac nhan), KHONG phai rong/lac quan
     arr.forEach(entity=>{
       if(!entity || !entity.id) return;
       const json = JSON.stringify(entity);
-      nextMap[entity.id] = json;
       if(prevMap[entity.id] !== json){
         occFlushEntity(node, fb, entity.id, entity, prevMap[entity.id]);
+        // KHONG gan nextMap[entity.id]=json o day — giu gia tri CU cho toi khi occFlushEntity() tu cap
+        // nhat CHINH XAC sau khi co ket qua that tu server (xem giai thich §FIX-DIFFFLUSH-CAS-RACE-2026)
       }
     });
     Object.keys(prevMap).forEach(id=>{
-      if(!(id in nextMap)) occFlushEntity(node, fb, id, null, prevMap[id]);
+      if(!arr.some(e=>e && e.id===id)) occFlushEntity(node, fb, id, null, prevMap[id]);
     });
     lastSyncedSnapshot[node] = nextMap;
   });
@@ -8753,16 +8853,15 @@ function diffAndFlushEntities(){
     if(!obj || typeof obj !== 'object') return;
     const fb = fbNodeNameFor(node);
     const prevMap = lastSyncedSnapshot[node] || {};
-    const nextMap = {};
+    const nextMap = Object.assign({}, prevMap);
     Object.keys(obj).forEach(id=>{
       const json = JSON.stringify(obj[id]);
-      nextMap[id] = json;
       if(prevMap[id] !== json){
         occFlushEntity(node, fb, id, obj[id], prevMap[id]);
       }
     });
     Object.keys(prevMap).forEach(id=>{
-      if(!(id in nextMap)) occFlushEntity(node, fb, id, null, prevMap[id]);
+      if(!(id in obj)) occFlushEntity(node, fb, id, null, prevMap[id]);
     });
     lastSyncedSnapshot[node] = nextMap;
   });
@@ -8792,7 +8891,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.22'; // §FIX-MARKDIRTY-CAS-2026 — markEntityDirty() giờ ghi qua Firebase transaction có kiểm tra (CAS), chặn lỗi thiết bị cũ ghi đè "hồi sinh" Visit đã đóng — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.23'; // §FIX-MARKDIRTY-CAS-2026 (tiếp) — audit chuyên sâu toàn app: vá race check-in trùng thiết bị, race luồng nhanh/nền, mất hoàn tồn kho, thêm 3 check Data Health mới — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -19351,7 +19450,20 @@ function confirmCheckInAtomic(player, visit, prevSnapshot){
     clearEntityPendingWrite('players', player.id);
     if(!result || !result.committed){
       const v = state.playerVisits.find(x=>x.id===visit.id);
-      if(v && v.status === 'ACTIVE'){ v.status = 'COMPLETED'; v.checkOutAt = Date.now(); v.closeReason = 'DUPLICATE_CHECKIN_ROLLBACK'; }
+      /* §FIX-CHECKIN-ROLLBACK-NOFLUSH-2026 — audit sau v1.44.22 (§FIX-MARKDIRTY-CAS-2026) phat hien: khi
+         transaction check-in nay THUA (2 thiet bi check-in trung), nhanh rollback nay truoc day CHI dong
+         Visit vua tao CUC BO (v.status='COMPLETED', chi saveState() vao localStorage) — KHONG BAO GIO goi
+         markEntityDirty('playerVisits', v.id) de day len Firebase. Hau qua: Visit "thua" van con ACTIVE
+         MAI MAI tren server (khong ai tham chieu toi qua activeVisitId nua vi p.activeVisitId da duoc tra
+         ve prevSnapshot ben duoi, nhung getActiveVisitForPlayer() van co the "tim thay" no o 1 thiet bi/lan
+         dong bo khac) — dung 1 lop "Visit ma ACTIVE" voi cac ca da xu ly (Vi Lá Coffee/Tú Anh/Béo), chi
+         khac nguon goc. FIX: day ngay markEntityDirty('playerVisits', v.id) khi thuc su co dong Visit o
+         day, dam bao trang thai COMPLETED nay len duoc server dung nhu nhanh thanh cong (dong 19362-19363
+         da lam). KHONG doi logic OCC/rollback nao khac. */
+      if(v && v.status === 'ACTIVE'){
+        v.status = 'COMPLETED'; v.checkOutAt = Date.now(); v.closeReason = 'DUPLICATE_CHECKIN_ROLLBACK';
+        markEntityDirty('playerVisits', v.id);
+      }
       player.status = prevSnapshot.status; player.waitSince = prevSnapshot.waitSince;
       player.checkins = prevSnapshot.checkins; player.lastCheckInAt = prevSnapshot.lastCheckInAt;
       player.activeVisitId = prevSnapshot.activeVisitId;
@@ -20332,11 +20444,23 @@ function cancelWaterLoss(waterLossId){
     // da xuat hang -> hoan lai ton kho
     const p = state.products.find(x=>x.id===wl.fulfilledProductId);
     if(p){
-      p.stock += (wl.fulfilledQty||wl.quantity);
+      const refundQty = (wl.fulfilledQty||wl.quantity);
+      const refundOpId = 'waterlossrefund_' + wl.id; // §FIX-WATERLOSS-STOCK-CAS-2026 — idempotent, an toan neu bi goi lai
+      p.stock += refundQty; // optimistic local — phan hoi UI ngay cho Staff, se duoc dong bo lai dung so THAT ben duoi
       const revLogId = uid('inv');
-      state.inventoryLog.unshift({ id: revLogId, type:'water_fulfill_reverse', productId:p.id, name:p.name, qtyChange:(wl.fulfilledQty||wl.quantity), stockAfter:p.stock, note:'Hoàn tồn do hủy độ nước', timestamp: Date.now() });
-      markEntityDirty('products', p.id);
+      state.inventoryLog.unshift({ id: revLogId, type:'water_fulfill_reverse', productId:p.id, name:p.name, qtyChange:refundQty, stockAfter:p.stock, note:'Hoàn tồn do hủy độ nước', timestamp: Date.now() });
       markEntityDirty('inventoryLog', revLogId);
+      // §FIX-WATERLOSS-STOCK-CAS-2026 — hoan ton kho GIO di qua transaction cong don rieng (xem giai thich
+      // day du o confirmStockRefundAtomic), KHONG con markEntityDirty('products', p.id) truc tiep nua —
+      // tranh mat phan hoan tra khi 2 thiet bi cung dung do sua 1 san pham.
+      confirmStockRefundAtomic(p.id, refundQty, refundOpId).then(result=>{
+        if(result && result.committed && typeof result.stockAfter === 'number'){
+          p.stock = result.stockAfter; // dong bo lai dung so THAT tu server (co the co giao dich khac xen vao giua luc nay)
+          if(typeof renderWaterTab === 'function') renderWaterTab();
+        } else if(!result || !result.committed){
+          showToast('⚠ Hoàn tồn kho cho ' + p.name + ' chưa xác nhận được với server — kiểm tra lại tồn kho sản phẩm này.');
+        }
+      });
     }
   }
   if(bill){ bill.items = bill.items.filter(it=>it.id !== wl.billItemId); markEntityDirty('bills', bill.id); }
@@ -33011,6 +33135,21 @@ function runDataIntegrityCheck(){
   }
 
   // ===== PAYMENT / BILL =====
+  /* §FIX-MARKDIRTY-CAS-2026 — check MOI, them sau dot audit chuyen sau: da tung gap that 1 bill (booking
+     "bill_mu8er1c1bm72k") bi thieu han field 'items' (undefined, khong phai mang rong) do 1 race dong bo
+     cu (§HOTFIX-BOOKINGITEM-SYNCRACE-2026, da vá o v1.44.19-20 cho duong tao item) — luc do KHONG co canh
+     bao nao trong Data Health, chi phat hien tinh co qua crash Console. Cac ham dung 'items' da co guard
+     phong thu (Array.isArray) nen KHONG crash nua, nhung Data Health van chua CHU DONG bao cao neu tinh
+     huong nay tai dien o 1 duong khac chua vá — them check don gian de phat hien SOM. */
+  state.bills.forEach(b=>{
+    if(!Array.isArray(b.items)){
+      addIssue('Bill','ERROR', 'Bill "' + b.id + '" của "' + (b.playerName||playerName(b.playerId)) + '" thiếu/hỏng field "items" (không phải danh sách hợp lệ) — dấu hiệu dữ liệu bị lỗi đồng bộ (BILL_MALFORMED_ITEMS).', {
+        code:'BILL_MALFORMED_ITEMS', entityType:'bill', entityId:b.id, entityLabel:b.id,
+        impact:'Bill này có thể hiển thị sai số tiền (0đ dù thực tế có khoản, hoặc ngược lại). Cần Admin kiểm tra kỹ trước khi thu tiền — KHÔNG tự sửa (có thể mất dữ liệu khoản thật nếu đoán sai).',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:true
+      });
+    }
+  });
   // 1) Mot player co 2 OPEN BILL
   // §FIX-DEBTBILL-BLOCKS-NEWSESSION — tu ban co getOpenBillForPlayer() uu tien bo qua bill da CHO NỢ
   // (debtCreatedAt) khi tim "bill mo cho phien hien tai", 1 player co the HOP LE co 2 bill 'open' cung
@@ -33630,6 +33769,46 @@ function runDataIntegrityCheck(){
         repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairCompletedVisitStaleStatus', repairArgs:{ visitId:v.id, playerId:p.id }
       });
     }
+  });
+  /* §FIX-MARKDIRTY-CAS-2026 — 2 check MOI, them sau dot audit chuyen sau hau v1.44.22: du bug goc (thiet
+     bi cu ghi de "hoi sinh" 1 Visit vua dong ve lai ACTIVE) da duoc vá tan goc o tang dong bo
+     (markEntityDirty()/occFlushEntity() gio deu co CAS), Data Health TRUOC DAY khong co check nao pha
+     hien SOM neu lop loi nay (hoac 1 bien the tuong tu) tai dien o dau do chua luong toi — chi phat hien
+     GIAN TIEP qua ACTIVE_VISIT_BUT_ENDED_STATUS (chi bat duoc khi p.status roi vao SESSION_ENDED_STATUSES,
+     bo sot neu chinh Visit bi "hoi sinh" ma player.status van con dung o trang thai khac). Them 2 check
+     TRUC TIEP tren chinh state.playerVisits, doc lap voi player.status: */
+  // G) 1 player co >1 Visit dang ACTIVE cung luc — khong hop le trong thiet ke (moi player chi 1 Visit
+  // ACTIVE tai 1 thoi diem), dau hieu cua Visit "ma" con sot lai tu 1 nhanh rollback/race chua flush dung
+  // (vd §FIX-CHECKIN-ROLLBACK-NOFLUSH-2026 truoc khi duoc vá) hoac tu bat ky loi dong bo tuong tu.
+  (function(){
+    const activeByPlayer = {};
+    state.playerVisits.forEach(v=>{
+      if(v.status !== 'ACTIVE') return;
+      (activeByPlayer[v.playerId] = activeByPlayer[v.playerId] || []).push(v);
+    });
+    Object.keys(activeByPlayer).forEach(pid=>{
+      const vs = activeByPlayer[pid];
+      if(vs.length <= 1) return;
+      const p = playerById(pid);
+      addIssue('Visit','ERROR', (p ? p.name : pid) + ' có ' + vs.length + ' Visit cùng ACTIVE 1 lúc (DUPLICATE_ACTIVE_VISIT) — id: ' + vs.map(v=>v.id).join(', ') + '.', {
+        code:'DUPLICATE_ACTIVE_VISIT', entityType:'player', entityId:pid, entityLabel: p ? p.name : pid,
+        impact:'Có thể gây đếm trùng/lệch báo cáo và khiến check-in/đóng phiên tiếp theo không rõ Visit nào là đúng. Cần Admin xem kỹ (bill/lịch sử của từng Visit) trước khi đóng bớt — KHÔNG tự đóng.',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+      });
+    });
+  })();
+  // H) 1 Visit da co checkOutAt/closeReason (dau hieu DA tung duoc dong qua completePlayerVisit()) nhung
+  // status lai la 'ACTIVE' — dung dau hieu cua lop loi "hoi sinh" vua vá (markEntityDirty ghi thieu CAS/
+  // race giua duong nhanh va duong nen) — Visit da dong that su bi 1 ban ghi cu hon ghi de lai ve ACTIVE.
+  state.playerVisits.forEach(v=>{
+    if(v.status !== 'ACTIVE') return;
+    if(!v.checkOutAt && !v.closeReason) return;
+    const p = playerById(v.playerId);
+    addIssue('Visit','ERROR', (p ? p.name : v.playerId) + ' — Visit "' + v.id + '" đang ACTIVE nhưng đã có dấu vết TỪNG được đóng (checkOutAt/closeReason="' + (v.closeReason||'') + '") — nghi bị "hồi sinh" do lỗi đồng bộ (VISIT_RESURRECTED_ACTIVE).', {
+      code:'VISIT_RESURRECTED_ACTIVE', entityType:'visit', entityId:v.id, entityLabel: p ? p.name : v.playerId,
+      impact:'Rất có thể Visit này ĐÃ đóng đúng trước đó rồi bị 1 thiết bị cũ ghi đè "sống lại". Cần Admin kiểm tra bill/công nợ liên quan trước khi đóng lại — KHÔNG tự đóng.',
+      repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+    });
   });
   // E) 1 san dang 'playing' co chua 1 player da chuyen sang trang thai "ket thuc/roi phien" GIUA luc
   // tran dang dien ra (dung truong hop applyFinishMatchLocally() §MATCHFIX-9/10/11 vua fix — truoc khi
