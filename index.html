@@ -2,6 +2,32 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.21 (2026-09-20) — §HOTFIX-BILLBTN-ENDSSESSION-2026 [NGHIÊM TRỌNG]. Admin chạy Kiểm tra dữ liệu,
+  phát hiện 15 khách check-in trong ngày (18-20/9/2026) bị hệ thống tự chuyển nhầm sang "đã rời sân"
+  (paid_and_left) dù Visit vẫn đang ACTIVE — tức app nghĩ họ đã về trong khi thực tế vẫn đang ở sân.
+  ROOT CAUSE: ở bản v1.44.15 (đơn giản hoá tab ĐANG Ở SÂN), nút "🧾 Bill" được nối vào endPlaying() với ý
+  định tái dùng cơ chế "bill 0đ thì tự đóng phiên" có sẵn — NHƯNG endPlaying() coi MỌI lần gọi là tín hiệu
+  "khách đã xong, muốn kết thúc", trong khi Staff chỉ bấm "Bill" để XEM (vd trước khi thêm nước) cũng bị
+  hiểu nhầm là kết thúc — nếu đúng lúc bill đang 0đ (chưa kịp thêm gì / đã thu xong từ trước), phiên của
+  khách bị đóng NGAY LẬP TỨC, ÂM THẦM, không hỏi xác nhận, dù khách vẫn đang chơi bình thường. Đây là lỗi
+  do chính phiên làm việc này gây ra khi đơn giản hoá luồng check-in — đã sửa ngay khi phát hiện.
+  FIX: (1) nút "🧾 Bill" trở lại đúng bản chất — CHỈ mở xem/quản lý bill qua openBillModal(), không còn
+  side-effect kết thúc phiên nào khi chỉ xem. (2) Yêu cầu gốc "thanh toán hết tiền trong bill thì tự động
+  kết thúc phiên" chuyển sang xử lý ĐÚNG CHỖ — ngay tại markBillPaid() (nơi 1 THANH TOÁN THẬT SỰ xảy ra):
+  mở rộng điều kiện endsSession để nhận thêm trạng thái 'waiting' (trạng thái DUY NHẤT còn dùng trong quy
+  trình check-in đơn giản hoá hiện tại, do không còn đường nào trong UI đưa player về 'playing'/'ready'/
+  'away'/'checked_out'/'waiting_payment' nữa) — vẫn giữ đúng yêu cầu ban đầu, chỉ không còn kích hoạt khi
+  chỉ xem bill nữa.
+  DỮ LIỆU BỊ ẢNH HƯỞNG: 15 khách (Trang, A Vũ Sữa, A Tuấn Mobifone, Chị Vi Lá Coffee, Tú Anh, Béo, A Hậu
+  Lơ, A Thanh Anh, A Quốc PVcom, C Tiên, A Tú MB, Hùng Newbie, Đông, Cường Kamito, A Zai) có player.status
+  bị chuyển 'paid_and_left' + Visit bị đóng ('AUTO_ZERO') dù đang thực sự ở sân — KHÔNG ảnh hưởng tiền
+  (bill của họ lúc đó đúng là 0đ, không mất/thừa khoản nào), chỉ ảnh hưởng trạng thái hiển thị "đang ở
+  sân". Vì lý do (reason) đóng Visit là 'AUTO_ZERO' (không phải 'PAID'/'DEBT') nên KHÔNG kích hoạt nhầm
+  RETURN_SOON_REWARD/VISIT_MILESTONE_REWARD — không có Credit nào bị phát sai do sự cố này. KHẮC PHỤC:
+  Admin kiểm tra khách nào trong danh sách trên vẫn đang thực sự ở sân → bấm "Check-in lại" bình thường
+  cho họ (tạo Visit mới hôm nay, không ảnh hưởng lịch sử); khách nào đã thực sự về thì không cần làm gì
+  thêm (trạng thái hiện tại đã đúng). Đã kiểm tra: script tag 14/9 khớp, Node syntax check 0 lỗi.
+
   v1.44.20 (2026-09-19) — §HOTFIX-ADDITEMBYID-UNDEFINEDITEMS-2026. Admin chạy script vá tay bill cũ của
   "C Hòa" (theo hướng dẫn ở bản v1.44.19) thì bị crash Console: "Cannot read properties of undefined
   (reading 'push')" ngay tại addItemToBillById(). ROOT CAUSE: bill cũ đó thật sự KHÔNG CÓ field "items"
@@ -8675,7 +8701,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.20'; // §HOTFIX-ADDITEMBYID-UNDEFINEDITEMS-2026 — addItemToBillById() không còn crash với bill cũ thiếu field items — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.21'; // §HOTFIX-BILLBTN-ENDSSESSION-2026 [NGHIÊM TRỌNG] — nút Bill không còn âm thầm kết thúc phiên khi chỉ xem — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -14179,7 +14205,14 @@ function markBillPaid(bill, paymentMethod, paymentId){
      playing/waiting/ready/away (thanh toan GIUA phien, chua ai bao roi san) thi CHI danh dau bill
      'paid' — KHONG doi status, KHONG dong Visit — de cac khoan phat sinh sau van thuoc DUNG 1 Visit
      voi Ve Social da tinh (dam bao idempotency, xem ensureOpenBillForPlayer()/hasSocialTicketForVisit()). */
-  const endsSession = !!p && (p.status === 'checked_out' || p.status === 'waiting_payment');
+  /* §HOTFIX-BILLBTN-ENDSSESSION-2026 — mở rộng thêm 'waiting' vào điều kiện kết thúc phiên: quy trình
+     check-in đơn giản hoá hiện tại (§SIMPLECHECKIN-2026) không còn đường nào trong UI đưa player về
+     'playing'/'ready'/'away'/'checked_out'/'waiting_payment' nữa — MỌI khách đang ở sân chỉ còn đúng 1
+     trạng thái 'waiting' (mặc định lúc check-in). Nếu không thêm 'waiting' vào đây, yêu cầu gốc "thanh
+     toán hết tiền trong bill thì tự động kết thúc phiên" sẽ KHÔNG BAO GIỜ kích hoạt được nữa trong quy
+     trình mới — bill trả hết tiền qua payBill()/markBillPaid() (1 THANH TOÁN THẬT SỰ, khác hẳn việc chỉ
+     bấm xem Bill) vẫn phải tự đóng phiên như đã yêu cầu. */
+  const endsSession = !!p && (p.status === 'checked_out' || p.status === 'waiting_payment' || p.status === 'waiting');
   removePlayerFromOperationalQueues(bill.playerId);
   if(p && endsSession){
     p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now();
@@ -32672,16 +32705,26 @@ function renderPresenceTab(){
     /* §SIMPLECHECKIN-2026 — Admin yêu cầu làm lại quy trình: "chỉ hiện thêm sản phẩm và bill", bỏ hết
        các trạng thái/nút phụ (Ready/Tạm nghỉ/Chờ tính tiền/Nghỉ 1 lượt...) — mỗi khách chỉ còn ĐÚNG 2
        nút, bất kể trạng thái hiện tại: "➕ Thêm sản phẩm" (openAddProductToBillModal, thêm vào Bill
-       hiện tại) và "🧾 Bill" (dùng LẠI endPlaying() có sẵn — KHÔNG viết logic thanh toán/đóng phiên mới:
-       endPlaying() đã tự kiểm tra bill còn nợ hay không — nếu 0đ thì tự đóng phiên NGAY, nếu còn tiền
-       thì mở thẳng Bill để thu, và markBillPaid() đã có sẵn từ trước sẽ tự đóng phiên ngay khi bill vừa
-       được thanh toán hết — đúng yêu cầu "thanh toán hết tiền trong bill thì tự động kết thúc phiên",
-       không cần thêm bước nào). Toàn bộ nhánh theo trạng thái (isOrphanedStale/isWaitingPayment/away/
+       hiện tại) và "🧾 Bill". Toàn bộ nhánh theo trạng thái (isOrphanedStale/isWaitingPayment/away/
        playing/waiting/ready/isFinishedUnpaid) đã bị xóa — không còn dùng để chọn nút hiển thị nữa (biến
-       vẫn giữ nguyên, chỉ dùng cho warnTag cảnh báo nợ bên dưới, không đổi). */
+       vẫn giữ nguyên, chỉ dùng cho warnTag cảnh báo nợ bên dưới, không đổi).
+       §HOTFIX-BILLBTN-ENDSSESSION-2026 — Ở BẢN v1.44.15, nút "🧾 Bill" từng gọi endPlaying('${p.id}')
+       thay vì openBillModal() — Ý ĐỊNH ban đầu là tái dùng cơ chế "nếu bill 0đ thì tự đóng phiên" của
+       endPlaying() để khỏi viết logic mới. NHƯNG đây là LỖI NGHIÊM TRỌNG: endPlaying() coi MỌI lần bấm
+       là "khách báo đã xong/muốn kết thúc" — Staff chỉ bấm "Bill" để XEM/thêm khoản (vd trước khi thêm
+       nước) cũng bị hiểu nhầm thành "kết thúc", và nếu đúng lúc đó bill đang 0đ (chưa kịp thêm gì, hoặc
+       đã thu xong từ trước) thì phiên của khách bị ĐÓNG NGAY LẬP TỨC, ÂM THẦM, không hỏi xác nhận — dù
+       khách vẫn đang ở sân chơi bình thường. Admin phát hiện qua Kiểm tra dữ liệu: 15 khách checked-in
+       trong ngày (18/9-20/9/2026) bị chuyển nhầm sang "đã rời sân" (paid_and_left) dù Visit vẫn đang mở
+       — đúng khớp triệu chứng lỗi này. FIX: nút "🧾 Bill" trở lại đúng bản chất — CHỈ xem/quản lý bill
+       (openBillModal(), không có side-effect kết thúc phiên nào). Yêu cầu gốc "thanh toán hết tiền trong
+       bill thì tự động kết thúc phiên" được xử lý ĐÚNG CHỖ hơn — ngay tại markBillPaid() (xem sửa cùng
+       bản, mở rộng điều kiện endsSession để nhận luôn trạng thái 'waiting' — trạng thái DUY NHẤT còn
+       dùng trong quy trình check-in đơn giản hoá hiện tại) — chỉ kích hoạt khi có 1 THANH TOÁN THẬT SỰ
+       xảy ra, không phải khi chỉ xem bill. */
     const actions = [
       `<button onclick="openAddProductToBillModal('${p.id}');">➕ SẢN PHẨM</button>`,
-      `<button class="secondary" onclick="endPlaying('${p.id}');">🧾 BILL</button>`
+      `<button class="secondary" onclick="openBillModal('${p.id}');">🧾 BILL</button>`
     ];
 
     // §FIX-GROUPPAY-1 — checkbox chon nhom CHI hien khi con gi de thu (total>0) — nguoi Bill 0d khong
