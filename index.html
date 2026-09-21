@@ -2,6 +2,33 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.27 (2026-09-21) — §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026. Admin báo (kèm ảnh chụp): nhiều thẻ ở tab
+  Đang Ở Sân hiện "Bill: 0đ" (A Tuấn Mobifone, Huy Bóng Đá, A Nhựt Zeno, Chị Vi Lá Coffee, A Hậu Dương,
+  A Cường Chạn Ná...) — khách rõ ràng đã thanh toán xong nhưng phiên không tự đóng, vẫn hiện "đang ở sân".
+  ĐIỀU TRA (console dump trên state THẬT, không đoán): 8/16 người đang ở sân có `activeVisitId` trỏ tới 1
+  Visit ĐÃ 'COMPLETED' thật (checkOutAt + closeReason:'PAID' đầy đủ — tức ĐÃ thanh toán xong qua đúng luồng
+  bình thường), nhưng `player.status` vẫn kẹt 'waiting' và `activeVisitId` vẫn chưa được gỡ — false vì thế
+  Presence tab vẫn xếp họ vào "đang ở sân" với Bill 0đ (không còn bill mở nào để tính tiền).
+  ROOT CAUSE: đây là lỗi ĐỐI XỨNG với bug check-in đã vá ở v1.44.24 (§FIX-CHECKIN-RELOAD-RESILIENCE-2026)
+  nhưng ở CHIỀU THANH TOÁN thay vì check-in. markBillPaid()/createBillPayment() (2 điểm DUY NHẤT gán
+  `p.status='paid_and_left'` khi 1 lượt thanh toán thật sự kết thúc phiên) trước đây CHỈ sửa cục bộ
+  (JS memory) — việc đẩy `p.status` này lên Firebase hoàn toàn phụ thuộc vào 1 bước xác nhận BẤT ĐỒNG BỘ
+  riêng phía sau (confirmBillPaymentAtomic()/confirmGroupPaymentAtomic(), chỉ gọi markEntityDirty('players',
+  ...) sau khi round-trip Firebase xong). Trong khi đó, Visit lại được đóng ngay LẬP TỨC và đẩy lên server
+  NGAY TỨC THÌ bên trong cùng lệnh gọi (completePlayerVisit() tự markEntityDirty('playerVisits', ...) đồng
+  bộ, theo §FIX-COMPLETEVISIT-CENTRALDIRTY). Nếu trang tải lại/mất mạng ĐÚNG LÚC giữa 2 bước này, thay đổi
+  `p.status` cục bộ bị mất (chưa kịp round-trip), còn Visit đã đóng thì KHÔNG mất (đã đẩy xong) — sinh đúng
+  tổ hợp "Visit đã đóng thật nhưng player status kẹt cũ, Bill 0đ, vẫn hiện Đang Ở Sân" quan sát được.
+  FIX TẬN GỐC: cả markBillPaid() (đường thanh toán bill chính, dùng bởi payBill()/collectTournamentEntryFee()/
+  payMultipleBills()) và createBillPayment() (đường THU NỢ) giờ gọi markEntityDirty('players', playerId)
+  NGAY tại thời điểm gán 'paid_and_left' — cùng nhịp với cách completePlayerVisit() đã tự đẩy Visit, không
+  còn phụ thuộc hoàn toàn vào bước xác nhận bất đồng bộ phía sau nữa (bước đó vẫn giữ nguyên, chỉ còn là
+  lớp xác nhận CAS bổ sung — gọi markEntityDirty lại lần nữa vẫn an toàn/idempotent).
+  DỮ LIỆU: 8 ca hiện tại đều đã có sẵn công cụ Kiểm tra dữ liệu (Data Health, nhóm ORPHAN_ACTIVE_VISIT_ID/
+  COMPLETED_VISIT_BUT_OPERATIONAL_STATUS) với nút sửa AN TOÀN một chạm — không cần script tay, chỉ cần chạy
+  lại Kiểm tra dữ liệu và bấm sửa từng ca (không đụng tiền/bill/lịch sử trận đấu, chỉ đồng bộ lại đúng field
+  trạng thái).
+
   v1.44.26 (2026-09-21) — §FIX-VESOCIAL-NOVISIT-2026. Admin báo (kèm ảnh chụp): "Hai Phượng" hôm nay
   KHÔNG check-in (chỉ đến trả nốt 30k còn lại của phí giải đấu hôm trước), nhưng bill lại hiện tổng
   130.000đ (30k Vé Social + 100k phí giải "Giải 4.3") thay vì đúng 100k phí giải.
@@ -8985,7 +9012,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.26'; // §FIX-VESOCIAL-NOVISIT-2026 — không tự tính Vé Social khi thêm khoản vào bill của khách không có Visit hiệu lực (không onsite) — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.27'; // §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026 — đẩy p.status='paid_and_left' lên Firebase ngay lúc thanh toán thay vì đợi xác nhận bất đồng bộ, tránh khách đã trả tiền vẫn kẹt "Đang Ở Sân" nếu tải lại trang đúng lúc — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -14516,6 +14543,20 @@ function markBillPaid(bill, paymentMethod, paymentId){
   removePlayerFromOperationalQueues(bill.playerId);
   if(p && endsSession){
     p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now();
+    // §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026 — Admin bao 8 khach da thanh toan/roi san (Visit COMPLETED,
+    // closeReason='PAID' co that) nhung van hien "ĐANG Ở SÂN" voi Bill 0đ. Dieu tra qua console dump: CA
+    // 8 ca deu co Visit dong dung (that su qua completePlayerVisit() duoc goi NGAY DUOI DAY, tu day ngay
+    // 'playerVisits' theo §FIX-COMPLETEVISIT-CENTRALDIRTY) nhung p.status VAN ket 'waiting' va
+    // p.activeVisitId VAN tro toi Visit da COMPLETED do — dung 1 "chu ky" voi bug check-in da vá o
+    // v1.44.24 (§FIX-CHECKIN-RELOAD-RESILIENCE-2026) nhung o CHIEU NGUOC LAI: truoc day p.status/
+    // paidAndLeftAt CHI duoc day len Firebase MUON, ben trong confirmBillPaymentAtomic() (transaction
+    // rieng, bat dong bo, xem duoi) — neu trang tai lai/mat mang DUNG LUC giua khi gan cuc bo o day va luc
+    // transaction do hoan tat, thay doi p.status nay bi mat hoan toan (con Visit da dong THI KHONG mat, vi
+    // completePlayerVisit() tu day ngay lap tuc, khong doi). FIX TAN GOC: day p.status/paidAndLeftAt NGAY
+    // TAI DAY (dong bo, cung nhip voi cach completePlayerVisit() da tu day Visit) thay vi phu thuoc HOAN
+    // TOAN vao buoc xac nhan bat dong bo phia sau — markEntityDirty da tu idempotent neu goi lai lan nua
+    // trong confirmBillPaymentAtomic()/confirmGroupPaymentAtomic(), khong gay hai.
+    markEntityDirty('players', bill.playerId);
     /* §PLAYER-8/9 (V1.2) — thanh toan xong VA da thuc su roi san = ket thuc session THAT SU -> dong
        Active Visit (neu co). KHONG tao Visit moi o day. */
     completePlayerVisit(bill.playerId, 'PAID');
@@ -15670,7 +15711,11 @@ function createBillPayment(bill, amount, method, opts){
   if(bill.status === 'paid' && p){
     const endsSession = p.status === 'checked_out' || p.status === 'waiting_payment';
     removePlayerFromOperationalQueues(bill.playerId);
-    if(endsSession){ p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now(); completePlayerVisit(bill.playerId, 'PAID'); }
+    // §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026 (tiep, ap dung cung cach cho createBillPayment() — dung boi
+    // collectPlayerDebt()/THU NỢ): day p.status/paidAndLeftAt NGAY thay vi cho luoi an toan debounce/
+    // confirm bat dong bo phia sau, tranh mat thay doi neu tai lai trang dung luc — xem giai thich day du
+    // o markBillPaid().
+    if(endsSession){ p.status = 'paid_and_left'; p.paidAndLeftAt = Date.now(); markEntityDirty('players', p.id); completePlayerVisit(bill.playerId, 'PAID'); }
     if(!state.sales.some(s=>s.paymentId===payment.id)){
       state.sales.unshift({ id: uid('sale'), kind:'BILL_PAYMENT_SNAPSHOT',
         items: (bill.items||[]).map(it=>({ productId: it.meta && it.meta.productId, name: it.label, price: it.unitPrice||it.amount, qty: it.qty||1 })),
