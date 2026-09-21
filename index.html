@@ -2,6 +2,30 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.24 (2026-09-21) — §FIX-CHECKIN-RELOAD-RESILIENCE-2026. Admin báo "Hằng check-in 16 người mà tab
+  Đang Ở Sân chỉ hiện 10". Điều tra qua console dump (không đoán): xác nhận đúng 6 người có Visit ACTIVE
+  tạo THẬT trong ngày (Vé Social/phí đã trừ đúng) nhưng player.status vẫn kẹt ở giá trị CŨ ('paid_and_left'
+  từ lần trước) — Hằng xác nhận "lúc check-in trang bị tải chậm" và "không ai thao tác ngoài Hằng" (loại
+  trừ được trường hợp 2 máy check-in trùng — cơ chế confirmCheckInAtomic() vẫn hoạt động đúng thiết kế cho
+  trường hợp đó).
+  ROOT CAUSE: reopenPlayerSession() ghi player.status='waiting' CỤC BỘ ngay lập tức, nhưng phần XÁC NHẬN
+  THẬT lên server lại dựa vào 1 Firebase transaction RIÊNG (confirmCheckInAtomic(), §DATA-ARCH-16/64 — chủ
+  đích để chống 2 thiết bị check-in trùng) chỉ tồn tại trong bộ nhớ tạm của trình duyệt. Khi mạng chậm/mất
+  kết nối khiến trang phải tải lại (F5 hoặc SDK tự kết nối lại) ĐÚNG LÚC transaction đó chưa kịp hoàn tất,
+  toàn bộ phần xác nhận cục bộ bị mất theo — trong khi Visit (1 lệnh ghi RIÊNG, đã hoàn tất trước đó qua
+  createPlayerVisit()) vẫn còn nguyên — sinh đúng tổ hợp "Visit thật nhưng status kẹt cũ" quan sát được.
+  KHẮC PHỤC NGAY (không đợi vá code): script console khôi phục thủ công cho 6 người, xác nhận tab Đang Ở
+  Sân hiện đủ 16/16, không mất Vé Social/tiền.
+  VÁ TẬN GỐC: KHÔNG bỏ qua/làm yếu cơ chế chống-trùng 2-máy hiện có (giữ nguyên confirmCheckInAtomic()) —
+  thêm 1 "điểm chờ" lưu ngoài bộ nhớ tạm (localStorage, SỐNG SÓT qua reload) ngay khi bắt đầu check-in
+  (markCheckinPending()), và TỰ ĐỘNG kiểm tra lại điểm chờ này 1 lần MỖI KHI mở lại app, sau khi đã hydrate
+  xong dữ liệu từ Firebase (reconcilePendingCheckins(), delay 4s để chờ listener nhận snapshot đầu). Nếu
+  phát hiện đúng tổ hợp "Visit ACTIVE thật + status vẫn kẹt trạng thái đã-kết-thúc" (phân biệt được với
+  trường hợp bị từ chối THẬT vì trùng 2 máy — trường hợp đó Visit đã là COMPLETED/closeReason=
+  'DUPLICATE_CHECKIN_ROLLBACK', không còn ACTIVE), tự động đồng bộ lại đúng trạng thái + ghi log
+  data_integrity_repair để truy vết. Điểm chờ quá 24h bị bỏ qua (không tự đoán dữ liệu cũ — để Data
+  Health/Admin xem lại bình thường như mọi lệch dữ liệu khác). KHÔNG tạo Visit/bill mới, KHÔNG đổi tiền.
+
   v1.44.23 (2026-09-20) — §FIX-MARKDIRTY-CAS-2026 (tiếp). Admin yêu cầu "kiểm tra chuyên sâu lại toàn bộ
   app 1 lần nữa" sau v1.44.22 — chạy 5 mũi audit độc lập (đồng bộ dữ liệu, tiền/bill/nợ, vòng đời Visit,
   Credits/thưởng, tồn kho + Data Health) rà lại toàn bộ code. KHÔNG tìm thêm bug tiền bạc mới (double-charge,
@@ -8891,7 +8915,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.23'; // §FIX-MARKDIRTY-CAS-2026 (tiếp) — audit chuyên sâu toàn app: vá race check-in trùng thiết bị, race luồng nhanh/nền, mất hoàn tồn kho, thêm 3 check Data Health mới — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.24'; // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — check-in tự phục hồi khi mạng chậm/tải lại giữa chừng, không đổi cơ chế chống trùng 2 máy — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -19392,6 +19416,75 @@ function removePlayerFromOperationalQueues(playerId, reason){
    - Luon dat lai status=waiting, waitSince=now, tang checkins.
    - ensureOpenBillForPlayer() se KHONG tai su dung bill cu (da PAID nen status!=='open'),
      nen se tu tao 1 Open Bill moi + Ve Social moi (neu socialTicketEnabled). */
+/* §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — Admin bao "Hằng check-in 16 người mà tab Đang Ở Sân chỉ hiện
+   10" — dieu tra qua console dump xac nhan DUNG 6 nguoi co Visit ACTIVE tao THAT trong ngay (Vé Social/
+   phi da tru dung) nhung player.status van ket o gia tri CU ('paid_and_left' tu lan truoc) — Hang xac nhan
+   "lúc check-in trang bị tải chậm" va "ko ai thao tac ngoai Hang" (loai tru truong hop 2 may check-in
+   trung — confirmCheckInAtomic() van hoat dong dung y thiet ke cho TH do). GOC RE: reopenPlayerSession()
+   ghi status='waiting' CUC BO ngay lap tuc, nhung phan XAC NHAN THAT len server lai dua vao 1 Firebase
+   transaction RIENG (confirmCheckInAtomic(), §DATA-ARCH-16/64 — CHU DICH de chong 2 thiet bi check-in
+   trung) chi ton tai trong bo nho tam cua trinh duyet. Neu mang cham/mat ket noi khien trang phai tai lai
+   (F5 hoac SDK tu ket noi lai) DUNG LUC transaction do chua kip hoan tat, toan bo phan xac nhan cuc bo bi
+   mat theo — trong khi Visit (1 lenh ghi RIENG, da hoan tat truoc do qua createPlayerVisit()) van con
+   nguyen — sinh dung 1 to hop "Visit that nhung status ket cu" quan sat duoc. FIX: KHONG bo qua/lam yeu co
+   che chong-trung 2-may hien co (van giu nguyen confirmCheckInAtomic()) — thay vao do LUU 1 "diem cho" ben
+   ngoai bo nho tam (localStorage, SONG SOT qua reload) ngay khi bat dau check-in, roi TU DONG kiem tra lai
+   diem cho nay 1 lan MOI KHI mo lai app (reconcilePendingCheckins(), sau khi da hydrate xong tu Firebase) —
+   neu phat hien dung to hop "Visit ACTIVE that + status van ket cu" (dung dau hieu bi gian doan giua chung,
+   PHAN BIET duoc voi TH bi tu choi that su vi trung 2 may — TH do đa duoc rollback dung cach, Visit se la
+   COMPLETED/closeReason='DUPLICATE_CHECKIN_ROLLBACK' chu KHONG con ACTIVE), tu dong dong bo lai dung
+   trang thai — khong tao Visit/bill moi, khong doi tien. */
+const CHECKIN_PENDING_LS_KEY = 'picpoc_pending_checkins_v1';
+function readPendingCheckinMarkers(){
+  try{
+    const raw = localStorage.getItem(CHECKIN_PENDING_LS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  }catch(e){ return []; }
+}
+function writePendingCheckinMarkers(arr){
+  try{ localStorage.setItem(CHECKIN_PENDING_LS_KEY, JSON.stringify(arr)); }catch(e){ /* localStorage day/loi — bo qua, khong chan luong check-in chinh */ }
+}
+function markCheckinPending(playerId, visitId){
+  const arr = readPendingCheckinMarkers().filter(m=>m.playerId!==playerId);
+  arr.push({ playerId, visitId, ts: Date.now() });
+  writePendingCheckinMarkers(arr);
+}
+function clearCheckinPending(playerId){
+  const arr = readPendingCheckinMarkers().filter(m=>m.playerId!==playerId);
+  writePendingCheckinMarkers(arr);
+}
+/* Chay 1 lan moi khi app da hydrate xong (xem resolveEnterAppFor) — quet cac diem cho con sot (vd do
+   reload/mat mang giua chung, xem giai thich §FIX-CHECKIN-RELOAD-RESILIENCE-2026 o tren), CHI tu dong sua
+   dung 1 to hop dau hieu ro rang (Visit ACTIVE that + status con ket cu), moc qua 24h thi bo qua (khong tu
+   doan du lieu qua cu — de Data Health/Admin xem lai binh thuong). */
+function reconcilePendingCheckins(){
+  const arr = readPendingCheckinMarkers();
+  if(!arr.length) return;
+  const MAX_AGE_MS = 24*3600*1000;
+  const now = Date.now();
+  let fixedCount = 0;
+  arr.forEach(m=>{
+    if(now - (m.ts||0) > MAX_AGE_MS) return;
+    const p = state.players.find(x=>x.id===m.playerId);
+    const v = state.playerVisits.find(x=>x.id===m.visitId);
+    if(!p || !v) return;
+    if(v.status === 'ACTIVE' && SESSION_ENDED_STATUSES.includes(p.status)){
+      const prevStatus = p.status;
+      p.status = 'waiting'; p.waitSince = v.checkInAt; p.checkins = (p.checkins||0) + 1;
+      p.lastCheckInAt = v.checkInAt; p.activeVisitId = v.id;
+      markEntityDirty('players', p.id);
+      logOverride('data_integrity_repair', 'Tự động khôi phục check-in bị gián đoạn (tải lại trang/mất mạng giữa chừng) cho ' + p.name + ' — Visit "' + v.id + '" ACTIVE có thật, status trước đó kẹt "' + prevStatus + '".', 'player', p.id);
+      fixedCount++;
+    }
+  });
+  writePendingCheckinMarkers([]); // da xu ly xong toan bo diem cho, don sach
+  if(fixedCount > 0){
+    saveState();
+    if(typeof renderAll === 'function') renderAll();
+    if(typeof showToast === 'function') showToast('✓ Đã tự động khôi phục ' + fixedCount + ' lượt check-in bị gián đoạn do mất mạng/tải lại trang.');
+  }
+}
 function reopenPlayerSession(player){
   const prevSnapshot = { status: player.status, waitSince: player.waitSince, checkins: player.checkins, lastCheckInAt: player.lastCheckInAt, activeVisitId: player.activeVisitId };
   player.status = 'waiting';
@@ -19412,6 +19505,7 @@ function reopenPlayerSession(player){
   const visit = createPlayerVisit(player, null); // §PLAYER-3/41 (V1.2) — tu dedupe ben trong (khong tao Visit thu 2 neu da co Active Visit)
   const bill = ensureOpenBillForPlayer(player);
   if(visit && !visit.billId) visit.billId = bill.id; // gan lien ket nguoc sau khi co bill (truoc day gan luc tao Visit, gio gan o day)
+  if(visit) markCheckinPending(player.id, visit.id); // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — luu diem cho ben ngoai bo nho tam, song sot qua reload
   confirmCheckInAtomic(player, visit, prevSnapshot);
   // §AUTOMATCH-13B — player.status da duoc dat 'waiting' o TREN (dong bo cuc bo, khong phu thuoc
   // confirmCheckInAtomic() la sync hay async) — neu dang co san trong va nguoi nay lam du 4, tu dong
@@ -19467,12 +19561,14 @@ function confirmCheckInAtomic(player, visit, prevSnapshot){
       player.status = prevSnapshot.status; player.waitSince = prevSnapshot.waitSince;
       player.checkins = prevSnapshot.checkins; player.lastCheckInAt = prevSnapshot.lastCheckInAt;
       player.activeVisitId = prevSnapshot.activeVisitId;
+      clearCheckinPending(player.id); // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — da rollback dung cach, khong con gi de tu phuc hoi sau
       saveState();
       renderAll();
       showToast('⚠️ ' + player.name + ' vừa được check-in trên thiết bị khác.');
     } else {
       markEntityDirty('players', player.id);
       markEntityDirty('playerVisits', visit.id);
+      clearCheckinPending(player.id); // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — xac nhan thanh cong, khong con la "dang cho" nua
     }
   }).catch(err=>{ clearEntityPendingWrite('players', player.id); console.error('[checkin] confirm error', err); handleWriteError('players','transaction',err); });
 }
@@ -39728,6 +39824,10 @@ function resolveEnterAppFor(firebaseUser, authProfile, attempt){
     renderCurrentUserBadge();
     renderAll();
     if(typeof applyRoleVisibility === 'function') applyRoleVisibility();
+    // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — quet cac diem cho check-in con sot (do reload/mat mang giua
+    // chung o lan truoc) SAU KHI da vao app thanh cong — delay vai giay de cac listener Firebase kip nhan
+    // snapshot dau tien cho 'players'/'playerVisits' (tranh doc phai state rong luc vua load trang).
+    if(typeof reconcilePendingCheckins === 'function') setTimeout(reconcilePendingCheckins, 4000);
     return;
   }
   if(!usersReady){
