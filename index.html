@@ -2,6 +2,50 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.25 (2026-09-21) — §FIX-GROUPPAY-ROLLBACK-NOFLUSH-2026 + §FIX-GROUPPAY-FALSECONFLICT-2026. Admin
+  báo (kèm ảnh chụp màn hình): "Trang" và "A Hùng" thanh toán nhóm (chuyển khoản 60k, có biên lai thật
+  16:31:28 21/9/2026) nhưng thẻ ở tab Đang Ở Sân vẫn hiện "Bill: 30.000đ" cho cả 2 dù modal Bill của Trang
+  hiện đúng "Đã thu 30.000đ · Còn phải thu 0đ".
+  ĐIỀU TRA (không đoán, xác minh từng bước qua console dump trên state THẬT):
+  - Modal Bill dùng getBillOutstanding() (tính theo lịch sử thanh toán thật) trong khi thẻ Đang Ở Sân dùng
+    billTotal() cộng dồn TẤT CẢ bill có status==='open' — nên nếu bill không được đánh dấu 'paid' thì thẻ vẫn
+    hiện đủ số tiền gốc dù tiền đã thu — đây là TRIỆU CHỨNG, không phải gốc rễ.
+  - Dò payment 'pay_mub1pqehuijug' (60000đ, BANK_TRANSFER, còn tồn tại, KHÔNG voided) có billIds trỏ đúng
+    tới CẢ 2 bill (bill_muawzjytx716w của A Hùng, bill_muawzn43oqmae của Trang) — tiền là THẬT.
+  - Dump JSON đầy đủ 2 bill: status vẫn 'open', paidAt/paymentId hoàn toàn KHÔNG có (undefined, không phải
+    null) — và query state.sales theo billId lẫn theo paymentId đều ra 0 dòng — trong khi markBillPaid() lẽ
+    ra PHẢI tạo 1 dòng sales SNAPSHOT cho mỗi bill làm việc đầu tiên. Kết luận: markBillPaid() đã từng CHẠY
+    (state.sales từng có, vì payment ghi chú billIds đúng 2 bill) rồi bị XOÁ lại — không phải chưa từng chạy.
+  ROOT CAUSE THẬT (đọc code payMultipleBills()/confirmGroupPaymentAtomic()/handleGroupPaymentConflict()):
+  (1) payMultipleBills() gọi markEntityDirty('payments', payment.id) ĐẨY payment lên Firebase NGAY LẬP TỨC
+  (đồng bộ), RỒI mới gọi markBillPaid() cho từng bill (chỉ sửa cục bộ, chưa đẩy — việc đẩy bill để dành cho
+  confirmGroupPaymentAtomic() chạy sau, bất đồng bộ).
+  (2) confirmGroupPaymentAtomic() đọc thử remote rồi mở 1 Firebase .transaction() riêng cho từng bill; NẾU
+  bất kỳ transaction nào trả về !committed — kể cả khi nguyên nhân là 1 NGOẠI LỆ/LỖI MẠNG THOÁNG QUA (không
+  phải xung đột thật — DataService.bills.transaction() có bắt lỗi và trả {committed:false, error:err}, bị
+  code cũ coi y hệt xung đột thật) — gọi handleGroupPaymentConflict() để HOÀN TÁC CẢ NHÓM.
+  (3) handleGroupPaymentConflict() (bug NẶNG NHẤT): chỉ sửa state CỤC BỘ (splice payment khỏi
+  state.payments, reset bill về 'open', xoá state.sales) rồi saveState() (chỉ ghi localStorage) — KHÔNG
+  GỌI markEntityDirty/xoá gì trên Firebase cả. Vì payment ĐÃ được đẩy lên server từ bước (1) TRƯỚC KHI biết
+  có "xung đột", bản ghi payment (tiền thật) tồn tại VĨNH VIỄN trên server thành "payment ma", trong khi bill
+  bị hoàn về 'open' — CHỈ trên máy đang thao tác (thiết bị khác/hoặc chính máy này sau khi tải lại trang vẫn
+  thấy payment qua listener, nhưng bill/sales không bao giờ được đánh dấu đã thu) — khớp CHÍNH XÁC hiện tượng
+  quan sát được.
+  VÁ TẬN GỐC (2 phần, không phải chỉ vá dữ liệu):
+  (a) handleGroupPaymentConflict(): hoàn tác giờ ĐẨY ĐỦ lên Firebase — xoá thật payment trên server (thay vì
+  chỉ splice cục bộ), markEntityDirty('bills'/'players', ...) cho từng bill/player được hoàn về trạng thái
+  cũ, xoá thật các dòng sales liên quan trên server — đảm bảo cục bộ và server LUÔN khớp nhau sau rollback,
+  không còn "payment ma".
+  (b) confirmGroupPaymentAtomic(): phân biệt XUNG ĐỘT THẬT (transaction bị CAS từ chối thật sự — remote đã
+  'paid' bởi payment KHÁC, kết quả KHÔNG có trường `error`) với LỖI MẠNG/NGOẠI LỆ THOÁNG QUA (`error` có giá
+  trị) — chỉ hoàn tác khi xung đột THẬT; nếu là lỗi thoáng qua, KHÔNG hoàn tác dữ liệu tiền thật, thay vào đó
+  đẩy lại qua markEntityDirty() (đã có cơ chế CAS + hàng đợi + tự retry từ §FIX-MARKDIRTY-CAS-2026) để đảm
+  bảo cuối cùng vẫn đồng bộ đúng.
+  KHÔNG đổi logic phát hiện xung đột THẬT giữa 2 thiết bị (vẫn hoạt động đúng thiết kế §DATA-ARCH-16) — chỉ
+  sửa 2 lỗi: (1) hoàn tác không đẩy lên server, (2) lỗi mạng bị hiểu nhầm là xung đột thật.
+  DỮ LIỆU: sẽ cung cấp script console để sửa đúng 2 bill của Trang/A Hùng (đánh dấu 'paid', bù paidAt/
+  paymentId, tạo lại 2 dòng sales còn thiếu) mà KHÔNG tạo payment mới/không tính trùng 60k đã thu.
+
   v1.44.24 (2026-09-21) — §FIX-CHECKIN-RELOAD-RESILIENCE-2026. Admin báo "Hằng check-in 16 người mà tab
   Đang Ở Sân chỉ hiện 10". Điều tra qua console dump (không đoán): xác nhận đúng 6 người có Visit ACTIVE
   tạo THẬT trong ngày (Vé Social/phí đã trừ đúng) nhưng player.status vẫn kẹt ở giá trị CŨ ('paid_and_left'
@@ -8915,7 +8959,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.24'; // §FIX-CHECKIN-RELOAD-RESILIENCE-2026 — check-in tự phục hồi khi mạng chậm/tải lại giữa chừng, không đổi cơ chế chống trùng 2 máy — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.25'; // §FIX-GROUPPAY-ROLLBACK-NOFLUSH-2026 — hoàn tác thanh toán nhóm đẩy đủ lên Firebase, không còn "payment ma" khi rollback; §FIX-GROUPPAY-FALSECONFLICT-2026 — lỗi mạng thoáng qua không còn bị hiểu nhầm là xung đột thật — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -15231,9 +15275,28 @@ function confirmGroupPaymentAtomic(bills, payment){
       })
     )).then(results=>{
       clearAllPending();
-      if(results.some(r=>!r || !r.committed)){
+      // §FIX-GROUPPAY-FALSECONFLICT-2026 — TRUOC DAY: bat ky ket qua `!committed` nao (kem ca loi
+      // MANG/ngoai le thoang qua khi goi transaction, vi DataService.bills.transaction() bat loi va tra
+      // ve {committed:false, error:err} — xem dinh nghia o dong ~8390) deu bi coi la "xung dot that" (mot
+      // thiet bi khac vua thanh toan bill nay) va kich hoat handleGroupPaymentConflict() — HOAN TAC toan
+      // bo bill/sales/player ve trang thai chua thanh toan, DU tien that su DA duoc thu (payment record
+      // that, khong phai xung dot that). Day chinh la nguyen nhan goc cua vu Trang + A Hung ck 60k that
+      // nhung 2 bill mai mai 'open': 1 loi mang thoang qua luc xac nhan (khong phai co thiet bi thu 2 nao
+      // tranh thanh toan) da bi hieu nham thanh xung dot that. FIX: chi coi la XUNG DOT THAT khi transaction
+      // THAT SU bi CAS tu choi (updateFn tra ve undefined vi remote da 'paid' boi payment KHAC — ket qua
+      // khong co truong `error`); neu la loi mang/ngoai le (`r.error` co gia tri), KHONG hoan tac — thay
+      // vao do day lai qua markEntityDirty() (co san co che CAS+hang doi+tu dong retry tu
+      // §FIX-MARKDIRTY-CAS-2026) de dam bao du lieu THAT (da thu tien) cuoi cung van toi duoc server, thay
+      // vi bi xoa oan.
+      const hasRealConflict = results.some(r=> r && !r.committed && !r.error);
+      const hasTransientError = results.some(r=> r && r.error);
+      if(hasRealConflict){
         handleGroupPaymentConflict(bills, payment);
       } else {
+        if(hasTransientError){
+          console.warn('[group payment] transient error xac nhan bill — day lai qua markEntityDirty CAS thay vi hoan tac', payment.id);
+        }
+        bills.forEach(b=> markEntityDirty('bills', b.id));
         markEntityDirty('payments', payment.id);
         bills.forEach(b=>{ const p = playerById(b.playerId); if(p) markEntityDirty('players', p.id); });
       }
@@ -15244,17 +15307,47 @@ function confirmGroupPaymentAtomic(bills, payment){
    (khong duoc 1 phan PAID mot phan khong — §16), tra tat ca bill lien quan ve OPEN, xoa payment
    "ma", bao loi ro bang tieng Viet. */
 function handleGroupPaymentConflict(bills, payment){
+  // §FIX-GROUPPAY-ROLLBACK-NOFLUSH-2026 — TRUOC DAY ham nay chi hoan tac CUC BO (splice payment khoi
+  // state.payments, reset bill ve open, xoa state.sales) roi saveState() (chi ghi localStorage) — KHONG
+  // he goi markEntityDirty/DataService.remove nao de day phan hoan tac nay len Firebase. Trong khi do,
+  // payment.id DA duoc markEntityDirty('payments', payment.id) day len server TU TRUOC (payMultipleBills()
+  // dong bo, o dau ham, truoc ca khi confirmGroupPaymentAtomic() duoc goi) — hau qua: neu confirmGroupPaymentAtomic()
+  // sau do phat hien xung dot (that hoac gia, vd loi mang thoang qua khi doc/transaction) va goi ham nay,
+  // BAN GHI PAYMENT "MA" (voi so tien that da nhan qua chuyen khoan/tien mat) van ton tai VINH VIEN tren
+  // server, trong khi cac bill/sales lien quan bi hoan lai 'open' CHI TREN THIET BI NAY — thiet bi khac
+  // (hoac chinh thiet bi nay sau khi tai lai trang) van thay payment ton tai qua listener nhung bill khong
+  // bao gio duoc danh dau da thanh toan, sales/doanh thu khong bao gio duoc ghi nhan. Phat hien qua truong
+  // hop that: Trang + A Hung thanh toan nhom 60k (ck that, co bien lai) nhung ca 2 bill mai mai 'open',
+  // 0 dong state.sales cho payment nay. FIX: hoan tac PHAI duoc day len Firebase day du — xoa that su
+  // payment tren server, ghi lai bill/player da hoan ve open, xoa sales tren server — dong bo hoa toan
+  // voi trang thai cuc bo, khong de lai "payment ma".
   const idx = state.payments.findIndex(p=>p.id===payment.id);
   if(idx>=0) state.payments.splice(idx,1);
+  if(SYNC_ENABLED && dbRoot){
+    dbRoot.child(fbNodeNameFor('payments')).child(payment.id).remove()
+      .catch(err=>handleWriteError('payments','remove',err));
+  }
+  if(lastSyncedSnapshot.payments) delete lastSyncedSnapshot.payments[payment.id];
   bills.forEach(bill=>{
     if(bill.paymentId === payment.id){
       bill.status = 'open'; bill.paidAt = null; bill.paymentMethod = null; bill.paymentId = null;
+      markEntityDirty('bills', bill.id); // day trang thai hoan tac len server (truoc day chi sua cuc bo)
       const p = playerById(bill.playerId);
-      if(p && p.paidAndLeftAt){ p.status = 'waiting_payment'; p.paidAndLeftAt = null; }
+      if(p && p.paidAndLeftAt){
+        p.status = 'waiting_payment'; p.paidAndLeftAt = null;
+        markEntityDirty('players', p.id); // day trang thai hoan tac len server (truoc day chi sua cuc bo)
+      }
       reopenCompletedVisitAfterPaymentRollback(bill.playerId);
     }
   });
+  const removedSaleIds = state.sales.filter(s=> s.paymentId === payment.id).map(s=>s.id);
   state.sales = state.sales.filter(s=> s.paymentId !== payment.id);
+  if(SYNC_ENABLED && dbRoot){
+    const salesFb = fbNodeNameFor('sales');
+    removedSaleIds.forEach(saleId=>{
+      dbRoot.child(salesFb).child(saleId).remove().catch(err=>handleWriteError('sales','remove',err));
+    });
+  }
   reverseFinanceTransactionByPaymentId(payment.id); // §FINANCE1/§29
   saveState();
   renderAll();
