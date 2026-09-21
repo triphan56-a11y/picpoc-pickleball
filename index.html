@@ -2,6 +2,32 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.26 (2026-09-21) — §FIX-VESOCIAL-NOVISIT-2026. Admin báo (kèm ảnh chụp): "Hai Phượng" hôm nay
+  KHÔNG check-in (chỉ đến trả nốt 30k còn lại của phí giải đấu hôm trước), nhưng bill lại hiện tổng
+  130.000đ (30k Vé Social + 100k phí giải "Giải 4.3") thay vì đúng 100k phí giải.
+  ĐIỀU TRA: dump bill thật xác nhận bill (`bill_mub2rnwmjfomr`) gắn thẳng `playerId` của Hai Phượng (không
+  phải bill Tournament Entry chuẩn — loại đó luôn `playerId=null`) — tức khoản "Giải 4.3" 100k được Staff
+  thêm bằng tay qua đường thêm khoản vào bill khách (addBillItem(), dùng chung cho "+ SẢN PHẨM"/"Khoản
+  khác"), không phải qua module Thu phí giải đấu riêng.
+  ROOT CAUSE: addBillItem() luôn gọi ensureOpenBillForPlayer() để lấy/tạo bill trước khi thêm khoản mới.
+  Vì Hai Phượng không còn bill 'open' nào (bill Vé Social hôm 17/9 đã 'paid'), hàm này tạo 1 bill HOÀN
+  TOÀN MỚI. getEffectiveVisitForSocialCheck() đúng đắn trả về null cho cô ấy (status 'paid_and_left',
+  không nằm trong danh sách trạng thái "đang ở sân" — tức không có Visit hiệu lực nào, hợp lý vì không
+  check-in hôm nay) — NHƯNG điều kiện tự động thêm Vé Social ngay sau đó chỉ kiểm tra
+  `!hasSocialTicketForVisit(visitId) && !hasSocialPassUsageForVisit(visitId)`, mà CẢ HAI hàm này đều
+  return false ngay khi visitId là null ("không tìm thấy vé/gói CHO 1 Visit null" — đúng về mặt kỹ thuật
+  nhưng bị hiểu NHẦM thành "chưa có vé, cần thêm 1 vé mới" thay vì hiểu ĐÚNG "không có Visit nào cả = không
+  phải 1 lượt check-in thật = không được tự tính bất kỳ khoản vé/gói nào". Lỗi này ảnh hưởng BẤT KỲ khách
+  nào không đang onsite (đã về/paid_and_left/chưa từng check-in hôm đó) mà bị thêm 1 khoản bất kỳ vào bill
+  — không chỉ riêng trường hợp phí giải đấu.
+  FIX TẬN GỐC: thêm điều kiện `visitId &&` lên đầu — bắt buộc phải có 1 Visit hiệu lực thật (tức khách
+  đang thực sự có mặt/check-in) mới xét tới việc tự động thêm Vé Social/trừ gói; không có Visit hiệu lực
+  = không tự tính bất kỳ khoản entitlement nào, dù cài đặt Vé Social đang bật.
+  DỮ LIỆU: cung cấp script console (fix_hai_phuong_bill.js) xoá đúng dòng Vé Social sai khỏi bill hiện có
+  của Hai Phượng, tính lại status/outstanding qua recalculateBillFinancialStatus() (nguồn xác định
+  status/paidAt DUY NHẤT, không tự set tay), bù đúng 1 dòng sales còn thiếu cho khoản 100k đã thu (không
+  tạo payment mới, không tính trùng tiền).
+
   v1.44.25 (2026-09-21) — §FIX-GROUPPAY-ROLLBACK-NOFLUSH-2026 + §FIX-GROUPPAY-FALSECONFLICT-2026. Admin
   báo (kèm ảnh chụp màn hình): "Trang" và "A Hùng" thanh toán nhóm (chuyển khoản 60k, có biên lai thật
   16:31:28 21/9/2026) nhưng thẻ ở tab Đang Ở Sân vẫn hiện "Bill: 30.000đ" cho cả 2 dù modal Bill của Trang
@@ -8959,7 +8985,7 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.25'; // §FIX-GROUPPAY-ROLLBACK-NOFLUSH-2026 — hoàn tác thanh toán nhóm đẩy đủ lên Firebase, không còn "payment ma" khi rollback; §FIX-GROUPPAY-FALSECONFLICT-2026 — lỗi mạng thoáng qua không còn bị hiểu nhầm là xung đột thật — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.26'; // §FIX-VESOCIAL-NOVISIT-2026 — không tự tính Vé Social khi thêm khoản vào bill của khách không có Visit hiệu lực (không onsite) — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -13919,12 +13945,28 @@ function ensureOpenBillForPlayer(player){
      nguyen nhan goc cua bug "Social bi tinh lai". Gio kiem tra THEM: Visit hien tai (neu co) DA tung
      co Ve Social (paid hoac dang open) chua qua hasSocialTicketForVisit() — neu roi thi KHONG them nua,
      "bill moi" chi la vo chua cac khoan MOI (nuoc/san pham...), khong tu dong keo theo Ve Social. */
-  if(state.settings.socialTicketEnabled && !hasSocialTicketForVisit(visitId) && !hasSocialPassUsageForVisit(visitId)){
+  // §FIX-VESOCIAL-NOVISIT-2026 — Admin bao "Hai Phượng hôm nay không check-in, sao vẫn bị tính Vé Social
+  // 30k?": Staff thêm khoản "Giải 4.3" (phí giải đấu cũ) thẳng vào bill của Hai Phượng qua addBillItem()
+  // (không phải qua module Thu phí giải đấu riêng — bill đó gắn playerId thật, item type 'other', khác hẳn
+  // bill Tournament Entry chuẩn luôn có playerId=null/type='tournament_entry'). Vì Hai Phượng KHÔNG có bill
+  // 'open' nào, addBillItem() gọi ensureOpenBillForPlayer() để tạo bill mới — nhưng player.status của
+  // Hai Phượng là 'paid_and_left' (không nằm trong onsiteStatuses), nên getEffectiveVisitForSocialCheck()
+  // ĐÚNG là trả về null (không có Visit hiệu lực — hợp lý, cô ấy không có mặt). BUG nằm ở bước SAU: điều
+  // kiện cũ chỉ kiểm tra `!hasSocialTicketForVisit(visitId) && !hasSocialPassUsageForVisit(visitId)` —
+  // nhưng CẢ HAI hàm này đều return false ngay khi visitId là null (tức "chưa từng có vé cho Visit null"),
+  // bị hiểu NHẦM thành "chưa có vé, cần thêm" thay vì hiểu ĐÚNG là "không có Visit nào cả — không phải
+  // 1 lượt check-in thật, KHÔNG được tự tính Vé Social". Hậu quả: BẤT KỲ player nào không onsite (đã về/
+  // paid_and_left/chưa từng check-in) mà bị thêm 1 khoản bất kỳ (tournament fee, sản phẩm, khoản khác...)
+  // vào bill mới đều bị "ăn theo" 1 khoản Vé Social 30k oan uổng.
+  // FIX TẬN GỐC: bắt buộc PHẢI có visitId thật (tức PHẢI có 1 Visit hiệu lực — nghĩa là player thực sự có
+  // mặt/đang check-in) thì mới xét tới việc tự động thêm Vé Social; không có Visit hiệu lực = không tự
+  // tính bất kỳ khoản vé/gói nào, dù socialTicketEnabled đang bật.
+  if(visitId && state.settings.socialTicketEnabled && !hasSocialTicketForVisit(visitId) && !hasSocialPassUsageForVisit(visitId)){
     // §SOCIALPASS2026/§13 — DUNG CANONICAL POINT NAY (khong tao diem quyet dinh moi): truoc khi them
     // Vé Social 30k, thu tieu 1 luot Gói Social 15+1 neu con (§7/§25 — mac dinh dung goi, KHONG hoi
     // Staff "dùng gói hay trả tiền"). Chi khi KHONG con entitlement (het luot/khong co goi) moi quay
     // lai add Vé Social binh thuong (§15).
-    const passResult = visitId && typeof consumeSocialPassForVisit === 'function' ? consumeSocialPassForVisit(player.id, visitId) : null;
+    const passResult = typeof consumeSocialPassForVisit === 'function' ? consumeSocialPassForVisit(player.id, visitId) : null;
     if(!(passResult && passResult.ok)){
       bill.items.push({ id: uid('bi'), type:'ticket', label:'Vé Social', amount: state.settings.socialTicketPrice, qty:1, unitPrice: state.settings.socialTicketPrice, timestamp: Date.now(), visitId });
     }
