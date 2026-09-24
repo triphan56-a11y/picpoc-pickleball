@@ -2,6 +2,20 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.33 (2026-09-24) — §TOURN-CLUB-LINK-2026. Admin: "chỉnh phần đồng bộ giữa club và giải đấu". Truoc
+  day cap dau chi la chuoi ten, 112/112 ve tham gia giai khong gan ho so Player nao; Credits/Top-2 Series do
+  ten (chi tach '&'/'/', so khop chinh xac) nen cap ghi "A - B" hoac ten lech dau khong phat duoc thuong.
+  MOI: pair.playerIdA/playerIdB (2 field rieng, khong dung mang co null — Firebase khong luu null trong mang);
+  tu noi khi them cap bang danh sach (ten khop DUNG 1 ho so, khong phan biet dau/hoa thuong, tach ca '-'),
+  them nhanh thi dung dung nguoi chon tu goi y; nut "🔗 Liên kết" tren tung cap de chon/sua ho so; ve tham
+  gia co playerId theo slot; resolveTeamSnapshotFromPairId() dung lien ket truoc; ho so Nguoi choi co muc
+  GIẢI ĐẤU (giai, cap voi ai, phi da dong/ghi no/chua dong, nuoc da nhan) + nhac "PHÍ GIẢI CHƯA THU" o Tong
+  quan. KHONG doi: bill phi giai van playerId=null, khong cong phi giai vao cong no Club/bao cao tai chinh,
+  tran giai CHUA tinh vao PPR (cho Admin quyet dinh).
+  Kem §FIX-CAS-LIVEREF-2026 (loi dong bo co tu truoc, lo ra khi test): flushDirtyEntityCAS()/occFlushEntity()
+  ghi lastSyncedSnapshot sau commit tu tham chieu SONG cua entity -> neu entity bi sua tiep trong luc dang ghi,
+  lan ghi xep hang ke tiep bi CAS huy va mat thay doi. Gio chup payload luc gui va dung chinh no.
+
   v1.44.32 (2026-09-24) — §FIX-CANON-JSON-2026. Admin bao Data Health: 14 player "waiting" nhung KHONG co
   Active Visit. Doi chieu backup 23/9: Visit da COMPLETED (closeReason PAID, bill paid) nhung player.status van
   'waiting'. ROOT CAUSE (tai hien duoc offline bang Firebase gia tra khoa theo ABC nhu that): lastSyncedSnapshot
@@ -8727,16 +8741,21 @@ function flushDirtyEntityCAS(node, fb, id){
   const prevJson = (lastSyncedSnapshot[node] && Object.prototype.hasOwnProperty.call(lastSyncedSnapshot[node], id))
     ? lastSyncedSnapshot[node][id] : undefined;
   markEntityPendingWrite(node, id);
+  // §FIX-CAS-LIVEREF-2026 — chup NOI DUNG gui len NGAY LUC NAY. Truoc day sau commit ghi lastSyncedSnapshot tu
+  // `entity` (tham chieu SONG) — neu code da sua tiep entity trong luc transaction dang bay (vd tao ve roi noi
+  // ho so ngay sau), snapshot ghi nhan ca thay doi CHUA len server -> lan flush xep hang sau do bi CAS huy va
+  // keo ban cu ve (mat thay doi thu 2). Tai hien offline: ve tham gia mat playerId.
+  const payload = sanitizeForFirebase(entity);
   dbRoot.child(fb).child(id).transaction(remote=>{
     const remoteJson = (remote === null || remote === undefined) ? null : fbCanonJson(remote);
     if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // server da doi khac tu lan dong bo cuoi cua thiet bi nay -> huy, khong ghi de
-    return sanitizeForFirebase(entity);
+    return payload;
   }).then(result=>{
     if(!result || !result.committed){
       applyRemoteEntityLocally(node, id, result && result.snapshot ? result.snapshot.val() : null);
     } else {
       if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
-      lastSyncedSnapshot[node][id] = fbCanonJson(entity);
+      lastSyncedSnapshot[node][id] = fbCanonJson(payload);
     }
   }).catch(err=>{ console.error('[markDirty] CAS error', node, id, err); handleWriteError(node,'set',err); })
   .finally(()=>{
@@ -9040,10 +9059,11 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
     return;
   }
   markEntityPendingWrite(node, id);
+  const payload = desiredEntityOrNull === null ? null : sanitizeForFirebase(desiredEntityOrNull); // §FIX-CAS-LIVEREF-2026 — chup noi dung gui len ngay luc nay (xem flushDirtyEntityCAS)
   dbRoot.child(fb).child(id).transaction(remote=>{
     const remoteJson = (remote === null || remote === undefined) ? null : fbCanonJson(remote);
     if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — remote da doi khac tu lan dong bo cuoi cua thiet bi nay, huy
-    return desiredEntityOrNull === null ? null : sanitizeForFirebase(desiredEntityOrNull);
+    return payload;
   }).then(result=>{
     if(!result || !result.committed){
       // §HOTFIX-OCCSNAPSHOT — result.snapshot la 1 Firebase DataSnapshot THAT (object noi bo cua SDK,
@@ -9056,8 +9076,8 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
       return;
     }
     if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
-    if(desiredEntityOrNull === null) delete lastSyncedSnapshot[node][id];
-    else lastSyncedSnapshot[node][id] = fbCanonJson(desiredEntityOrNull);
+    if(payload === null) delete lastSyncedSnapshot[node][id];
+    else lastSyncedSnapshot[node][id] = fbCanonJson(payload);
   }).catch(err=>{ console.error('[diffFlush] occ error', node, id, err); handleWriteError(node,'transaction',err); })
   .finally(()=>{
     clearEntityPendingWrite(node, id);
@@ -9141,7 +9161,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.32'; // §FIX-CANON-JSON-2026 — so sanh dong bo theo dang chuan Firebase (het huy nham lenh ghi player 'paid_and_left'), nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.33'; // §TOURN-CLUB-LINK-2026 — noi cap dau/ve giai voi ho so Nguoi choi Club
+// (ban truoc: 'Picpoc v1.44.32') // §FIX-CANON-JSON-2026 — so sanh dong bo theo dang chuan Firebase (het huy nham lenh ghi player 'paid_and_left'), nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT — chi tiet o CHANGELOG dau file
 // (ban truoc: 'Picpoc v1.44.31') §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS
 // (ban truoc: 'Picpoc v1.44.30') §FIX-TDZ-BOOTCRASH-2026 — sửa 1 lỗi TDZ có thể khiến app không load được trên 1 số thiết bị (phát hiện qua tự chạy boot app thật bằng jsdom, không chỉ kiểm tra cú pháp) — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
@@ -35801,7 +35822,7 @@ function addPairsFromInput(){
     const t = currentTournament();
     if(!t){ showToast('Lỗi: chưa chọn giải đấu.'); return; }
     if(!Array.isArray(t.pairs)) t.pairs = []; // §FIX-TOURN-1 — tu phuc hoi neu du lieu bi thieu/hong, tranh throw im lang
-    lines.forEach(label => t.pairs.push({ id: uid('pair'), label, manualGroup: null }));
+    lines.forEach(label => { const g = guessPairPlayerIdsFromLabel(label); t.pairs.push(setPairPlayerIds({ id: uid('pair'), label, manualGroup: null }, g[0], g[1])); }); // §TOURN-CLUB-LINK-2026 — tu noi khi ten khop DUNG 1 ho so
     if(t.entryFeeConfig) syncTournamentEntryParticipants(state.currentCat); // §TOURN-ENTRY-9 — giai da kich hoat: cap moi them vao van tu dong co du 2 participant
     textarea.value = '';
     saveState();
@@ -35837,6 +35858,7 @@ function openPairQuickAddModal(){
   const n2 = document.getElementById('pairQuickName2');
   if(n1) n1.value = '';
   if(n2) n2.value = '';
+  window.__pairQuickSel = {}; // §TOURN-CLUB-LINK-2026
   overlay.classList.add('show');
   if(n1) n1.focus();
 }
@@ -35858,7 +35880,13 @@ function submitPairQuickAdd(){
   const t = currentTournament();
   if(!t){ showToast('Lỗi: chưa chọn giải đấu.'); return; }
   if(!Array.isArray(t.pairs)) t.pairs = [];
-  t.pairs.push({ id: uid('pair'), label: name1 + ' & ' + name2, manualGroup: null });
+  // §TOURN-CLUB-LINK-2026 — uu tien dung nguoi da CHON tu goi y (neu Staff khong sua lai ten sau khi chon),
+  // khong thi doan theo ten (chi khi khop dung 1 ho so); khach vang lai -> null.
+  const sel = window.__pairQuickSel || {};
+  const pickId = (slot, name)=>{ const p = sel[slot] ? playerById(sel[slot]) : null; if(p && p.name === name) return p.id; const g = findUniqueClubPlayerByName(name); return g ? g.id : null; };
+  const idA = pickId(1, name1), idB0 = pickId(2, name2);
+  t.pairs.push(setPairPlayerIds({ id: uid('pair'), label: name1 + ' & ' + name2, manualGroup: null }, idA, idB0));
+  window.__pairQuickSel = {};
   if(t.entryFeeConfig) syncTournamentEntryParticipants(state.currentCat);
   saveState();
   renderTournamentTab();
@@ -35888,6 +35916,7 @@ function selectPairQuickSuggest(slot, playerId){
   const box = document.getElementById('pairQuickSuggest' + slot);
   if(input) input.value = p.name;
   if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+  window.__pairQuickSel = Object.assign(window.__pairQuickSel || {}, { [slot]: p.id }); // §TOURN-CLUB-LINK-2026
 }
 function hidePairQuickSuggestLater(slot){
   // onmousedown (khong phai onclick) tren item da chon truoc khi blur an dropdown, nhung van tre 150ms
@@ -36083,9 +36112,95 @@ function splitPairLabel(label){
   return ['VĐV 1', 'VĐV 2'];
 }
 
-function makeEntryParticipant(catKey, pairId, slot, name, cfg){
+/* §TOURN-CLUB-LINK-2026 — NOI cap dau Giai dau voi ho so Nguoi choi Club. Truoc day cap chi la 1 chuoi
+   label tu do ("A & B"), ve tham gia giai chi luu ten -> khong biet VDV la ai trong Club (Credits/Series
+   phai do ten, de truot khi ten go lech/trung/dung dau "-"). Tu gio pair.playerIdA/pair.playerIdB (slot A/B,
+   bo trong neu la khach vang lai), participant.playerId theo dung slot. Label van giu nguyen de hien thi (khach vang lai van
+   nhap ten tu do duoc, slot do de null). Bill phi giai VAN playerId=null nhu cu (khong keo vao luong bill
+   Club/Ve Social) — lien ket chi nam o pair/participant. */
+function findUniqueClubPlayerByName(name){
+  const key = vnFold(String(name||'').trim()).toLowerCase().replace(/\s+/g,' ');
+  if(!key) return null;
+  const matches = (state.players||[]).filter(p=>!p.archived && p.name && vnFold(p.name.trim()).toLowerCase().replace(/\s+/g,' ') === key);
+  return matches.length === 1 ? matches[0] : null;
+}
+function guessPairPlayerIdsFromLabel(label){
+  const parts = String(label||'').split(/\s*[&+/,]\s*| và | vs | - | – | — /i).map(s=>s.trim()).filter(Boolean);
+  if(parts.length !== 2) return [null, null];
+  const a = findUniqueClubPlayerByName(parts[0]), b = findUniqueClubPlayerByName(parts[1]);
+  return [a ? a.id : null, (b && (!a || b.id !== a.id)) ? b.id : null];
+}
+/* Nguon DUY NHAT de biet 2 VDV cua 1 cap: uu tien lien ket da luu (pair.playerIdA/B, id con ton tai), slot nao
+   chua lien ket thi doan theo ten (chi khi khop DUNG 1 nguoi). */
+function getPairPlayerIds(pair){
+  if(!pair) return [null, null];
+  // Luu thanh 2 field rieng playerIdA/playerIdB (KHONG dung mang [null,id] — Firebase khong luu null trong mang
+  // va tra ve dang object, lam lech so sanh dong bo, xem §FIX-CANON-JSON-2026).
+  const saved = [pair.playerIdA || null, pair.playerIdB || null];
+  const guess = guessPairPlayerIdsFromLabel(pair.label);
+  const pick = i => (saved[i] && playerById(saved[i])) ? saved[i] : guess[i];
+  const a = pick(0), b = pick(1);
+  return [a, (b && b !== a) ? b : null];
+}
+function findPairById(pairId){
+  for(const catKey in state.tournaments){
+    const t = state.tournaments[catKey];
+    const pair = (t && t.pairs || []).find(p=>p.id===pairId);
+    if(pair) return { catKey, t, pair };
+  }
+  return null;
+}
+function setPairPlayerIds(pair, idA, idB){
+  if(idB && idB === idA) idB = null;
+  if(idA) pair.playerIdA = idA; else delete pair.playerIdA;
+  if(idB) pair.playerIdB = idB; else delete pair.playerIdB;
+  return pair;
+}
+/* Ghi lien ket cho 1 cap + dong bo playerId cua 2 ve tham gia (neu da kich hoat phi giai). */
+function linkPairPlayers(pairId, idA, idB){
+  const f = findPairById(pairId);
+  if(!f) return false;
+  setPairPlayerIds(f.pair, idA, idB);
+  (state.tournamentEntryParticipants||[]).filter(x=>x.pairId===pairId && !x.canceled).forEach(x=>{
+    const want = (x.slot === 'A' ? f.pair.playerIdA : f.pair.playerIdB) || null;
+    if((x.playerId || null) !== want){ x.playerId = want; markEntityDirty('tournamentEntryParticipants', x.id); }
+  });
+  return true;
+}
+function openPairLinkModal(pairId){
+  const f = findPairById(pairId);
+  if(!f) return;
+  const [a, b] = getPairPlayerIds(f.pair);
+  const [nameA, nameB] = splitPairLabel(f.pair.label);
+  const opts = sel => '<option value="">— Khách vãng lai / chưa có hồ sơ —</option>' + (state.players||[]).filter(p=>!p.archived)
+    .slice().sort((x,y)=>String(x.name).localeCompare(String(y.name),'vi'))
+    .map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${escapeHtml(p.name)}${p.phone?' · '+escapeHtml(p.phone):''}</option>`).join('');
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>🔗 Liên kết người chơi — ${escapeHtml(f.pair.label)}</h2>
+    <p class="muted small-note">Chọn đúng hồ sơ Club cho từng VĐV để: trao Credits/Top-2 Series chính xác, phí giải &amp; nước hiện trong hồ sơ người chơi. Tên cặp hiển thị giữ nguyên.</p>
+    <label>VĐV 1 (${escapeHtml(nameA)})</label>
+    <select id="pairLinkA">${opts(a)}</select>
+    <label>VĐV 2 (${escapeHtml(nameB)})</label>
+    <select id="pairLinkB">${opts(b)}</select>
+    <button class="big" onclick="submitPairLink('${f.pair.id}')">LƯU LIÊN KẾT</button>
+    <button class="secondary" onclick="closeModal()">Hủy</button>`;
+  document.getElementById('matchModal').classList.add('show');
+}
+function submitPairLink(pairId){
+  const a = (document.getElementById('pairLinkA')||{}).value || null;
+  const b = (document.getElementById('pairLinkB')||{}).value || null;
+  if(a && b && a === b){ showToast('2 VĐV không được là cùng 1 người'); return; }
+  if(!linkPairPlayers(pairId, a, b)) { showToast('Không tìm thấy cặp'); return; }
+  logOverride('tournament_pair_linked', 'Liên kết cặp "' + pairLabel(pairId) + '" với ' + [a,b].map(id=>id?playerName(id):'(khách vãng lai)').join(' & '), 'tournament', pairId);
+  saveState();
+  closeModal();
+  renderTournamentTab();
+  showToast('✓ Đã lưu liên kết người chơi');
+}
+function makeEntryParticipant(catKey, pairId, slot, name, cfg, playerId){
   return {
-    id: uid('tep'), catKey, pairId, slot, name,
+    id: uid('tep'), catKey, pairId, slot, name, playerId: playerId || null,
     entryFeeAmount: cfg.entryFeePerPlayer, entryFeeStatus:'UNPAID', billId:null, paymentId:null, paidAt:null,
     waterProductId: cfg.includedWaterProductId, waterEntitledQty: cfg.includedWaterQtyPerPlayer,
     waterIssuedQty: 0, waterIssuedAt: null,
@@ -36126,8 +36241,9 @@ function syncTournamentEntryParticipants(catKey){
     const existing = state.tournamentEntryParticipants.filter(p=>p.pairId===pair.id && !p.canceled);
     const slotsPresent = existing.map(p=>p.slot);
     const [nameA, nameB] = splitPairLabel(pair.label);
-    if(!slotsPresent.includes('A')){ const pa = makeEntryParticipant(catKey, pair.id, 'A', nameA, cfg); state.tournamentEntryParticipants.push(pa); markEntityDirty('tournamentEntryParticipants', pa.id); } // §FIX-MARKDIRTY-LISTENEROVERWRITE
-    if(!slotsPresent.includes('B')){ const pb = makeEntryParticipant(catKey, pair.id, 'B', nameB, cfg); state.tournamentEntryParticipants.push(pb); markEntityDirty('tournamentEntryParticipants', pb.id); }
+    const [pidA, pidB] = getPairPlayerIds(pair); // §TOURN-CLUB-LINK-2026
+    if(!slotsPresent.includes('A')){ const pa = makeEntryParticipant(catKey, pair.id, 'A', nameA, cfg, pidA); state.tournamentEntryParticipants.push(pa); markEntityDirty('tournamentEntryParticipants', pa.id); } // §FIX-MARKDIRTY-LISTENEROVERWRITE
+    if(!slotsPresent.includes('B')){ const pb = makeEntryParticipant(catKey, pair.id, 'B', nameB, cfg, pidB); state.tournamentEntryParticipants.push(pb); markEntityDirty('tournamentEntryParticipants', pb.id); }
   });
 }
 
@@ -38327,12 +38443,10 @@ function getSeriesWeeksLinkedToCatKey(catKey){
 }
 function resolveTeamSnapshotFromPairId(catKey, pairId){
   const label = pairLabel(pairId);
-  const parts = String(label||'').split(/&|\//).map(s=>s.trim()).filter(Boolean);
-  const playerIds = [];
-  parts.forEach(name=>{
-    const matches = (state.players||[]).filter(p=>!p.archived && p.name && p.name.trim().toLowerCase() === name.toLowerCase());
-    if(matches.length === 1) playerIds.push(matches[0].id);
-  });
+  // §TOURN-CLUB-LINK-2026 — dung lien ket da luu tren cap (Staff chon/nguoi chon tu goi y) truoc, chi doan theo
+  // ten khi chua lien ket (khong phan biet dau/hoa thuong, tach ca dau "-", chi nhan khi khop DUNG 1 ho so).
+  const f = findPairById(pairId);
+  const playerIds = f ? getPairPlayerIds(f.pair).filter(Boolean) : [];
   return { playerIds, teamNameSnapshot: label || '' };
 }
 /* Finalization guard (§ finalization guard cua spec): CHI finalize khi tournament THAT SU COMPLETED
@@ -38559,12 +38673,21 @@ function renderTournamentTab(){
   // groupCountForSelect cua no tu t.groupCount, khong can bien nay o day nua) — tranh duplicate UI.
   const pairsBody = document.getElementById('pairsListBody');
   pairsBody.innerHTML = t.pairs.map((p, idx)=>{
+    // §TOURN-CLUB-LINK-2026 — hien trang thai lien ket ho so Club cua tung cap + nut sua lien ket
+    const ids = getPairPlayerIds(p);
+    const linkedCount = ids.filter(Boolean).length;
+    const linkTitle = ids.map(id=>id ? playerName(id) : 'chưa liên kết').join(' & ');
+    const linkBadge = linkedCount === 2
+      ? `<span class="muted" style="font-size:.72rem;" title="${escapeHtml(linkTitle)}">🔗 Đã nối hồ sơ</span>`
+      : `<span style="font-size:.72rem; color:var(--danger);" title="${escapeHtml(linkTitle)}">⚠ ${linkedCount}/2 VĐV có hồ sơ</span>`;
     return `<div class="tourn-pair-card">
       <div class="tourn-pair-head-row">
         <span class="tourn-pair-idx">#${idx+1}</span>
         <span class="tourn-pair-name" title="${escapeHtml(p.label)}">${escapeHtml(p.label)}</span>
       </div>
       <div class="tourn-pair-card-foot">
+        ${linkBadge}
+        <button class="small secondary no-print" onclick="openPairLinkModal('${p.id}')">🔗 Liên kết</button>
         <button class="small danger no-print tourn-pair-del" onclick="removePair('${p.id}')">Xóa</button>
       </div>
     </div>`;
@@ -39529,6 +39652,12 @@ function renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday){
   if(openBill){
     html += `<div class="player-bill-row open-bill" style="margin-top:10px;"><span>⚠ BILL ĐANG MỞ — ${fmtVnd(billTotal(openBill))}</span><button class="small" onclick="openBillModal('${p.id}')">XEM BILL</button></div>`;
   }
+  // §TOURN-CLUB-LINK-2026 — nhac phi giai chua thu (tinh RIENG, khong cong vao cong no Club/bao cao tai chinh)
+  const unpaidTourn = getPlayerUnpaidTournamentFees(p.id);
+  if(unpaidTourn.length){
+    const sum = unpaidTourn.reduce((s,e)=>s + (e.part.entryFeeAmount||0), 0);
+    html += `<div class="player-bill-row open-bill" style="margin-top:10px;"><span>🏆 PHÍ GIẢI CHƯA THU — ${fmtVnd(sum)} (${unpaidTourn.map(e=>escapeHtml(e.tournamentLabel)).join(', ')})</span></div>`;
+  }
   return html;
 }
 /* §PROFILE2026-V2 — theo yeu cau Admin: "LỊCH SỬ CHƠI"/"THANH TOÁN"/"HOẠT ĐỘNG GẦN ĐÂY" (header cu)
@@ -39538,7 +39667,56 @@ function renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday){
 function renderPlayerActivitySubtab(p){
   return '<h3 style="margin:0 0 6px;">TỪNG TRẬN</h3>' + renderPlayerHistorySubtab(p) +
     '<h3 style="margin:16px 0 6px;">TỪNG LƯỢT GHÉ SÂN</h3>' + renderPlayerVisitsSubtab(p) +
-    '<h3 style="margin:16px 0 6px;">BILL &amp; CÔNG NỢ</h3>' + renderPlayerFinanceSubtab(p);
+    '<h3 style="margin:16px 0 6px;">BILL &amp; CÔNG NỢ</h3>' + renderPlayerFinanceSubtab(p) +
+    '<h3 style="margin:16px 0 6px;">GIẢI ĐẤU</h3>' + renderPlayerTournamentSection(p);
+}
+/* §TOURN-CLUB-LINK-2026 — cac lan tham gia giai cua 1 player: tu cap dang co trong giai (lien ket/doan ten qua
+   getPairPlayerIds) + ve tham gia da luu playerId (ke ca giai da xoa danh sach cap). Chi DOC, khong doi tien. */
+function getPlayerTournamentEntries(playerId){
+  const out = []; const seenPair = new Set();
+  Object.keys(state.tournaments||{}).forEach(catKey=>{
+    const t = state.tournaments[catKey];
+    (t && t.pairs || []).forEach(pair=>{
+      const ids = getPairPlayerIds(pair);
+      const idx = ids.indexOf(playerId);
+      if(idx < 0) return;
+      const slot = idx === 0 ? 'A' : 'B';
+      const part = (state.tournamentEntryParticipants||[]).find(x=>x.pairId===pair.id && x.slot===slot && !x.canceled) || null;
+      const partnerId = ids[1-idx];
+      const [nA, nB] = splitPairLabel(pair.label);
+      seenPair.add(pair.id);
+      out.push({ catKey, tournamentLabel: t.label || catKey, pairLabel: pair.label, partnerName: partnerId ? playerName(partnerId) : (idx===0 ? nB : nA), part, current: true, status: t.status });
+    });
+  });
+  (state.tournamentEntryParticipants||[]).forEach(x=>{
+    if(x.playerId !== playerId || seenPair.has(x.pairId) || (x.canceled && x.cancelReason !== 'TOURNAMENT_CLEARED')) return;
+    const t = state.tournaments[x.catKey];
+    out.push({ catKey: x.catKey, tournamentLabel: (t && t.label) || x.catKey, pairLabel: x.name, partnerName: null, part: x, current: false, status: null });
+  });
+  return out;
+}
+function getPlayerUnpaidTournamentFees(playerId){
+  return getPlayerTournamentEntries(playerId).filter(e=>e.part && !e.part.canceled && e.part.entryFeeStatus !== 'PAID' && e.part.entryFeeAmount > 0);
+}
+function renderPlayerTournamentSection(p){
+  const entries = getPlayerTournamentEntries(p.id);
+  if(!entries.length) return '<p class="muted small-note">Chưa tham gia giải nào (hoặc cặp đấu chưa được liên kết với hồ sơ này — dùng nút "🔗 Liên kết" trong danh sách cặp của giải).</p>';
+  return entries.map(e=>{
+    const part = e.part;
+    let fee = '<span class="muted">Chưa kích hoạt phí giải</span>';
+    if(part){
+      fee = part.entryFeeStatus === 'PAID' ? `✓ Đã đóng ${fmtVnd(part.entryFeeAmount)}`
+        : part.entryFeeStatus === 'DEBT' ? `<b style="color:var(--danger);">📒 Ghi nợ ${fmtVnd(part.entryFeeAmount)}</b>`
+        : `<b style="color:var(--danger);">● Chưa đóng ${fmtVnd(part.entryFeeAmount)}</b>`;
+      if(part.canceled) fee += ' <span class="muted">(giải đã xoá danh sách)</span>';
+    }
+    const water = part && part.waterEntitledQty ? ` · Nước: ${part.waterIssuedQty||0}/${part.waterEntitledQty} chai` : '';
+    return `<div class="player-match-row">
+      <div class="pmr-time"><b>${escapeHtml(e.tournamentLabel)}</b>${e.status==='COMPLETED'?' <span class="muted" style="font-size:.72rem;">(đã kết thúc)</span>':''}</div>
+      <div>${e.partnerName ? 'Cặp với <b>' + escapeHtml(e.partnerName) + '</b>' : escapeHtml(e.pairLabel)}</div>
+      <div style="font-size:.82rem;">${fee}${water}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderPlayerHistorySubtab(p){
@@ -39547,13 +39725,13 @@ function renderPlayerHistorySubtab(p){
   return matches.map(m=>{
     const d = new Date(m.time);
     const dateStr = d.toLocaleDateString('vi-VN') + ' · ' + d.toLocaleTimeString('vi-VN',{hour:'2-digit',minute:'2-digit'});
-    const partnerStr = m.partnerNames.length ? (p.name + ' + ' + m.partnerNames.join(', ')) : p.name;
-    const waterStr = m.waterBet ? `<div class="muted" style="font-size:.76rem;">💧 Có độ nước — ${m.waterBet.productName} ×${m.waterBet.quantity}</div>` : '';
+    const partnerStr = escapeHtml(m.partnerNames.length ? (p.name + ' + ' + m.partnerNames.join(', ')) : p.name); // §AUDIT-XSS-2026
+    const waterStr = m.waterBet ? `<div class="muted" style="font-size:.76rem;">💧 Có độ nước — ${escapeHtml(m.waterBet.productName)} ×${m.waterBet.quantity}</div>` : '';
     const durationStr = m.durationMinutes != null ? `<div class="muted" style="font-size:.76rem;">${m.durationMinutes} phút</div>` : '';
     return `<div class="player-match-row">
       <div class="pmr-time">${dateStr}${m.courtId?(' · Sân '+m.courtId):''}</div>
       <div><b>${partnerStr}</b></div>
-      <div class="muted">vs ${m.opponentNames.join(', ') || '—'}</div>
+      <div class="muted">vs ${escapeHtml(m.opponentNames.join(', ')) || '—'}</div>
       ${durationStr}
       ${waterStr}
     </div>`;
