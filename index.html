@@ -2,6 +2,86 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.31 (2026-09-23) — §AUDIT-2026-09-23 (audit toan bo, xem Picpoc_Audit_ToanBo_2026-09-23.md).
+  (1) §AUDIT-HYDRATE-2026: thiet bi moi/cache hong tung seed du lieu mac dinh (Academy Program/Level/Session id
+  ngau nhien, 4 san pham p_*, u_admin_default, toan bo settings) va diff-flush len Firebase TRUOC khi nhan du
+  lieu that -> production co 114 Program (dung ra 2) / 5192 buoi, ton kho + bat/tat 4 san pham bi reset,
+  settings.authMode bi ghi ve LEGACY_LOCAL. Gio: __hydratedNodes — khong seed, khong diff-flush 1 node truoc khi
+  node do nhan snapshot dau tien; settings chi flush sau khi hydrate va KHONG BAO GIO kem authMode.
+  (2) §AUDIT-AUTH-2026: co Firebase -> isProductionAuthMode() luon true (bat buoc dang nhap), khong con dua vao
+  settings.authMode/cache (truoc day ai mo link cung thanh ADMIN o LEGACY_LOCAL).
+  (3) §AUDIT-XSS-2026: escapeHtml() (chuyen len khoi script dau) boc 90+ cho chen ten/SDT/ten khach vao innerHTML;
+  escapeJsInAttr() cho 3 cho nam trong chuoi JS cua onclick.
+
+  v1.44.30 (2026-09-21) — §FIX-TDZ-BOOTCRASH-2026. Admin yêu cầu "kiểm tra thật kỹ, tự chạy tự kiểm tra" —
+  lần này KHÔNG chỉ đọc/soát code (như các lần trước) mà THẬT SỰ CHẠY app: dựng môi trường trình duyệt ảo
+  (jsdom) nạp đúng file index.html, cho toàn bộ script chạy thật từ đầu đến cuối như trình duyệt thật, bắt
+  mọi lỗi runtime chưa bắt được — cách này phát hiện được lỗi mà cách kiểm tra cú pháp từng khối cũ (chỉ
+  parse, không thực thi) không bao giờ thấy được.
+  TÌM RA 1 LỖI THẬT NGHIÊM TRỌNG (P0 tiềm ẩn — có thể khiến app KHÔNG LOAD ĐƯỢC): `normalizeProducts()`
+  (gọi ngay khi app khởi động, trước cả khi bất kỳ thứ gì khác chạy) gọi chuỗi
+  `normalizeAcademy()`→`seedKidsCurriculumLevelsIfNeeded()`→`saveState()`→`tryCacheStateLocally()` — hàm
+  cuối này đọc biến `__localCacheQuotaExceeded`/dùng `LOCAL_CACHE_THROTTLE_MS`, nhưng cả 2 (khai báo bằng
+  `let`/`const`) lại nằm Ở RẤT XA phía sau trong file (dòng ~15900+) — nếu chuỗi gọi trên xảy ra ĐÚNG lúc
+  này (xảy ra khi 1 thiết bị đã có sẵn cache local chứa chương trình Academy "KIDS" từ phiên trước nhưng
+  chưa từng chạy xong bước seed 3 Level Kids) sẽ ném lỗi ReferenceError "chưa khởi tạo" (Temporal Dead
+  Zone) — KHÔNG có try/catch nào bọc ngoài, khiến TOÀN BỘ phần còn lại của khối script đó (~5000 dòng,
+  gồm cả phần khởi tạo Firebase listener/render app) KHÔNG BAO GIỜ chạy tới — app đứng hình mãi mãi ở màn
+  "Đang tải dữ liệu..." trên đúng thiết bị đó. Xác nhận qua boot-test: lỗi này còn kéo theo 1 lỗi TDZ THỨ
+  2 (biến `__authSessionLostHandled`) do khối script bị crash giữa chừng nên không kịp chạy tới dòng khai
+  báo — cả 2 chỉ là 1 gốc rễ duy nhất.
+  MAY MẮN: điều kiện kích hoạt khá hẹp (cần đúng tổ hợp dữ liệu cache cụ thể) nên CHƯA từng được ghi nhận
+  trên các thiết bị đang dùng thật của club — nhưng đây là kiểu lỗi "quả bom hẹn giờ" có thể nổ bất cứ lúc
+  nào (thiết bị mới, xoá cache trình duyệt, hoặc lần tới nội dung Kids Curriculum được cập nhật buộc chạy
+  lại bước seed) mà không có cảnh báo trước — nên vá ngay dù chưa xảy ra thật.
+  FIX: khai báo sớm cả 4 biến liên quan (`__localCacheQuotaExceeded`, `__localCacheWriteTimer`,
+  `LOCAL_CACHE_THROTTLE_MS`, `__authSessionLostHandled`) NGAY ĐẦU file — trước dòng gọi
+  `loadState()`/`normalizeProducts()` — đúng nguyên tắc "khai báo sớm tránh TDZ" mà chính codebase này đã
+  áp dụng cho biến khác trước đó (comment §223 cạnh ACADEMY_VALID_USER_ROLES) nhưng bị bỏ sót cho 4 biến
+  này. Verify lại bằng chính boot-test: dựng đúng kịch bản cache "có KIDS program nhưng chưa seed" để tái
+  hiện chính xác điều kiện lỗi — xác nhận 0 lỗi runtime sau khi vá (trước khi vá: crash chắc chắn; sau khi
+  vá: chạy trót lọt). Không đổi bất kỳ logic nghiệp vụ/tiền bạc nào — chỉ di chuyển vị trí khai báo biến.
+
+  v1.44.29 (2026-09-21) — §FIX-CREDITLOT-CHECK-ADJUST-2026. Admin yêu cầu "kiểm tra lại 1 lần nữa" —
+  lần này chạy 1 subagent ĐỘC LẬP chuyên rà lại CHÍNH các sửa đổi của session hôm nay (v1.44.22-28), thay
+  vì tự mình tự kiểm tra lại code mình vừa viết (dễ bỏ sót cùng 1 điểm mù). Rà lại cả 7 thay đổi: 6/7 xác
+  nhận đúng như changelog, KHÔNG có lỗi. 1 lỗi thật tìm thấy — ngay trong chính check MỚI vừa thêm ở
+  v1.44.28 (CREDIT_LOT_BALANCE_MISMATCH): công thức đối chiếu `expected = originalAmount - REDEEM +
+  REVERSE` bỏ sót loại giao dịch `ADJUST` (Admin điều chỉnh Credit tay qua "Điều chỉnh Credit") — bất kỳ
+  Credit lot nào TỪNG bị Admin trừ tay (adminAdjustCredit(), amount<0, trừ THẲNG vào 1 lot có sẵn, KHÔNG
+  đổi originalAmount) sẽ bị báo gian CREDIT_LOT_BALANCE_MISMATCH ở MỌI lần chạy Kiểm tra dữ liệu sau đó —
+  báo động giả, có thể khiến Admin tưởng nhầm có lỗi đồng bộ dù lot hoàn toàn đúng.
+  FIX: công thức nay tính thêm phần ADJUST ÂM (trừ tay từ lot có sẵn) — CHỈ tính ADJUST<0, KHÔNG tính
+  ADJUST>0 (đó là tạo 1 lot MỚI, originalAmount đã đúng bằng số đó rồi, tính thêm sẽ cộng trùng và gây báo
+  gian ngược lại cho lot Admin vừa tạo).
+
+  v1.44.28 (2026-09-21) — §FIX-CREDITLOT-RELOAD-GAP-2026. Admin yêu cầu "kiểm tra lại toàn bộ app xem còn
+  lỗi gì không" sau loạt vá v1.44.22-27. Chạy 2 mũi audit song song (subagent) rà quét toàn bộ file theo 2
+  hướng khác nhau:
+  MŨI 1 — tìm các chỗ CÒN LẠI cùng lớp lỗi "mutation cục bộ + xác nhận CANONICAL qua Firebase transaction()
+  bất đồng bộ, chỉ flush thật khi .then() chạy xong" (lớp lỗi đã vá 3 lần ở v1.44.24/25/27). Tìm thấy 2 chỗ
+  còn sót: consumeSocialPassForVisit() (tiêu gói Social) và redeemCreditsFEFO() (tiêu Picpoc Credits) — cả
+  2 đều CHỦ ĐÍCH bỏ markEntityDirty() ngay lập tức (ghi rõ trong comment §HOTFIX-DOUBLEDECREMENT/
+  §FIX-CREDIT-RACE-TRANSACTION) để nhường cho Firebase transaction() làm nguồn ghi CANONICAL chống 2 thiết
+  bị cùng trừ 1 lúc — ĐÚNG THIẾT KẾ, nhưng để lại đúng 1 khe hẹp (thường dưới vài giây, lúc transaction()
+  đang round-trip) nếu tải lại trang/mất mạng ngay lúc đó thì phần trừ điểm/tiền cục bộ không kịp lên
+  server. KHÁC với 3 lỗi đã vá trước: ở đây KHÔNG thể tự động retry khi tải lại trang như check-in/thanh
+  toán — vì remainingSessions/remainingAmount là SỐ DƯ CỘNG DỒN qua nhiều lần trừ (không phải 1 "phiên bản
+  đúng duy nhất" như status/Visit), retry mù 1 giao dịch trừ tiền không có idempotency guard riêng có thể
+  gây TRỪ 2 LẦN THẬT — nguy hiểm hơn cả giữ nguyên hiện trạng. Xử lý: Gói Social ĐÃ có sẵn 1 check tương
+  đương từ trước (SOCIAL_PASS_RECONCILE_MISMATCH, kèm nút sửa tự động an toàn) nên không cần thêm; Credit
+  lot CHƯA có — thêm mới check CREDIT_LOT_BALANCE_MISMATCH (đối chiếu lot.remainingAmount với tổng
+  REDEEM/REVERSE thực tế trong creditTransactions) vào Kiểm tra dữ liệu — CHỦ ĐÍCH không tự sửa (AMBIGUOUS,
+  liên quan trực tiếp tiền), chỉ phát hiện để Admin tự đối chiếu.
+  MŨI 2 — quét theo hướng khác (DOM tham chiếu treo, hàm trùng tên, state chưa khởi tạo, TODO/FIXME còn dở,
+  permission guard bị rớt ở các hàm nhạy cảm tiền bạc): không tìm thấy lỗi mới — các tham chiếu DOM "treo"
+  đều đã được guard `if(!el) return` có chủ đích (màn Nước đã bị gỡ khỏi UI nhưng hàm giữ lại làm dispatcher
+  an toàn), hàm trùng tên duy nhất là 2 closure `addIssue()` cục bộ riêng biệt (không xung đột), toàn bộ
+  state.X đều có trong defaultState(), và các hàm tiền nhạy cảm (voidBillPayment/voidBillPaymentRecord/
+  adminAdjustCredit) đều còn nguyên requirePermission().
+  KHÔNG có lỗi P0 mới nào (tiền/dữ liệu mất thật) — chỉ 1 khe hẹp lý thuyết đã được chuyển thành công cụ
+  phát hiện chủ động thay vì để im lặng.
+
   v1.44.27 (2026-09-21) — §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026. Admin báo (kèm ảnh chụp): nhiều thẻ ở tab
   Đang Ở Sân hiện "Bill: 0đ" (A Tuấn Mobifone, Huy Bóng Đá, A Nhựt Zeno, Chị Vi Lá Coffee, A Hậu Dương,
   A Cường Chạn Ná...) — khách rõ ràng đã thanh toán xong nhưng phiên không tự đóng, vẫn hiện "đang ở sân".
@@ -8519,6 +8599,18 @@ const DataServiceSettings = {
    duoc ghi RIENG vao dung path /<node>/<id>, hoan toan tach biet voi cac entity/collection khac,
    nen 2 thiet bi sua 2 thu khac nhau se KHONG con de ghi de nhau nhu co che cu §1). */
 let lastSyncedSnapshot = {}; // node -> { id: JSON string cua entity da day gan nhat }
+/* §AUDIT-HYDRATE-2026 — node nao DA nhan snapshot dau tien tu Firebase tren thiet bi nay (+ 'settings').
+   ROOT CAUSE da xac minh tren du lieu that 23/09/2026: thiet bi moi/cache hong -> normalizeProducts() seed du
+   lieu mac dinh (Program/Level/Session Academy id ngau nhien, 4 san pham p_*, u_admin_default, toan bo settings)
+   TRUOC khi listener cua node do ve -> diffAndFlushEntities() thay prevMap rong nen day len KHONG qua CAS ->
+   Academy bi nhan ban 57 lan (114 Program / 5192 buoi), ton kho/trang thai 4 san pham bi reset, settings.authMode
+   bi ghi de ve LEGACY_LOCAL. Tu gio: KHONG seed va KHONG diff-flush 1 node cho toi khi node do da hydrate. */
+const __hydratedNodes = new Set();
+function isNodeHydrated(node){
+  if(!SYNC_ENABLED || !dbRoot) return true; // khong co Firebase (offline/dev) -> hanh vi cu
+  return __hydratedNodes.has(node);
+}
+function areNodesHydrated(nodes){ return nodes.every(isNodeHydrated); }
 /* §FIX-LISTENER-OVERWRITE-PENDING-WRITE — xem giai thich day du tai attachEntityListener(). Theo doi
    entity nao dang co 1 Firebase .transaction() RIENG CHUA XONG (confirmBillPaymentAtomic/V2/Group...) —
    trong luc do, listener .on('value') toan cuc PHAI GIU NGUYEN gia tri local (thay vi lay snapshot moi
@@ -8950,6 +9042,7 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
 function diffAndFlushEntities(){
   if(!SYNC_ENABLED || !dbRoot) return;
   ARRAY_ENTITY_NODES.forEach(node=>{
+    if(!__hydratedNodes.has(node)) return; // §AUDIT-HYDRATE-2026 — chua co ban server de so sanh, khong duoc day ban local (co the chi la mac dinh)
     const arr = state[node];
     if(!Array.isArray(arr)) return;
     const fb = fbNodeNameFor(node);
@@ -8970,6 +9063,7 @@ function diffAndFlushEntities(){
     lastSyncedSnapshot[node] = nextMap;
   });
   OBJECT_ENTITY_NODES.forEach(node=>{
+    if(!__hydratedNodes.has(node)) return; // §AUDIT-HYDRATE-2026
     const obj = state[node];
     if(!obj || typeof obj !== 'object') return;
     const fb = fbNodeNameFor(node);
@@ -8987,7 +9081,14 @@ function diffAndFlushEntities(){
     lastSyncedSnapshot[node] = nextMap;
   });
   // settings/users la object/array nho, gop chung vao luoi an toan qua DataServiceSettings
-  DataServiceSettings.update(sanitizeForFirebase(state.settings));
+  // §AUDIT-HYDRATE-2026 — chi day settings SAU khi da nhan settings that tu server (neu khong, thiet bi moi
+  // se ghi de gia/cau hinh bang gia tri mac dinh), va KHONG BAO GIO day authMode qua duong nay — authMode chi
+  // duoc ghi rieng boi confirmActivateProductionAuth().
+  if(__hydratedNodes.has('settings')){
+    const settingsPatch = Object.assign({}, state.settings);
+    delete settingsPatch.authMode;
+    DataServiceSettings.update(sanitizeForFirebase(settingsPatch));
+  }
 }
 
 
@@ -9012,7 +9113,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.27'; // §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026 — đẩy p.status='paid_and_left' lên Firebase ngay lúc thanh toán thay vì đợi xác nhận bất đồng bộ, tránh khách đã trả tiền vẫn kẹt "Đang Ở Sân" nếu tải lại trang đúng lúc — chi tiết ở CHANGELOG đầu file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.31'; // §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS — chi tiet o CHANGELOG dau file
+// (ban truoc: 'Picpoc v1.44.30') §FIX-TDZ-BOOTCRASH-2026 — sửa 1 lỗi TDZ có thể khiến app không load được trên 1 số thiết bị (phát hiện qua tự chạy boot app thật bằng jsdom, không chỉ kiểm tra cú pháp) — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
   // / ĐIỂM DANH THÀNH DẠNG Ô CARD GRID GỌN": dong bo cung huong voi §BILLGRID (Bill khach) da lam
@@ -11201,6 +11303,27 @@ function syncPprChangesAtomic(pprChanges){
    (truoc PERMISSIONS o xa hon trong file) nen PHAI khai bao O DAY, truoc loadState()/normalizeProducts(),
    de tranh TDZ ReferenceError (bai hoc lap lai tu cac lan sua loi tuong tu truoc do trong sprint nay). */
 const ACADEMY_VALID_USER_ROLES = ['ADMIN','STAFF','COACH','DISPLAY'];
+// §FIX-TDZ-BOOTCRASH-2026 — Admin yeu cau "tu chay tu kiem tra" toan bo app; boot-test bang jsdom (chay
+// THAT top-level script, khong chi kiem tra cu phap tung khoi rieng le nhu synchk2.js truoc gio) phat hien
+// 1 crash TDZ (ReferenceError) THAT SU co the xay ra: normalizeProducts() (goi dong bo ngay duoi day, truoc
+// khi bat ky thu gi khac chay) -> normalizeAcademy() -> seedKidsCurriculumLevelsIfNeeded() -> (neu cache
+// local DA co san 1 Academy program KIDS tu phien truoc nhung co chua tung seed) -> saveState() ->
+// tryCacheStateLocally() -> doc bien `__localCacheQuotaExceeded` — nhung bien nay (khai bao bang `let`)
+// TRUOC DAY nam MUON hon rat nhieu trong file (dong ~15922), nen o thoi diem nay VAN con trong "temporal
+// dead zone" -> ReferenceError CHUA TUNG BAT (khong co try/catch bao ngoai normalizeProducts() o day) ->
+// crash toan bo phan CON LAI cua chinh script block nay (~5000 dong con lai, gom ca cac buoc boot quan
+// trong khac) -> app KHONG BAO GIO vao duoc (man hinh trang/"Đang tải dữ liệu..." mai mai) — chi xay ra
+// tren 1 thiet bi CU THE co dung to hop du lieu cache do (khong phai moi lan tai app, nen chua tung duoc
+// bao cao — nhung la 1 "qua bom hen gio" that su, dung y het bai hoc TDZ da ghi o comment tren
+// ACADEMY_VALID_USER_ROLES). Boot-test con phat hien 1 crash THU 2 (__authSessionLostHandled, TDZ tuong
+// tu) — xac nhan la HE QUA CUA crash dau tien (crash 1 lam ca script block nay dung giua chung, nen dong
+// khai bao __authSessionLostHandled o xa hon (dong ~11706) khong bao gio chay toi, khien renderAll() sau
+// nay o cuoi file cung crash TDZ y het). FIX: khai bao SOM ca 3 bien nay (cung 1 nguyen tac da ap dung cho
+// ACADEMY_VALID_USER_ROLES o tren) — truoc moi dong goi normalizeProducts()/lien quan.
+let __localCacheQuotaExceeded = false;
+let __localCacheWriteTimer = null;
+let __authSessionLostHandled = false;
+const LOCAL_CACHE_THROTTLE_MS = 800; // §FIX-TDZ-BOOTCRASH-2026 — chuyen len cung nhom (tryCacheStateLocally() dung bien nay, co the bi goi rat som trong luc boot — xem giai thich day du gan ACADEMY_VALID_USER_ROLES)
 let state = loadState();
 normalizeProducts();
 
@@ -11440,7 +11563,14 @@ const PERMISSIONS = {
    o dong ~3247) de tranh TDZ — KHONG khai bao lai o day, chi tiep tuc dung. */
 /* §AUTH-1..192 — PRODUCTION AUTH. isProductionAuthMode() la 1 diem kiem tra DUY NHAT dung xuyen suot —
    KHONG bao gio hardcode so sanh state.settings.authMode rai rac (tranh lech logic giua cac cho). */
-function isProductionAuthMode(){ return !!(state && state.settings && state.settings.authMode === 'PRODUCTION_FIREBASE'); }
+/* §AUDIT-AUTH-2026 — co Firebase thi LUON la Production Auth (bat buoc dang nhap Email/Mat khau). Truoc day
+   quyet dinh dua vao settings.authMode doc tu cache localStorage: thiet bi moi/cache hong -> LEGACY_LOCAL ->
+   ai mo link cung tu thanh ADMIN, va settings.authMode con bi ghi de ve LEGACY_LOCAL (da xay ra that tren
+   production, xem §AUDIT-HYDRATE-2026). settings.authMode gio chi con y nghia khi KHONG co Firebase. */
+function isProductionAuthMode(){
+  if(typeof SYNC_ENABLED !== 'undefined' && SYNC_ENABLED) return true;
+  return !!(state && state.settings && state.settings.authMode === 'PRODUCTION_FIREBASE');
+}
 /* §AUTH-52 — DEV_LOCAL_MODE: CHI dung khi dev thuc su can bypass Auth tren may local (khong bao gio duoc
    bat true tren 1 deployment production that — day la hang-so code, KHONG phai setting co the bi Admin bam
    nham qua UI, va KHONG duoc doc/ghi tu localStorage/remote de tranh bi ai do bat tu xa). */
@@ -11623,7 +11753,7 @@ function renderCurrentUserBadge(){
     return;
   }
   box.innerHTML = `
-    <span class="current-user-name" title="${u.email || ''}">${u.name}</span>
+    <span class="current-user-name" title="${u.email || ''}">${escapeHtml(u.name)}</span>
     <span class="role-badge ${roleBadgeClass(u.role)}">${roleLabel(u.role)}</span>
     <button class="small secondary ${isProductionAuthMode() && !DEV_LOCAL_MODE ? 'js-logout-btn' : ''}" onclick="${isProductionAuthMode() && !DEV_LOCAL_MODE ? 'logoutCurrentUser()' : 'openSwitchUserModal()'}">${isProductionAuthMode() && !DEV_LOCAL_MODE ? 'Đăng xuất' : 'Đổi tài khoản'}</button>
     ${isProductionAuthMode() && !DEV_LOCAL_MODE ? '' : '<button class="small secondary js-logout-btn" onclick="logoutCurrentUser()">Đăng xuất</button>'}
@@ -11663,7 +11793,9 @@ function applyRoleVisibility(){
    lan renderAll()/doi tab) — goi detach lien tuc moi lan se rat lang phi va co the tao dua giua chung
    voi chinh luong dang nhap lai. Co duoc reset ve false ngay khi phien lai hop le (hoac khong con o
    Production Auth) de san sang bat lai dung 1 lan cho lan mat phien tiep theo (neu co). */
-let __authSessionLostHandled = false;
+// §FIX-TDZ-BOOTCRASH-2026 — khai bao __authSessionLostHandled da chuyen len SOM hon (gan
+// ACADEMY_VALID_USER_ROLES, truoc loadState()/normalizeProducts()) de tranh TDZ ReferenceError — xem
+// giai thich day du tai vi tri khai bao moi.
 function isAuthSessionLostGuard(){
   if(isProductionAuthMode() && !DEV_LOCAL_MODE && typeof firebase !== 'undefined' && firebase.auth && !firebase.auth().currentUser){
     if(!__authSessionLostHandled){
@@ -11690,7 +11822,7 @@ function openSwitchUserModal(){
     <div style="display:flex; flex-direction:column; gap:8px; max-height:320px; overflow:auto;">
       ${users.length ? users.map(u=>`
         <button class="secondary" style="text-align:left; display:flex; justify-content:space-between; align-items:center;" onclick="setCurrentUser('${u.id}'); closeModal();">
-          <span>${u.name}</span><span class="role-badge ${roleBadgeClass(u.role)}">${roleLabel(u.role)}</span>
+          <span>${escapeHtml(u.name)}</span><span class="role-badge ${roleBadgeClass(u.role)}">${roleLabel(u.role)}</span>
         </button>
       `).join('') : '<p class="muted">Chưa có tài khoản nào.</p>'}
     </div>
@@ -12135,6 +12267,10 @@ function normalizeAcademy(){
   }
   if(typeof state.academySchemaVersion !== 'number') state.academySchemaVersion = 1;
   if(typeof state.academyBusinessRulesVersion !== 'number') state.academyBusinessRulesVersion = 1;
+  // §AUDIT-HYDRATE-2026 — 4 buoc seed/migrate giao trinh ben duoi CHI chay khi ca 3 node giao trinh da nhan du
+  // lieu that tu Firebase (xem __hydratedNodes) — neu chay som, moi thiet bi moi se tao them 1 bo Program/Level/
+  // Session id ngau nhien va day len server (nguyen nhan 114 Program trung tren production).
+  if(!areNodesHydrated(['academyPrograms','academyCurriculumLevels','academyCurriculumSessions'])) return;
   seedAcademyCurriculumIfEmpty(); // §179 — tao Program/Level/Session mac dinh neu chua co (idempotent, khong ghi de du lieu da chinh sua)
   migrateLegacyCurriculumLevelNamesIfNeeded(); // §212 — chuan hoa field version/status/assessmentSkills + ten Level cu (idempotent)
   fillCurriculumSessionContentIfNeeded(); // §215/PHẦN R — backfill noi dung giao trinh THAT cho install cu, chi chay 1 lan (idempotent qua curriculumSeedVersion)
@@ -12601,7 +12737,7 @@ function normalizeProducts(){
      ADMIN mac dinh de KHONG khoa nguoi dung khoi app (khong ai bi lock-out chi vi nang cap app).
      Chi bootstrap MOT LAN khi mang users con rong — sau do Admin tu quan ly qua NGUOI DUNG. */
   if(!Array.isArray(state.users)) state.users = [];
-  if(!state.users.length){
+  if(!state.users.length && isNodeHydrated('users')){ // §AUDIT-HYDRATE-2026 — khong bootstrap truoc khi biet /users that tren server
     state.users.push({ id: 'u_admin_default', name: 'Admin', role: 'ADMIN', active: true, createdAt: Date.now() });
   }
   state.users.forEach(u=>{
@@ -13136,7 +13272,7 @@ function openBuySocialPassModal(playerId){
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.5a1.5 1.5 0 0 0 0 3V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1.5a1.5 1.5 0 0 0 0-3Z"/><path d="M10 7v10"/></svg>Mua Gói Social 15+1</h2>
-    <p class="muted" style="margin-top:-4px;">Khách hàng: <b>${player.name}</b></p>
+    <p class="muted" style="margin-top:-4px;">Khách hàng: <b>${escapeHtml(player.name)}</b></p>
     <div class="card" style="background:var(--color-surface-subtle); margin:10px 0;">
       <div class="bill-line"><span>${cfg.paidSessions} lượt trả tiền</span><span>${fmtVnd(cfg.pricePerPaidSession)}/lượt</span></div>
       <div class="bill-line"><span>+${cfg.bonusSessions} lượt tặng</span><span>0đ</span></div>
@@ -13148,7 +13284,7 @@ function openBuySocialPassModal(playerId){
       <button type="button" class="segment-btn" data-pm="CASH" onclick="pickBuySocialPassPm(this,'CASH')">Tiền mặt</button>
     </div>
     <input type="hidden" id="buySocialPassPm" value="BANK_TRANSFER">
-    <button onclick="runCriticalAction({button:this, loadingText:'Đang xử lý...', action:()=>purchaseSocialPass15Plus1('${playerId}', document.getElementById('buySocialPassPm').value), successMessage:'✅ Đã bán Gói Social 15+1 — 16 lượt cho ${player.name}'})">THANH TOÁN ${fmtVnd(cfg.totalPrice)}</button>
+    <button onclick="runCriticalAction({button:this, loadingText:'Đang xử lý...', action:()=>purchaseSocialPass15Plus1('${playerId}', document.getElementById('buySocialPassPm').value), successMessage:'✅ Đã bán Gói Social 15+1 — 16 lượt cho ${escapeJsInAttr(player.name)}'})">THANH TOÁN ${fmtVnd(cfg.totalPrice)}</button>
     <button class="secondary" onclick="closeModal()">Hủy</button>
   `;
   document.getElementById('matchModal').classList.add('show');
@@ -13373,7 +13509,7 @@ function renderSocialPassPickerResults(mode){
     const hint = activePass ? ` <span class="muted" style="color:var(--color-primary,#0F766E); display:inline-flex; align-items:center; gap:4px;"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1.5a1.5 1.5 0 0 0 0 3V15a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1.5a1.5 1.5 0 0 0 0-3Z"/><path d="M10 7v10"/></svg>đang có gói còn ${activePass.remainingSessions} lượt</span>` : '';
     const action = mode==='buy' ? `openBuySocialPassModal('${p.id}')` : `openImportSocialPassModal('${p.id}')`;
     return `<div class="flex-between" style="padding:8px 0; border-bottom:1px solid var(--border);">
-      <div><b>${p.name}</b>${hint}</div>
+      <div><b>${escapeHtml(p.name)}</b>${hint}</div>
       <button class="small" onclick="${action}">Chọn</button>
     </div>`;
   }).join('');
@@ -13387,7 +13523,7 @@ function openImportSocialPassModal(playerId){
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><path d="m7 9 5 4 5-4"/><path d="M3 15v4a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/></svg>Nhập Gói Social đang dùng (dữ liệu cũ)</h2>
-    <p class="muted" style="margin-top:-4px;">Khách hàng: <b>${player.name}</b></p>
+    <p class="muted" style="margin-top:-4px;">Khách hàng: <b>${escapeHtml(player.name)}</b></p>
     <label>Loại gói</label>
     <input type="text" value="Social ${cfg.paidSessions}+${cfg.bonusSessions}" disabled>
     <label>Tổng lượt (readonly)</label>
@@ -14427,7 +14563,7 @@ function openAddProductToBillModal(playerId){
   if(!p) return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm vào bill — ${p.name}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Thêm vào bill — ${escapeHtml(p.name)}</h2>
     <div style="display:flex; gap:8px; margin-bottom:10px;">
       <button class="secondary" style="flex:1;" onclick="openAddBallMachineRentalModal('${playerId}')">🎱 Thuê máy bắn bóng</button>
       <button class="secondary" style="flex:1;" onclick="openOtherChargeModal('${playerId}')">➕ Khoản khác/Dụng cụ</button>
@@ -14450,7 +14586,7 @@ function renderAddProductToBillGrid(playerId, q){
   grid.innerHTML = list.map(p=>{
     const disabled = p.stock<=0;
     return `<div class="bill-line" style="align-items:center;">
-      <span>${p.name} <span class="muted" style="font-size:.8rem;">(còn ${p.stock})</span></span>
+      <span>${escapeHtml(p.name)} <span class="muted" style="font-size:.8rem;">(còn ${p.stock})</span></span>
       <span style="display:flex; align-items:center; gap:8px;">
         <b>${fmtVnd(p.price)}</b>
         <button class="small" ${disabled?'disabled':''} onclick="addProductToActiveBill('${playerId}','${p.id}')">${disabled?'HẾT':'+'}</button>
@@ -15879,7 +16015,10 @@ function loadState(){
    PHAN CON LAI cua phien (chi bao 1 lan ro rang, khong spam nua) — F5 lai se thu lai tu dau (phong
    truong hop trinh duyet da don duoc cho luc do). KHONG anh huong dong bo Firebase (van la nguon du
    lieu chinh, hoat dong doc lap voi cache local nay — §DATA-ARCH-5). */
-let __localCacheQuotaExceeded = false;
+// §FIX-TDZ-BOOTCRASH-2026 — khai bao __localCacheQuotaExceeded da chuyen len SOM hon (gan
+// ACADEMY_VALID_USER_ROLES, truoc loadState()/normalizeProducts()) de tranh TDZ ReferenceError khi
+// normalizeProducts() -> ... -> saveState() co the goi toi tryCacheStateLocally() rat som trong luc boot —
+// xem giai thich day du tai vi tri khai bao moi.
 /* §PERF-LOCALCACHE-THROTTLE (2026-09-18) — Kiem tra hieu nang phat hien: tryCacheStateLocally() duoc goi
    TU RAT NHIEU noi (saveState() moi thao tac, applyRemoteEntityLocally(), VA rieng attachEntityListener/
    attachSettingsListener cho TUNG node Firebase — ~55 node ARRAY_ENTITY_NODES+ACADEMY_ENTITY_NODES+
@@ -15892,8 +16031,7 @@ let __localCacheQuotaExceeded = false;
    trong luc dang cho se bi bo qua (khong xep chong thanh nhieu timer), lan ghi khi timer chay se luon
    lay state MOI NHAT tai thoi diem do (dong tren closure `state`, khong snapshot cu) nen khong mat du
    lieu cache, chi tre viec ghi xuong dia vai tram ms. */
-let __localCacheWriteTimer = null;
-const LOCAL_CACHE_THROTTLE_MS = 800;
+// §FIX-TDZ-BOOTCRASH-2026 — khai bao __localCacheWriteTimer va LOCAL_CACHE_THROTTLE_MS da chuyen len SOM hon cung __localCacheQuotaExceeded.
 function tryCacheStateLocally(callerLabel){
   if(__localCacheQuotaExceeded) return;
   if(__localCacheWriteTimer) return; // da co 1 lan ghi dang cho trong cua so throttle, khong can lam gi them
@@ -15958,6 +16096,18 @@ function saveState(){
 }
 
 function uid(prefix){ return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+/* §AUDIT-XSS-2026 — escape moi du lieu nguoi dung nhap (ten, SDT, ghi chu...) truoc khi chen vao innerHTML
+   (vd ten "<img src=x onerror=...>" se hien nhu TEXT thay vi chay ma tren moi may Staff/TV). */
+function escapeHtml(str){
+  if(str === null || str === undefined) return '';
+  return String(str).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+/* Gia tri nguoi dung nam TRONG chuoi JS '...' cua 1 thuoc tinh onclick="...": escape \ va ' cho JS truoc,
+   roi escape HTML cho thuoc tinh (trinh duyet giai ma entity truoc khi chay JS). */
+function escapeJsInAttr(str){
+  if(str === null || str === undefined) return '';
+  return escapeHtml(String(str).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' '));
+}
 /* §PROD-33 — debounce dung chung cho cac o tim kiem (Player list / Check-in) de tranh render lai
    toan bo danh sach tren MOI ky tu go, dac biet quan trong khi co 500-2000+ nguoi choi. */
 function debounce(fn, wait){
@@ -17291,7 +17441,7 @@ function renderSelectFourModal(){
       return `<label style="display:flex; align-items:center; gap:8px; padding:7px 4px; border-bottom:1px solid var(--color-border,#eee); ${disabled?'opacity:.45;':''}">
         <input type="checkbox" ${checked?'checked':''} ${disabled?'disabled':''} onchange="toggleSelectFourPlayer('${p.id}')">
         <span style="flex:1 1 auto; min-width:0;">
-          <b>${p.name}</b> <span class="muted" style="font-size:.76rem;">PPR ${getPlayerPpr(p).toFixed(2)} · ${waitMin}${g?' · 🏷️ '+g.name:''}</span>
+          <b>${escapeHtml(p.name)}</b> <span class="muted" style="font-size:.76rem;">PPR ${getPlayerPpr(p).toFixed(2)} · ${waitMin}${g?' · 🏷️ '+escapeHtml(g.name):''}</span>
         </span>
       </label>`;
     }).join('') || '<p class="muted">Không có người chơi phù hợp.</p>';
@@ -17327,8 +17477,8 @@ function renderSelectFourModal(){
     const avg2 = team2.length===2 ? getTeamPprAvg(team2[0],team2[1]).toFixed(2) : '—';
     const manualPickerHtml = d.teamMode === 'MANUAL' ? `
       <div class="grid-2col" style="margin-top:10px;">
-        <div><b>Đội A</b>${four.map(p=>`<div style="padding:4px 0;">${p.name} ${d.manualTeam1.includes(p.id) ? '<span class="muted">(A)</span>' : `<button class="small secondary" onclick="selectFourManualSwap('${p.id}',1)">→A</button>`}</div>`).join('')}</div>
-        <div><b>Đội B</b>${four.map(p=>`<div style="padding:4px 0;">${p.name} ${d.manualTeam2.includes(p.id) ? '<span class="muted">(B)</span>' : `<button class="small secondary" onclick="selectFourManualSwap('${p.id}',2)">→B</button>`}</div>`).join('')}</div>
+        <div><b>Đội A</b>${four.map(p=>`<div style="padding:4px 0;">${escapeHtml(p.name)} ${d.manualTeam1.includes(p.id) ? '<span class="muted">(A)</span>' : `<button class="small secondary" onclick="selectFourManualSwap('${p.id}',1)">→A</button>`}</div>`).join('')}</div>
+        <div><b>Đội B</b>${four.map(p=>`<div style="padding:4px 0;">${escapeHtml(p.name)} ${d.manualTeam2.includes(p.id) ? '<span class="muted">(B)</span>' : `<button class="small secondary" onclick="selectFourManualSwap('${p.id}',2)">→B</button>`}</div>`).join('')}</div>
       </div>` : '';
     box.innerHTML = `<h2>👥 4 người muốn đánh cùng — chia đội</h2>
       <div style="display:flex; gap:8px; margin-bottom:10px;">
@@ -17370,12 +17520,12 @@ function renderSocialGroupsModal(){
     const pickerHtml = _socialGroupPickerFor === g.id ? renderSocialGroupMemberPickerHtml(g.id) : `<button class="small secondary" onclick="_socialGroupPickerFor='${g.id}'; renderSocialGroupsModal();">+ Thêm thành viên</button>`;
     return `<div class="card" style="margin-bottom:10px;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-        <b>${g.name}</b> <span class="muted">${g.memberPlayerIds.length} thành viên${g.active===false?' · ĐÃ TẮT':''}</span>
+        <b>${escapeHtml(g.name)}</b> <span class="muted">${g.memberPlayerIds.length} thành viên${g.active===false?' · ĐÃ TẮT':''}</span>
       </div>
       <div style="margin:6px 0;">${memberRows}</div>
       ${pickerHtml}
       <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">
-        <button class="small secondary" onclick="const n=prompt('Tên mới cho nhóm:','${g.name.replace(/'/g,"")}'); if(n) renameSocialGroup('${g.id}', n);">Sửa tên</button>
+        <button class="small secondary" onclick="const n=prompt('Tên mới cho nhóm:','${escapeJsInAttr(g.name)}'); if(n) renameSocialGroup('${g.id}', n);">Sửa tên</button>
         <button class="small secondary" onclick="setSocialGroupActive('${g.id}', ${g.active===false})">${g.active===false?'Bật nhóm':'Tắt nhóm'}</button>
         <button class="small secondary danger" onclick="deleteSocialGroup('${g.id}')">Xoá nhóm</button>
       </div>
@@ -17392,7 +17542,7 @@ function renderSocialGroupsModal(){
 }
 function renderSocialGroupMemberPickerHtml(groupId){
   const eligible = state.players.filter(p=> !getPlayerSocialGroup(p.id));
-  const options = eligible.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const options = eligible.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
   return `<div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
     <select id="addMemberSelect_${groupId}"><option value="">— Chọn người chơi —</option>${options}</select>
     <button class="small" onclick="const sel=document.getElementById('addMemberSelect_${groupId}'); if(sel.value) addMemberToSocialGroup('${groupId}', sel.value); _socialGroupPickerFor=null;">Thêm</button>
@@ -18240,7 +18390,7 @@ function renderCourts(){
       const avg2 = (match.team2.reduce((s,id)=>s+(playerLevel(id)||0),0)/match.team2.length).toFixed(1);
       const balance = Math.max(0, 100 - Math.abs(avg1-avg2)*40).toFixed(0);
       const nextBk = getNextBookingForCourt(courtId, new Date());
-      const nextBkHtml = nextBk ? `<div class="court-next-booking">Booking ${fmtHourLabel(nextBk.startTime)} — ${nextBk.customerName}</div>` : '';
+      const nextBkHtml = nextBk ? `<div class="court-next-booking">Booking ${fmtHourLabel(nextBk.startTime)} — ${escapeHtml(nextBk.customerName)}</div>` : '';
       // §RF9 — neu 1+ nguoi trong tran nay dang la "nguoi cuoi cung" ma 1 Requested Four PENDING_PLAYERS
       // dang cho (spec muc 9 "D đang chơi có thể hiện: ĐÃ CÓ YÊU CẦU TRẬN SAU") — chi hien thi, KHONG
       // anh huong tran dang dien ra (spec muc 4 "current match KHONG bi anh huong").
@@ -18291,7 +18441,7 @@ function renderCourts(){
           <div>
             <div class="court-title">SÂN ${i} <span class="pill-status pill-out">TRỐNG</span></div>
             <div class="court-booking-warn">Booking ${fmtHourLabel(warn.booking.startTime)} — còn ${warn.minutesUntil} phút</div>
-            <div class="empty-hint">${warn.booking.customerName} · Sân ${courtId}</div>
+            <div class="empty-hint">${escapeHtml(warn.booking.customerName)} · Sân ${courtId}</div>
           </div>
           <div class="no-print" style="display:flex; gap:6px; flex-wrap:wrap;">
             <button class="small" onclick="openBookingDetailModal('${warn.booking.id}')">Xem booking</button>
@@ -18299,7 +18449,7 @@ function renderCourts(){
           </div>
         `;
       } else {
-        const nextBkHtml = nextBk ? `<div class="court-next-booking">Booking tiếp theo: ${fmtHourLabel(nextBk.startTime)} — ${nextBk.customerName}</div>` : '';
+        const nextBkHtml = nextBk ? `<div class="court-next-booking">Booking tiếp theo: ${fmtHourLabel(nextBk.startTime)} — ${escapeHtml(nextBk.customerName)}</div>` : '';
         // §REMOVE-SMARTSOCIAL-2026 — TỰ CHƠI là chế độ duy nhất còn lại: luôn dùng "Xếp thủ công"
         // (openManualStartMatchModal, Staff tự chọn đúng 4 người, không đề xuất/tự động gì).
         const ctaBtn = `<button class="small" onclick="openManualStartMatchModal('${courtId}')">Xếp thủ công</button>`;
@@ -18657,7 +18807,7 @@ function openPlayerQuickActions(id){
     <button class="secondary" style="width:100%; margin-bottom:8px; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openDebtCollectionModal('${id}')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16v-5"/><path d="M3 7V5a2 2 0 0 1 2-2h13v4"/><circle cx="17" cy="14" r="1.2" fill="currentColor" stroke="none"/></svg>THU NỢ CŨ</button>
   ` : '';
   box.innerHTML = `
-    <h2>${meta.icon} ${p.name}</h2>
+    <h2>${meta.icon} ${escapeHtml(p.name)}</h2>
     <p class="muted">${p.gamesPlayed||0} trận · Bill hôm nay: <b>${fmtVnd(total)}</b></p>
     <div style="margin:8px 0;">${socialPassCompactHtml(id)}</div>
     ${debtSectionHtml}
@@ -18689,7 +18839,7 @@ function openDebtCollectionModal(playerId){
   const box = document.getElementById('matchModalContent');
   const rows = bills.map(b=>`<div class="bill-line"><span>${new Date(b.createdAt||Date.now()).toLocaleDateString('vi-VN')}</span><span>${fmtVnd(getBillOutstanding(b))}</span></div>`).join('');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>Thu nợ — ${p.name}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5V4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg>Thu nợ — ${escapeHtml(p.name)}</h2>
     <p>Tổng nợ: <b style="font-size:1.2rem; color:#b45309;">${fmtVnd(totalDebt)}</b> (${bills.length} bill, cũ nhất trước)</p>
     <div class="bill-section-label">Danh sách bill còn nợ</div>
     ${rows}
@@ -19046,7 +19196,7 @@ function openManualStartMatchModal(courtId){
     return;
   }
   function opts(excludeIds){
-    return waitingPlayers.filter(p=>!excludeIds || !excludeIds.includes(p.id)).map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+    return waitingPlayers.filter(p=>!excludeIds || !excludeIds.includes(p.id)).map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
   }
   box.innerHTML = `
     <h2>Xếp thủ công sân ${courtId}</h2>
@@ -19086,9 +19236,9 @@ function openManualEditModal(courtId){
   function playerSelect(currentId, excludeIds){
     let opts = allInMatch.map(id=>{
       const p = playerById(id);
-      return p ? `<option value="${id}" ${id===currentId?'selected':''}>${p.name} (đang trong trận)</option>` : '';
+      return p ? `<option value="${id}" ${id===currentId?'selected':''}>${escapeHtml(p.name)} (đang trong trận)</option>` : '';
     }).join('');
-    opts += waitingPlayers.filter(p=>!excludeIds.includes(p.id)).map(p=>`<option value="${p.id}" ${p.id===currentId?'selected':''}>${p.name}</option>`).join('');
+    opts += waitingPlayers.filter(p=>!excludeIds.includes(p.id)).map(p=>`<option value="${p.id}" ${p.id===currentId?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
     return opts;
   }
   box.innerHTML = `
@@ -19170,7 +19320,7 @@ function finishMatchWithWater(courtId){
       <label>Đội thua</label>
       <select id="waterLoserTeam"><option value="team1">${t1}</option><option value="team2" selected>${t2}</option></select>
       <label>Loại nước</label>
-      <select id="waterProduct">${products.map(p=>`<option value="${p.id}" ${p.id===defaultId?'selected':''}>${p.name} — ${fmtVnd(p.price)}</option>`).join('')}</select>
+      <select id="waterProduct">${products.map(p=>`<option value="${p.id}" ${p.id===defaultId?'selected':''}>${escapeHtml(p.name)} — ${fmtVnd(p.price)}</option>`).join('')}</select>
       <label>Số nước / người</label>
       <select id="waterQty"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="custom">Khác...</option></select>
       <input type="number" id="waterQtyCustom" style="display:none;" min="1" value="1">
@@ -20441,7 +20591,7 @@ function renderPlayerSearch(){
        (tranh vo tinh "hoi sinh" 1 ho so da chu dong an di ma khong ro rang). Phai KHOI PHUC truoc. */
     if(p.archived){
       return `<div class="flex-between" style="padding:8px 0; border-bottom:1px solid var(--border);">
-        <div><b>${p.name}</b> <span class="badge ${levelBadgeClass(getPlayerPpr(p))}">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span> <span class="muted">(📦 Hồ sơ đang lưu trữ)</span></div>
+        <div><b>${escapeHtml(p.name)}</b> <span class="badge ${levelBadgeClass(getPlayerPpr(p))}">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span> <span class="muted">(📦 Hồ sơ đang lưu trữ)</span></div>
         <button class="small" onclick="restoreAndCheckIn('${p.id}')">Khôi phục &amp; Check-in</button>
       </div>`;
     }
@@ -20451,7 +20601,7 @@ function renderPlayerSearch(){
     const activePass = typeof getActiveSocialPassForPlayer === 'function' ? getActiveSocialPassForPlayer(p.id) : null;
     const passHint = activePass ? ` <span class="muted" style="color:var(--color-primary);">🎟️ Gói Social còn ${activePass.remainingSessions} lượt</span>` : '';
     return `<div class="flex-between" style="padding:8px 0; border-bottom:1px solid var(--border);">
-      <div><b>${p.name}</b> <span class="badge ${levelBadgeClass(getPlayerPpr(p))}">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span> <span class="muted">(${meta.icon} ${meta.label})</span>${passHint}${debtBadgeHtml(p.id)}</div>
+      <div><b>${escapeHtml(p.name)}</b> <span class="badge ${levelBadgeClass(getPlayerPpr(p))}">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span> <span class="muted">(${meta.icon} ${meta.label})</span>${passHint}${debtBadgeHtml(p.id)}</div>
       ${SESSION_ENDED_STATUSES.includes(p.status) ? `<button class="small" onclick="quickReCheckIn('${p.id}')">Check-in lại</button>` : ''}
     </div>`;
   }).join('');
@@ -20521,7 +20671,7 @@ function openAddTagModal(playerId){
   const presetBtns = PLAYER_TAG_PRESETS.filter(t=>!existing.includes(t.toLowerCase()))
     .map(t=>`<button type="button" class="choice-chip" style="padding:6px 12px; border-radius:999px; margin:0 6px 6px 0;" onclick="addPlayerTag('${playerId}', '${t.replace(/'/g,"\\'")}')">${t}</button>`).join('');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3H5a2 2 0 0 0-2 2v7.5a2 2 0 0 0 .59 1.41l9.5 9.5a2 2 0 0 0 2.82 0l7.5-7.5a2 2 0 0 0 0-2.82l-9.5-9.5A2 2 0 0 0 12.5 3Z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>Thêm tag — ${p.name}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 3H5a2 2 0 0 0-2 2v7.5a2 2 0 0 0 .59 1.41l9.5 9.5a2 2 0 0 0 2.82 0l7.5-7.5a2 2 0 0 0 0-2.82l-9.5-9.5A2 2 0 0 0 12.5 3Z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>Thêm tag — ${escapeHtml(p.name)}</h2>
     ${presetBtns ? '<div>' + presetBtns + '</div>' : '<p class="muted small-note">Đã gắn hết tag gợi ý.</p>'}
     <label style="margin-top:10px;">Hoặc tự nhập tag mới</label>
     <input type="text" id="customTagInput" placeholder="VD: Khách quen">
@@ -20603,7 +20753,7 @@ function openFulfillModal(waterLossId){
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>Xuất hàng — ${playerName(wl.playerId)}</h2>
     <p class="muted">Khoản độ nước: <b>${wl.productName} ×${wl.quantity}</b> (đã tính ${fmtVnd(obligationValue)} vào bill, không cộng thêm tiền khi xuất).</p>
     <label>Sản phẩm thực xuất (có thể đổi loại nước khác)</label>
-    <select id="fulfillProduct" onchange="updateFulfillValueCompare('${wl.id}')">${activeProducts.map(p=>`<option value="${p.id}" ${p.id===wl.productId?'selected':''}>${p.name} — còn ${p.stock}</option>`).join('')}</select>
+    <select id="fulfillProduct" onchange="updateFulfillValueCompare('${wl.id}')">${activeProducts.map(p=>`<option value="${p.id}" ${p.id===wl.productId?'selected':''}>${escapeHtml(p.name)} — còn ${p.stock}</option>`).join('')}</select>
     <label>Số lượng xuất</label>
     <input type="number" id="fulfillQty" min="1" value="${wl.quantity}" oninput="updateFulfillValueCompare('${wl.id}')">
     <div id="fulfillValueCompare" style="margin-top:10px;"></div>
@@ -20809,7 +20959,7 @@ function openOtherChargeModal(playerId){
   } else {
     const activePlayers = state.players.filter(p=>p.status!=='checked_out');
     playerFieldHtml = `<label>Người chơi</label>
-    <select id="otherPlayer">${activePlayers.map(p=>`<option value="${p.id}" ${p.id===selectedBuyerId?'selected':''}>${p.name}</option>`).join('') || '<option value="">Chưa có ai check-in</option>'}</select>`;
+    <select id="otherPlayer">${activePlayers.map(p=>`<option value="${p.id}" ${p.id===selectedBuyerId?'selected':''}>${escapeHtml(p.name)}</option>`).join('') || '<option value="">Chưa có ai check-in</option>'}</select>`;
   }
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>Khoản khác / Dụng cụ</h2>
@@ -20858,9 +21008,9 @@ function openAddManualWaterLossModal(){
   box.innerHTML = `
     <h2>+ Ghi độ nước thủ công (sửa sai đội thua)</h2>
     <label>Người chơi</label>
-    <select id="manWlPlayer">${activePlayers.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}</select>
+    <select id="manWlPlayer">${activePlayers.map(p=>`<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select>
     <label>Loại nước</label>
-    <select id="manWlProduct">${activeProducts.map(p=>`<option value="${p.id}">${p.name} — ${fmtVnd(p.price)}</option>`).join('')}</select>
+    <select id="manWlProduct">${activeProducts.map(p=>`<option value="${p.id}">${escapeHtml(p.name)} — ${fmtVnd(p.price)}</option>`).join('')}</select>
     <label>Số lượng</label>
     <input type="number" id="manWlQty" min="1" value="1">
     <button onclick="submitManualWaterLoss()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>Lưu</button>
@@ -21187,7 +21337,7 @@ function renderSettingsTab(){
   document.getElementById('tournEntryWaterQtyInput').value = state.settings.tournamentIncludedWaterQtyPerPlayer != null ? state.settings.tournamentIncludedWaterQtyPerPlayer : 1;
   { const selW = document.getElementById('tournEntryWaterProductSelect');
     const activeProducts = state.products.filter(p=>p.active);
-    selW.innerHTML = '<option value="">— Chưa chọn —</option>' + activeProducts.map(p=>`<option value="${p.id}" ${state.settings.tournamentIncludedWaterProductId===p.id?'selected':''}>${p.name}</option>`).join('');
+    selW.innerHTML = '<option value="">— Chưa chọn —</option>' + activeProducts.map(p=>`<option value="${p.id}" ${state.settings.tournamentIncludedWaterProductId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
     selW.disabled = !canEditPricing; }
   document.getElementById('tournEntryFeeInput').disabled = !canEditPricing;
   document.getElementById('tournEntryWaterQtyInput').disabled = !canEditPricing;
@@ -21216,7 +21366,7 @@ function renderSettingsTab(){
   // SAN PHAM
   const sel = document.getElementById('defaultWaterProductSelect');
   const waterProducts = state.products.filter(p=>p.active && p.usableForWater);
-  sel.innerHTML = '<option value="">— Không đặt mặc định —</option>' + waterProducts.map(p=>`<option value="${p.id}" ${state.settings.defaultWaterProductId===p.id?'selected':''}>${p.name}</option>`).join('');
+  sel.innerHTML = '<option value="">— Không đặt mặc định —</option>' + waterProducts.map(p=>`<option value="${p.id}" ${state.settings.defaultWaterProductId===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
   sel.disabled = !canEditSettings;
 
   // NGUOI DUNG
@@ -22089,7 +22239,7 @@ function renderAcademyCurriculumBox(){
     levelId = localUi.academyCurriculumLevelId;
     curLevel = getCurriculumLevelById(levelId);
     levelToggleBox.innerHTML = levels.map(l=>`
-      <button class="subtab-btn ${l.id===levelId?'active':''}" onclick="setAcademyCurriculumLevel('${l.id}')">${l.name}</button>`).join('');
+      <button class="subtab-btn ${l.id===levelId?'active':''}" onclick="setAcademyCurriculumLevel('${l.id}')">${escapeHtml(l.name)}</button>`).join('');
   } else {
     levelToggleBox.innerHTML = ''; // chua co Level nao (vd install cu chua chay seed) — hien danh sach rong, khong loi
     levelId = null;
@@ -22103,7 +22253,7 @@ function renderAcademyCurriculumBox(){
     const history = getCurriculumLevelVersionHistory(program.id, curLevel.levelOrder);
     versionBarHtml = `
       <div class="card" style="padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-        <span><b>${curLevel.name}</b> — Version <b>${curLevel.version}</b>
+        <span><b>${escapeHtml(curLevel.name)}</b> — Version <b>${curLevel.version}</b>
           <span class="badge">${curLevel.status}</span>
           ${inUse ? '<span class="muted" style="font-size:.8rem;"> · Đang được ≥1 Lớp sử dụng — nội dung buổi bị khoá, hãy tạo version mới để sửa</span>' : ''}
         </span>
@@ -22307,7 +22457,7 @@ function renderAcademyStudentsTab(){
     const ageOrGroup = s.target === 'ADULT' ? (calcAgeFromDob(s.dob) !== null ? calcAgeFromDob(s.dob) + ' tuổi' : '—') : (s.ageGroup || '—');
     const phoneDisplay = s.target === 'ADULT' ? (s.phone || '—') : (guardian ? guardian.phone : '—'); // §BJ — Kids: SDT lay tu Phu huynh, khong luu rieng tren Student
     return `<tr>
-      <td>${s.name}</td>
+      <td>${escapeHtml(s.name)}</td>
       <td>${s.target === 'ADULT' ? 'Người lớn' : 'Trẻ em'}</td>
       <td>${ageOrGroup}</td>
       <td>${guardian ? guardian.name : '—'}</td>
@@ -22329,7 +22479,7 @@ function openAcademyStudentDetailModal(studentId){
   if(!s){ return; }
   const tab = localUi.academyStudentDetailTab;
   box.innerHTML = `
-    <h2>${s.name}</h2>
+    <h2>${escapeHtml(s.name)}</h2>
     <div class="subtabs" style="margin-bottom:10px;">
       <button class="subtab-btn ${tab==='overview'?'active':''}" onclick="setAcademyStudentDetailTab('${studentId}','overview')">TỔNG QUAN</button>
       <button class="subtab-btn ${tab==='progress'?'active':''}" onclick="setAcademyStudentDetailTab('${studentId}','progress')">TIẾN BỘ</button>
@@ -22485,7 +22635,7 @@ function openAcademyStudentModal(studentId){
       <div class="level-map-row"><label>Chọn phụ huynh có sẵn</label>
         <select id="stuModalGuardianSelect" onchange="fillGuardianFieldsFromSelect()">
           <option value="">— Tạo phụ huynh mới —</option>
-          ${(state.academyGuardians||[]).map(g=>`<option value="${g.id}" ${guardian&&guardian.id===g.id?'selected':''}>${g.name} (${g.phone})</option>`).join('')}
+          ${(state.academyGuardians||[]).map(g=>`<option value="${g.id}" ${guardian&&guardian.id===g.id?'selected':''}>${escapeHtml(g.name)} (${escapeHtml(g.phone)})</option>`).join('')}
         </select>
       </div>
       <div class="level-map-row"><label>Tên phụ huynh</label><input type="text" id="stuModalGuardianName" value="${guardian?guardian.name.replace(/"/g,'&quot;'):''}"></div>
@@ -22498,7 +22648,7 @@ function openAcademyStudentModal(studentId){
     ${!isEdit ? `<div class="level-map-row"><label>Nguồn (Lead)</label>
       <select id="stuModalSourceLead">
         <option value="">— Không từ Lead —</option>
-        ${(state.academyLeads||[]).filter(l=>!l.convertedStudentId && l.status!=='LOST').map(l=>`<option value="${l.id}">${l.name} (${ACADEMY_LEAD_SOURCE_LABELS[l.source]||l.source})</option>`).join('')}
+        ${(state.academyLeads||[]).filter(l=>!l.convertedStudentId && l.status!=='LOST').map(l=>`<option value="${l.id}">${escapeHtml(l.name)} (${ACADEMY_LEAD_SOURCE_LABELS[l.source]||l.source})</option>`).join('')}
       </select>
       <p class="muted" style="font-size:.78rem; margin-top:4px;">Nếu học viên này đến từ 1 Lead (giới thiệu bởi HLV/học viên khác), chọn để khoá nguồn — thưởng giới thiệu ${fmtMoneyVND(getAcademySettings().referralBonusAmount)} sẽ tự động ghi nhận khi ghi danh.</p>
     </div>` : ''}
@@ -22719,7 +22869,7 @@ function openScheduleTrialModal(leadId){
   const coaches = getActiveCoaches();
   const today = dateToISO(new Date());
   box.innerHTML = `
-    <h2>📅 ĐẶT LỊCH HỌC THỬ — ${lead.name}</h2>
+    <h2>📅 ĐẶT LỊCH HỌC THỬ — ${escapeHtml(lead.name)}</h2>
     <div class="level-map-row"><label>Ngày</label><input type="date" id="trialDate" min="${today}" value="${today}"></div>
     <div class="level-map-row"><label>Giờ bắt đầu</label><input type="time" id="trialStart" value="18:00"></div>
     <div class="level-map-row"><label>Giờ kết thúc</label><input type="time" id="trialEnd" value="19:00"></div>
@@ -22754,7 +22904,7 @@ function openCompleteTrialModal(leadId){
   const lead = academyLeadById(leadId);
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>HOÀN TẤT HỌC THỬ — ${lead.name}</h2>
+    <h2>HOÀN TẤT HỌC THỬ — ${escapeHtml(lead.name)}</h2>
     <div class="level-map-row"><label>Kết quả</label>
       <select id="trialOutcome">
         <option value="ATTENDED">Đã đến học thử</option>
@@ -22786,7 +22936,7 @@ function openSkillCheckModal(trialId){
   const box = document.getElementById('matchModalContent');
   const skills = t.target === 'ADULT' ? ACADEMY_ADULT_SKILLS : ACADEMY_ADULT_SKILLS.slice(0,6); // §182 — Kids dung rut gon 6 ky nang co ban tu bo Adult, tranh hard-code danh sach rieng
   box.innerHTML = `
-    <h2>SKILL CHECK — ${lead.name}</h2>
+    <h2>SKILL CHECK — ${escapeHtml(lead.name)}</h2>
     <p class="muted">Đây là đánh giá trình độ ban đầu để xếp lớp — KHÔNG phải PPR (hệ thống riêng của Club).</p>
     <div style="max-height:300px; overflow-y:auto;">
       ${skills.map((sk,i)=>`
@@ -22822,7 +22972,7 @@ function openLeadTrialHistoryModal(leadId){
   const trials = getLeadTrials(leadId);
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>LỊCH SỬ HỌC THỬ — ${lead.name}</h2>
+    <h2>LỊCH SỬ HỌC THỬ — ${escapeHtml(lead.name)}</h2>
     <table class="rule-config-table" style="width:100%;">
       <thead><tr><th>Thời gian</th><th>HLV</th><th>Kết quả</th><th>Skill Check</th></tr></thead>
       <tbody>
@@ -22874,7 +23024,7 @@ function renderAcademyLeadsTab(){
       canEdit && l.status!=='ENROLLED' && l.status!=='LOST' ? '<div class="row-menu-divider"></div><button class="danger-item" onclick="toggleRowMenu(this.closest(\'.row-menu\').querySelector(\'.row-menu-trigger\'));markLeadLost(\''+l.id+'\')">Không tiếp tục</button>' : ''
     ].join('');
     return `<tr>
-      <td style="font-weight:600;">${l.name}</td>
+      <td style="font-weight:600;">${escapeHtml(l.name)}</td>
       <td style="color:var(--color-text-secondary);">${l.phone||'—'}</td>
       <td>${l.target==='ADULT'?'Người lớn':'Trẻ em'}</td>
       <td>${ACADEMY_LEAD_SOURCE_LABELS[l.source]||l.source}${l.source==='REFERRAL'&&l.referrerStudentId?(' ('+(academyStudentById(l.referrerStudentId)?academyStudentById(l.referrerStudentId).name:'?')+')'):''}${l.source==='COACH_REFERRAL'&&l.referrerCoachId?(' ('+(coachById(l.referrerCoachId)?coachById(l.referrerCoachId).name:'?')+')'):''}</td>
@@ -22969,7 +23119,7 @@ function openAcademyLeadModal(leadId){
         <div class="level-map-row"><label>Học viên giới thiệu</label>
           <select id="leadModalReferrer" ${l?'disabled':''}>
             <option value="">— Chọn học viên —</option>
-            ${(state.academyStudents||[]).map(s=>`<option value="${s.id}" ${l&&l.referrerStudentId===s.id?'selected':''}>${s.name}</option>`).join('')}
+            ${(state.academyStudents||[]).map(s=>`<option value="${s.id}" ${l&&l.referrerStudentId===s.id?'selected':''}>${escapeHtml(s.name)}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -22978,7 +23128,7 @@ function openAcademyLeadModal(leadId){
         <div class="level-map-row"><label>HLV giới thiệu</label>
           <select id="leadModalCoachReferrer" ${l?'disabled':''}>
             <option value="">— Chọn HLV —</option>
-            ${getActiveCoaches().map(c=>`<option value="${c.id}" ${l&&l.referrerCoachId===c.id?'selected':''}>${c.name}</option>`).join('')}
+            ${getActiveCoaches().map(c=>`<option value="${c.id}" ${l&&l.referrerCoachId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
           </select>
         </div>
       </div>
@@ -24915,7 +25065,7 @@ function openChangeSessionCoachModal(sessionId){
     <label>HLV thay thế</label>
     <select id="newCoachSel">
       <option value="">— Chọn HLV —</option>
-      ${candidates.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+      ${candidates.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
     </select>
     ${!candidates.length ? '<p class="muted">Không có HLV nào đủ điều kiện thay thế (đang rảnh, đúng chuyên môn).</p>' : ''}
     <div id="coachConflictBox" style="margin-top:8px;"></div>
@@ -25213,7 +25363,7 @@ function academyCalendarFilterBarHtml(calState, currentUser){
       ${typeOptions.map(([v,l])=>`<button class="small ${calState.typeFilter===v?'':'secondary'}" style="${calState.typeFilter===v?'font-weight:700; border:2px solid var(--primary);':''}" onclick="setAcademyCalendarTypeFilter('${v}')">${l}</button>`).join('')}
       ${!isCoach ? `<select style="width:auto; min-width:130px; padding:6px 8px; margin-top:0;" onchange="setAcademyCalendarCoachFilter(this.value)">
         <option value="">Tất cả HLV</option>
-        ${coaches.map(c=>`<option value="${c.id}" ${calState.coachFilter===c.id?'selected':''}>${c.name}</option>`).join('')}
+        ${coaches.map(c=>`<option value="${c.id}" ${calState.coachFilter===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
       </select>` : ''}
       <select style="width:auto; min-width:110px; padding:6px 8px; margin-top:0;" onchange="setAcademyCalendarCourtFilter(this.value)">
         <option value="">Tất cả sân</option>
@@ -25947,7 +26097,7 @@ function renderAcademyReportCoaches(ctx){
   });
 
   const tableRows = rows.map(r=>`<tr style="cursor:pointer;" onclick="openAcademyCoachDetail('${r.coach.id}')">
-    <td>${r.coach.name}</td><td>${r.activeClassesForCoach}</td><td>${r.activeStudentsForCoach}</td><td>${r.confirmedForCoach}</td>
+    <td>${escapeHtml(r.coach.name)}</td><td>${r.activeClassesForCoach}</td><td>${r.activeStudentsForCoach}</td><td>${r.confirmedForCoach}</td>
     <td>${fmtMoneyVND(r.genForCoach)}</td><td>${fmtMoneyVND(r.settledForCoach)}</td><td>${fmtMoneyVND(r.outstandingForCoach)}</td><td>${fmtMoneyVND(r.referralGenerated)}</td>
   </tr>`).join('');
 
@@ -26036,10 +26186,8 @@ function fmtDateTimeVN(ts){ return ts ? new Date(ts).toLocaleString('vi-VN') : '
    cac diem hien thi TEN/GHI CHU do nguoi dung nhap co nguy co cao nhat (xuat hien lap lai o nhieu
    man hinh danh sach) — KHONG doi toan bo app (qua lon, rui ro regression, ngoai pham vi §194 "khong
    rewrite UI toan app"); phan con lai duoc ghi nhan la Known Limitation trong bao cao Release Candidate. */
-function escapeHtml(str){
-  if(str === null || str === undefined) return '';
-  return String(str).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
-}
+/* §AUDIT-XSS-2026 — escapeHtml()/escapeJsInAttr() da chuyen len khoi script DAU TIEN (canh uid()) vi gio
+   duoc goi o moi khoi render, ke ca cac khoi nap TRUOC khoi nay. */
 function classProgressDots(current, total){
   let out = '';
   for(let i=1;i<=total;i++) out += (i<=current ? '●' : '○') + ' ';
@@ -26167,7 +26315,7 @@ function openAcademyClassModal(classId){
         ${(function(){
           const prog = getAcademyProgram((cls&&cls.target)||'ADULT');
           const levels = prog ? getAcademyCurriculumLevels(prog.id) : [];
-          return levels.map(l=>`<option value="${l.id}" ${cls&&cls.curriculumLevelId===l.id?'selected':''}>${l.name} (v${l.version})</option>`).join('');
+          return levels.map(l=>`<option value="${l.id}" ${cls&&cls.curriculumLevelId===l.id?'selected':''}>${escapeHtml(l.name)} (v${l.version})</option>`).join('');
         })()}
       </select>
       ${cls ? '<div class="muted" style="font-size:.78rem;">Level/version đã khoá từ lúc tạo lớp (§212 — không tự nhảy sang version mới hơn)</div>' : ''}
@@ -26176,7 +26324,7 @@ function openAcademyClassModal(classId){
     <div class="level-map-row"><label>HLV chính</label>
       <select id="clsModalCoach">
         <option value="">— Chọn HLV —</option>
-        ${getActiveCoaches().map(c=>`<option value="${c.id}" ${cls&&cls.primaryCoachId===c.id?'selected':''}>${c.name}</option>`).join('')}
+        ${getActiveCoaches().map(c=>`<option value="${c.id}" ${cls&&cls.primaryCoachId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
       </select>
     </div>
     <div class="level-map-row"><label>Ngày bắt đầu</label><input type="date" id="clsModalStartDate" value="${cls?cls.startDate:''}"></div>
@@ -26204,7 +26352,7 @@ function toggleClsModalLevelRow(){
   if(levelSel){
     const prog = getAcademyProgram(target);
     const levels = prog ? getAcademyCurriculumLevels(prog.id) : [];
-    levelSel.innerHTML = levels.map(l=>`<option value="${l.id}">${l.name} (v${l.version})</option>`).join('');
+    levelSel.innerHTML = levels.map(l=>`<option value="${l.id}">${escapeHtml(l.name)} (v${l.version})</option>`).join('');
   }
 }
 function saveAcademyClassFromModal(classId){
@@ -26445,7 +26593,7 @@ function renderClassStudentsTab(cls, box){
   box.innerHTML = (canManage && hasRoom ? `<div style="margin-bottom:10px;">
     <select id="enrollStudentPicker" style="min-width:220px;">
       <option value="">— Chọn học viên để ghi danh —</option>
-      ${(state.academyStudents||[]).filter(s=>s.target===cls.target && !enrs.some(e=>e.studentId===s.id && e.status==='ACTIVE')).map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}
+      ${(state.academyStudents||[]).filter(s=>s.target===cls.target && !enrs.some(e=>e.studentId===s.id && e.status==='ACTIVE')).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
     </select>
     <button class="small secondary" onclick="confirmEnrollStudentFromPicker('${cls.id}')">+ GHI DANH</button>
   </div>` : '') + (enrs.length ? enrs.map(e=>{
@@ -26501,7 +26649,7 @@ function renderClassCurriculumTab(cls, box){
   if(!sessions.length){ box.innerHTML = '<p class="muted">Chưa có buổi học để đối chiếu giáo trình.</p>'; return; }
   const level = cls.curriculumLevelId ? getCurriculumLevelById(cls.curriculumLevelId) : null;
   const nextSess = getClassNextSession(cls.id);
-  const headerHtml = level ? `<div class="muted" style="margin-bottom:8px;">${level.name} · Version ${cls.curriculumVersion||level.version}</div>` : '';
+  const headerHtml = level ? `<div class="muted" style="margin-bottom:8px;">${escapeHtml(level.name)} · Version ${cls.curriculumVersion||level.version}</div>` : '';
   box.innerHTML = headerHtml + sessions.map(s=>{
     const curSess = s.curriculumSessionId ? (state.academyCurriculumSessions||[]).find(cs=>cs.id===s.curriculumSessionId) : null;
     const isDone = s.status==='CONFIRMED';
@@ -26532,7 +26680,7 @@ function openAssignCurriculumModal(classId){
     <p class="muted">Chọn Level/Version phù hợp cho lớp này. Không tự suy đoán — chọn thủ công.</p>
     <div class="level-map-row"><label>Level</label>
       <select id="assignCurLevel">
-        ${levels.map(l=>`<option value="${l.id}">${l.name} (v${l.version}, ${l.totalSessions} buổi)</option>`).join('')}
+        ${levels.map(l=>`<option value="${l.id}">${escapeHtml(l.name)} (v${l.version}, ${l.totalSessions} buổi)</option>`).join('')}
       </select>
     </div>
     <div class="level-map-row"><label>Đang học đến buổi số (tham khảo)</label><input type="number" id="assignCurCurrentSession" min="1" value="1"></div>
@@ -26887,7 +27035,7 @@ function renderClassSizeChangeSubform(classId){
       <div class="level-map-row"><label>Học viên mới</label>
         <select id="cscNewStudent">
           <option value="">— Chọn học viên —</option>
-          ${(state.academyStudents||[]).filter(s=>s.target===cls.target).map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}
+          ${(state.academyStudents||[]).filter(s=>s.target===cls.target).map(s=>`<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
         </select>
       </div>
       <div class="level-map-row"><label>Hiệu lực từ Buổi</label><input type="number" min="1" max="${cls.totalSessions}" id="cscEffectiveSessionInc" value="${defaultEffective}" oninput="renderCscPreview('${classId}')"></div>
@@ -27041,7 +27189,7 @@ function openChangeSessionCoachModalLegacy(sessionId){
     <h2>ĐỔI HLV BUỔI ${sess.sessionNumber}</h2>
     <div class="level-map-row"><label>HLV thay thế</label>
       <select id="scModalCoach">
-        ${getActiveCoaches().map(c=>`<option value="${c.id}" ${!suggestions.find(x=>x.id===c.id)&&c.id!==sess.coachId?'disabled':''}>${c.name}${!suggestions.find(x=>x.id===c.id)&&c.id!==sess.coachId?' (không khả dụng)':''}</option>`).join('')}
+        ${getActiveCoaches().map(c=>`<option value="${c.id}" ${!suggestions.find(x=>x.id===c.id)&&c.id!==sess.coachId?'disabled':''}>${escapeHtml(c.name)}${!suggestions.find(x=>x.id===c.id)&&c.id!==sess.coachId?' (không khả dụng)':''}</option>`).join('')}
       </select>
     </div>
     <div class="level-map-row"><label>Lý do</label><input type="text" id="scModalReason"></div>
@@ -27064,7 +27212,7 @@ function openChangePrimaryCoachModal(classId){
   box.innerHTML = `
     <h2>THAY HLV CHÍNH — ${cls.code}</h2>
     <div class="level-map-row"><label>HLV mới</label>
-      <select id="pcModalCoach">${getActiveCoaches().map(c=>`<option value="${c.id}" ${c.id===cls.primaryCoachId?'selected':''}>${c.name}</option>`).join('')}</select>
+      <select id="pcModalCoach">${getActiveCoaches().map(c=>`<option value="${c.id}" ${c.id===cls.primaryCoachId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
     </div>
     <div class="level-map-row"><label>Hiệu lực từ Buổi</label><input type="number" min="1" max="${cls.totalSessions}" id="pcModalSession" value="${nextSession?nextSession.sessionNumber:cls.totalSessions}"></div>
     <div class="level-map-row"><label>Lý do</label><input type="text" id="pcModalReason"></div>
@@ -27131,7 +27279,7 @@ function renderAcademyCoachListView(){
     const unpaid = coachUnpaidCompensationTotal(c.id);
     return `<div class="card" style="padding:14px; cursor:pointer;" onclick="openAcademyCoachDetail('${c.id}')">
       <div style="display:flex; justify-content:space-between;">
-        <b>${c.name}</b>
+        <b>${escapeHtml(c.name)}</b>
         <span class="role-badge ${c.status==='ACTIVE'?'role-badge-coach':'muted'}">${ACADEMY_COACH_STATUS_LABELS[c.status]}</span>
       </div>
       <div class="muted" style="font-size:.85rem; margin-top:4px;">${classes.length} lớp active · ${students} HV</div>
@@ -27237,7 +27385,7 @@ function renderAcademyCoachDetailView(){
       <button class="small secondary" onclick="closeAcademyCoachDetail()">← Danh sách HLV</button>
       <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-top:10px;">
         <div>
-          <h2 style="margin-bottom:2px;">HLV ${c.name} <span class="role-badge ${c.status==='ACTIVE'?'role-badge-coach':'muted'}">${ACADEMY_COACH_STATUS_LABELS[c.status]}</span></h2>
+          <h2 style="margin-bottom:2px;">HLV ${escapeHtml(c.name)} <span class="role-badge ${c.status==='ACTIVE'?'role-badge-coach':'muted'}">${ACADEMY_COACH_STATUS_LABELS[c.status]}</span></h2>
           <div class="muted">${c.canTeachAdult?'Adult ✓ ':''}${c.canTeachKids?'Kids ✓':''}</div>
         </div>
         <div style="text-align:right;">
@@ -27385,7 +27533,7 @@ function openCoachSettlementModal(coachId){
   const periodStart = now.toISOString().slice(0,8) + '01';
   const periodEnd = dateToISO(now);
   box.innerHTML = `
-    <h2>ĐỐI SOÁT — HLV ${c.name}</h2>
+    <h2>ĐỐI SOÁT — HLV ${escapeHtml(c.name)}</h2>
     <div class="level-map-row"><label>Từ ngày</label><input type="date" id="settleModalStart" value="${periodStart}"></div>
     <div class="level-map-row"><label>Đến ngày</label><input type="date" id="settleModalEnd" value="${periodEnd}"></div>
     <button class="big" style="margin-top:10px;" onclick="confirmCreateSettlement('${coachId}')">TẠO ĐỐI SOÁT</button>
@@ -28052,7 +28200,7 @@ function renderUserListBox(){
   box.innerHTML = state.users.map(u=>`
     <div class="user-row ${u.active?'':'inactive'}">
       <div>
-        <b>${u.name}</b> <span class="role-badge ${roleBadgeClass(u.role)}">${roleLabel(u.role)}</span>
+        <b>${escapeHtml(u.name)}</b> <span class="role-badge ${roleBadgeClass(u.role)}">${roleLabel(u.role)}</span>
         ${u.authUid ? '<span class="auth-linked-badge" title="Đã liên kết Firebase Auth">AUTH ✓</span>' : ''}
         ${!u.active ? '<span class="muted"> · đã vô hiệu hoá</span>' : ''}
         <div class="small-note">
@@ -28094,7 +28242,7 @@ function renderUserListBoxIfActive(){
    gia tri) — neu chua co (dang trong luc dang nhap/hydrate lan dau), bo qua lan goi nay, de
    resolveEnterAppFor() tu no xu ly xac thuc ban dau, tranh logout oan do race. */
 function onCurrentUserProfileChangedFromRemote(){
-  if(!state.settings || state.settings.authMode !== 'PRODUCTION_FIREBASE') return; // legacy mode: hanh vi cu, khong can xu ly them
+  if(!isProductionAuthMode()) return; // legacy mode: hanh vi cu, khong can xu ly them (§AUDIT-AUTH-2026 — dung chung 1 nguon quyet dinh)
   const authUser = (typeof firebase !== 'undefined' && firebase.auth) ? firebase.auth().currentUser : null;
   if(!authUser) return;
   if(!__resolvedPicpocUserId) return; // §FIX-AUTH-RACE — chua resolve xong lan dang nhap nay, bo qua
@@ -28122,7 +28270,7 @@ function openAddUserModal(){
       <label>Liên kết hồ sơ HLV</label>
       <select id="newUserCoachId">
         <option value="">— Chọn HLV —</option>
-        ${(state.academyCoaches||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}
+        ${(state.academyCoaches||[]).map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
       </select>
     </div>
     <button onclick="submitAddUser()">✔️ Thêm</button>
@@ -28185,7 +28333,7 @@ function toggleUserRole(userId){
   const box = document.getElementById('matchModalContent');
   if(!box) return;
   box.innerHTML = `
-    <h2>Đổi role: ${u.name}</h2>
+    <h2>Đổi role: ${escapeHtml(u.name)}</h2>
     <p class="small-note">Role hiện tại: <b>${roleLabel(u.role)}</b></p>
     <label>Role mới</label>
     <select id="changeUserRoleSelect" onchange="toggleChangeUserCoachLink()">
@@ -28198,7 +28346,7 @@ function toggleUserRole(userId){
       <label>Liên kết hồ sơ HLV</label>
       <select id="changeUserCoachId">
         <option value="">— Chọn HLV —</option>
-        ${(state.academyCoaches||[]).map(c=>`<option value="${c.id}" ${u.coachId===c.id?'selected':''}>${c.name}</option>`).join('')}
+        ${(state.academyCoaches||[]).map(c=>`<option value="${c.id}" ${u.coachId===c.id?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}
       </select>
     </div>
     <button onclick="submitChangeUserRole('${u.id}')">✔️ Lưu role</button>
@@ -28450,7 +28598,7 @@ function renderAuthMigrationPanel(){
   if(!box) return;
   if(!requirePermissionSilent('USER_MANAGE')){ box.innerHTML = ''; return; }
   const r = computeAuthMigrationReadiness();
-  const mode = state.settings.authMode || 'LEGACY_LOCAL';
+  const mode = isProductionAuthMode() ? 'PRODUCTION_FIREBASE' : (state.settings.authMode || 'LEGACY_LOCAL'); // §AUDIT-AUTH-2026
   box.innerHTML = `
     <div class="settings-card">
       <h3>🔐 Production Auth — trạng thái: <b>${mode === 'PRODUCTION_FIREBASE' ? 'ĐANG BẬT' : 'CHƯA BẬT (Legacy Local)'}</b></h3>
@@ -29000,7 +29148,7 @@ function renderFinanceDebt(){
   const rows = debtors.map(d=>`
     <div class="card" style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px;">
       <div>
-        <div style="font-weight:700;">${d.name}${d.phone ? ` <span class="muted" style="font-weight:400; font-size:.8rem;">· ${d.phone}</span>` : ''}</div>
+        <div style="font-weight:700;">${escapeHtml(d.name)}${d.phone ? ` <span class="muted" style="font-weight:400; font-size:.8rem;">· ${escapeHtml(d.phone)}</span>` : ''}</div>
         <div class="muted" style="font-size:.85rem;">${d.billCount} bill chưa thu đủ</div>
       </div>
       <div style="display:flex; align-items:center; gap:10px;">
@@ -29448,7 +29596,7 @@ function renderReportsTab(){
   document.getElementById('reportSalesBox').innerHTML = `
     <div class="bill-line"><span>Tổng bán hàng</span><b>${fmtVnd(productStats.total)}</b></div>
     ${productStats.list.length ? productStats.list.map(p=>`
-      <div class="bill-line"><span>${p.name}</span><span>${p.qty} chai · ${fmtVnd(p.amount)}</span></div>
+      <div class="bill-line"><span>${escapeHtml(p.name)}</span><span>${p.qty} chai · ${fmtVnd(p.amount)}</span></div>
     `).join('') : '<div class="muted">Chưa có bán hàng trong khoảng này.</div>'}
   `;
 
@@ -29496,7 +29644,7 @@ function renderReportsTab(){
   document.getElementById('reportOutstandingBox').innerHTML = outstandingBills.length ? outstandingBills.map(row=>{
     const meta = row.status ? statusMetaFor({status:row.status}) : null;
     return `<div class="water-pending-row">
-      <div class="wp-info"><b>${row.playerName}</b>${meta ? ' · ' + meta.label : ''}</div>
+      <div class="wp-info"><b>${escapeHtml(row.playerName)}</b>${meta ? ' · ' + meta.label : ''}</div>
       <div>${fmtVnd(row.amount)} <button class="small" onclick="document.querySelector('.tab-btn[data-tab=\\'sales\\']').click(); selectBuyer('${row.bill.playerId}'); openBillModal('${row.bill.playerId}');">Xem bill</button></div>
     </div>`;
   }).join('') : '<div class="muted">✓ Không còn bill nào chưa thu.</div>';
@@ -29563,7 +29711,7 @@ function openMultiPayModal(preselectIds){
     <div id="multiPayList">${openBills.map(b=>`
       <div class="checkbox-row">
         <input type="checkbox" class="multipay-check" value="${b.id}" ${pre.includes(b.id)?'checked':''} onchange="updateMultiPayTotal()">
-        <label style="margin:0; flex:1;">${b.playerName} — ${fmtVnd(billTotal(b))}</label>
+        <label style="margin:0; flex:1;">${escapeHtml(b.playerName)} — ${fmtVnd(billTotal(b))}</label>
       </div>
     `).join('')}</div>
     <div class="method-toggle">
@@ -30020,7 +30168,7 @@ function renderBuyerList(){
     const total = bill ? billTotal(bill) : 0;
     const meta = statusMetaFor(p);
     return `<div class="buyer-row" onclick="selectBuyer('${p.id}')">
-      <div class="bname">${p.name}</div>
+      <div class="bname">${escapeHtml(p.name)}</div>
       <div class="bmeta"><span>${meta.icon} ${meta.label}</span><span>Bill hiện tại: ${fmtVnd(total)}</span></div>
     </div>`;
   }).join('');
@@ -30311,7 +30459,7 @@ function openBillModal(playerId, explicitBillId){
   const passUsedBadge = (bill.visitId && typeof hasSocialPassUsageForVisit === 'function' && hasSocialPassUsageForVisit(bill.visitId))
     ? '<div class="bill-line" style="color:var(--color-primary); font-weight:700;"><span>🎟️ Social — Gói Social (đã dùng 1 lượt)</span><span>0đ</span></div>' : '';
   box.innerHTML = `
-    <h2>🧾 ${bill.playerName}</h2>
+    <h2>🧾 ${escapeHtml(bill.playerName)}</h2>
     ${passUsedBadge}
     ${billLinesHtml(bill)}
     <div class="cart-total"><span>TỔNG</span><span>${fmtVnd(total)}</span></div>
@@ -30405,7 +30553,7 @@ function openAddBallMachineRentalModal(playerId){
   const defaultPrice = (state.settings && state.settings.ballMachineRentalPrice) || 100000;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;">🎱 Thuê máy bắn bóng — ${p.name}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;">🎱 Thuê máy bắn bóng — ${escapeHtml(p.name)}</h2>
     <label>Số tiền</label>
     <input type="number" id="ballMachineAmountInput" min="0" step="1000" value="${defaultPrice}">
     <button id="ballMachineConfirmBtn" style="margin-top:10px;" onclick="confirmAddBallMachineRental('${playerId}')">THÊM VÀO BILL</button>
@@ -30462,7 +30610,7 @@ function showPayConfirm(billId){
   // diem, khong bi trung id voi man openBillModal()) de Staff doi duoc method ngay truoc luc bam Xac
   // nhan, dung 1 click, khong can quay lai man truoc.
   box.innerHTML = `
-    <h2>${bill.playerName}</h2>
+    <h2>${escapeHtml(bill.playerName)}</h2>
     <p>Tổng: <b style="font-size:1.3rem;">${fmtVnd(total)}</b></p>
     <div class="bill-section-label">Phương thức</div>
     <div class="method-toggle">
@@ -30561,7 +30709,7 @@ function openSplitPayModal(billId){
   const outstanding = getBillOutstanding(bill);
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>➗ Chia thanh toán — ${bill.playerName}</h2>
+    <h2>➗ Chia thanh toán — ${escapeHtml(bill.playerName)}</h2>
     <p>Còn phải thu: <b style="font-size:1.2rem;">${fmtVnd(outstanding)}</b></p>
     <div><label>Chuyển khoản</label><input type="number" id="splitBankInput" min="0" step="1000" value="0" oninput="updateSplitPayPreview('${bill.id}')"></div>
     <div><label>Tiền mặt</label><input type="number" id="splitCashInput" min="0" step="1000" value="0" oninput="updateSplitPayPreview('${bill.id}')"></div>
@@ -30677,7 +30825,7 @@ function renderPosGrid(){
   grid.innerHTML = active.map(p=>{
     const disabled = p.stock <= 0;
     return `<div class="product-card ${disabled?'outofstock':''}" onclick="${disabled?'':`addToCart('${p.id}')`}">
-      <div class="pname">${p.name}</div>
+      <div class="pname">${escapeHtml(p.name)}</div>
       <div class="pprice">${fmtVnd(p.price)}</div>
       <div class="pstock">Còn ${p.stock}</div>
     </div>`;
@@ -30718,7 +30866,7 @@ function renderCart(){
     const lineTotal = p.price * cart[id];
     total += lineTotal;
     return `<div class="cart-item">
-      <div class="cname">${p.name}</div>
+      <div class="cname">${escapeHtml(p.name)}</div>
       <div class="qty-ctrl">
         <button class="small secondary" onclick="changeCartQty('${id}',-1)">−</button>
         <b>${cart[id]}</b>
@@ -31157,7 +31305,7 @@ function openAdjustStockModal(productId){
   if(!p) return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>⚖️ Điều chỉnh tồn — ${p.name}</h2>
+    <h2>⚖️ Điều chỉnh tồn — ${escapeHtml(p.name)}</h2>
     <p class="muted">Tồn hệ thống: <b>${p.stock}</b></p>
     <label>Tồn thực tế</label>
     <input type="number" id="adjustActual" class="input-compact" min="0" value="${p.stock}">
@@ -31500,7 +31648,7 @@ function renderMoneyTab(){
     return `<div class="money-card ${(isEndedUnpaid||isWaitingPayment)?'urgent':''}">
       <div class="money-card-head">
         <div>
-          <div class="money-name">${bill.playerName}</div>
+          <div class="money-name">${escapeHtml(bill.playerName)}</div>
           <div class="money-status">${st.icon} ${st.label}</div>
           ${isWaitingPayment ? '<div class="money-badge-unpaid" style="background:var(--primary);">💳 CHỜ TÍNH TIỀN</div>' : ''}
           ${isEndedUnpaid ? '<div class="money-badge-unpaid">⚠ CHƯA THANH TOÁN</div>' : ''}
@@ -32501,7 +32649,7 @@ function renderBookingTodayList(){
     <div class="water-pending-row" style="cursor:pointer;" onclick="openBookingDetailModal('${b.id}')">
       <div class="wp-info">
         <b>Sân ${b.courtId}</b> · ${fmtHourLabel(b.startTime)}–${fmtHourLabel(b.endTime)}<br>
-        <span class="muted">${b.customerName}${b.type==='MONTHLY_INSTANCE' ? ' · Cố định tháng' : ''}${b.status==='COMPLETED'?' · Đã diễn ra':''}</span>
+        <span class="muted">${escapeHtml(b.customerName)}${b.type==='MONTHLY_INSTANCE' ? ' · Cố định tháng' : ''}${b.status==='COMPLETED'?' · Đã diễn ra':''}</span>
       </div>
       <div>${fmtVnd(b.finalAmount)}</div>
     </div>
@@ -32529,7 +32677,7 @@ function openBookingDetailModal(bookingId){
   }
   content.innerHTML = `
     <h3>Chi tiết booking</h3>
-    <div class="bill-line"><span>Khách</span><span>${b.customerName}${b.phone?' · '+b.phone:''}</span></div>
+    <div class="bill-line"><span>Khách</span><span>${escapeHtml(b.customerName)}${b.phone?' · '+b.phone:''}</span></div>
     <div class="bill-line"><span>Ngày</span><span>${fmtDateLabel(b.date)} · ${fmtWeekdayShortFromDate(b.date)}</span></div>
     <div class="bill-line"><span>Sân</span><span>Sân ${b.courtId}</span></div>
     <div class="bill-line"><span>Giờ</span><span>${fmtHourLabel(b.startTime)}–${fmtHourLabel(b.endTime)}</span></div>
@@ -32837,7 +32985,7 @@ function openEditSeriesModal(seriesId){
   const modal = document.getElementById('matchModal');
   const content = document.getElementById('matchModalContent');
   content.innerHTML = `
-    <h3>📆 Sửa chuỗi cố định — ${series.customerName}</h3>
+    <h3>📆 Sửa chuỗi cố định — ${escapeHtml(series.customerName)}</h3>
     <p class="muted" style="font-size:.82rem;">Chỉ áp dụng cho các buổi TƯƠNG LAI chưa diễn ra. Không ảnh hưởng buổi đã hoàn tất, và không tự ghi đè các buổi đã được đổi riêng.</p>
     <label>Sân mặc định</label>
     <div class="level-pick" id="esCourtChips"></div>
@@ -33189,8 +33337,8 @@ function renderPresenceTab(){
     const isReallyUnpaid = isForgotten && total > 0;
     const isOrphanedStale = isForgotten && total <= 0;
     let warnTag = '';
-    if(isReallyUnpaid) warnTag = `<div class="presence-warn">⚠ ${p.name} đã nghỉ ${finishedMin} phút — Còn ${fmtVnd(total)} chưa thu</div>`;
-    else if(isOrphanedStale) warnTag = `<div class="presence-note-orphan">⚠ ${p.name} đã nghỉ ${finishedMin} phút — trạng thái bị lệch, KHÔNG còn khoản nào chưa thu (bill đã thanh toán trước đó). Bấm "ĐÓNG PHIÊN" bên dưới để dọn.</div>`;
+    if(isReallyUnpaid) warnTag = `<div class="presence-warn">⚠ ${escapeHtml(p.name)} đã nghỉ ${finishedMin} phút — Còn ${fmtVnd(total)} chưa thu</div>`;
+    else if(isOrphanedStale) warnTag = `<div class="presence-note-orphan">⚠ ${escapeHtml(p.name)} đã nghỉ ${finishedMin} phút — trạng thái bị lệch, KHÔNG còn khoản nào chưa thu (bill đã thanh toán trước đó). Bấm "ĐÓNG PHIÊN" bên dưới để dọn.</div>`;
     else if(isFinishedUnpaid && total > 0) warnTag = `<div class="presence-warn">⚠ CHƯA THANH TOÁN</div>`;
 
     /* §SIMPLECHECKIN-2026 — Admin yêu cầu làm lại quy trình: "chỉ hiện thêm sản phẩm và bill", bỏ hết
@@ -33230,7 +33378,7 @@ function renderPresenceTab(){
       ${groupPayCheckbox}
       <div class="presence-head">
         <div>
-          <div class="presence-name">${p.name}${debtBadgeHtml(p.id)}</div>
+          <div class="presence-name">${escapeHtml(p.name)}${debtBadgeHtml(p.id)}</div>
           ${hideWaitingLabel ? '' : `<div class="presence-status">${meta.icon} ${meta.label}</div>`}
           <!-- §SOCIALMODEV2-2026 — theo yêu cầu user (ảnh chụp card khoanh đỏ "🎮 Tự chơi"): BỎ HẲN
                dòng trạng thái Social cá nhân trên card — sân chỉ còn 2 trạng thái TOÀN CỤC (xem switch
@@ -33293,7 +33441,7 @@ function openEndOfDayModal(){
     ${openBills.length ? `
       <p><b>CÒN ${openBills.length} BILL CHƯA THANH TOÁN — TỔNG ${fmtVnd(outstanding)}</b></p>
       <div style="max-height:200px; overflow:auto;">
-        ${openBills.map(b=>`<div class="bill-line"><span>${b.playerName}</span><span>${fmtVnd(billTotal(b))} <button class="small" onclick="closeModal(); openBillModal('${b.playerId}');">Xem bill</button></span></div>`).join('')}
+        ${openBills.map(b=>`<div class="bill-line"><span>${escapeHtml(b.playerName)}</span><span>${fmtVnd(billTotal(b))} <button class="small" onclick="closeModal(); openBillModal('${b.playerId}');">Xem bill</button></span></div>`).join('')}
       </div>
     ` : '<p class="muted">Không còn bill nào chưa thanh toán.</p>'}
     <div style="display:flex; gap:8px; margin-top:14px;">
@@ -34086,6 +34234,39 @@ function runDataIntegrityCheck(){
       repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
     });
   });
+  // I) §FIX-CREDITLOT-RELOAD-GAP-2026 — Admin yeu cau "kiem tra lai toan bo app", subagent audit phat hien
+  // redeemCreditsFEFO() cung LOP RUI RO voi cac bug da vá o v1.44.24/25/27 (mutation cuc bo + xac nhan
+  // CANONICAL qua Firebase transaction() rieng, chi flush thuc su khi .then() chay xong — neu tai lai
+  // trang/mat mang dung luc giua chung, thay doi cuc bo co the khong toi duoc server). (Gói Social đã có
+  // sẵn check tương đương — SOCIAL_PASS_RECONCILE_MISMATCH — nên không thêm trùng ở đây, chỉ thiếu phần
+  // Credit lot). KHONG the tu dong retry an toan (khac check-in/bill-payment): retry mu 1 transaction tru
+  // tien KHONG co idempotency guard rieng co the gay TRU 2 LAN that su (nguy hiem hon giu nguyen hien
+  // trang) — vi lot.remainingAmount la SO DU CONG DON qua nhieu lan tru, khac han playerVisits/bills chi
+  // co 1 "phien ban dung" tai 1 thoi diem. Thay vi tu dong sua (rui ro), them 1 check PHAT HIEN dua tren
+  // bat bien co san (lot.remainingAmount phai = originalAmount - tong REDEEM + tong REVERSE con hieu luc)
+  // de Admin phat hien VA tu quyet dinh xu ly (KHONG tu dong sua vi anh huong truc tiep tien).
+  (function(){
+    (state.creditLots||[]).forEach(lot=>{
+      if(!lot) return;
+      const redeemed = (state.creditTransactions||[]).filter(t=>t.lotId===lot.id && t.type==='REDEEM').reduce((s,t)=>s+t.amount,0);
+      const reversed = (state.creditTransactions||[]).filter(t=>t.lotId===lot.id && t.type==='REVERSE').reduce((s,t)=>s+t.amount,0);
+      // §FIX-CREDITLOT-CHECK-ADJUST-2026 — adminAdjustCredit() co the tru THEM tu 1 lot dang co san (ADJUST,
+      // amount < 0, KHONG doi originalAmount) qua nut Dieu chinh Credit tay cua Admin — neu KHONG tinh
+      // khoan nay, MOI lot tung bi Admin tru tay se bi bao gian CREDIT_LOT_BALANCE_MISMATCH (false positive)
+      // moi lan chay Kiem tra du lieu. CHI tinh ADJUST < 0 (tru tu lot co san) — ADJUST > 0 la tao 1 lot MOI
+      // (originalAmount da bang dung so tien do roi), tinh them se bi CONG TRUNG (gay false positive nguoc
+      // lai cho lot Admin vua tao).
+      const adjustDeduct = (state.creditTransactions||[]).filter(t=>t.lotId===lot.id && t.type==='ADJUST' && t.amount<0).reduce((s,t)=>s+t.amount,0);
+      const expected = Math.max(0, (lot.originalAmount||0) - redeemed + reversed + adjustDeduct);
+      if((lot.remainingAmount||0) === expected) return;
+      const p = playerById(lot.playerId);
+      addIssue('Credit','ERROR', (p ? p.name : lot.playerId) + ' — Credit lot "' + lot.id + '" có remainingAmount=' + fmtVnd(lot.remainingAmount||0) + ' nhưng tính theo lịch sử REDEEM/REVERSE/ADJUST thực tế phải là ' + fmtVnd(expected) + ' — nghi bị lệch do tải lại trang đúng lúc xác nhận đồng bộ chưa xong.', {
+        code:'CREDIT_LOT_BALANCE_MISMATCH', entityType:'creditLot', entityId:lot.id, entityLabel: p ? p.name : lot.playerId,
+        impact:'Khách có thể bị tính thiếu/thừa Credit khả dụng. Cần Admin đối chiếu creditTransactions trước khi sửa tay remainingAmount — KHÔNG tự sửa (liên quan trực tiếp tiền).',
+        repairable:false, repairConfidence:'AMBIGUOUS', isLegacy:false
+      });
+    });
+  })();
   // E) 1 san dang 'playing' co chua 1 player da chuyen sang trang thai "ket thuc/roi phien" GIUA luc
   // tran dang dien ra (dung truong hop applyFinishMatchLocally() §MATCHFIX-9/10/11 vua fix — truoc khi
   // tran ket thuc, neu Staff da bam KẾT THÚC PHIÊN/CHỜ TÍNH TIỀN/TẠM RỜI SÂN cho 1 trong 4 nguoi).
@@ -38906,7 +39087,7 @@ function renderPlayerList(){
       ? (()=>{ const m = statusMetaFor(p); return `<span>${m.icon} ${m.label}</span>`; })()
       : `Lần gần nhất: ${formatRelativeDatePlayer(getPlayerLastVisit(p))}`;
     return `<div class="player-row ${selected?'selected':''}" onclick="selectPlayer('${p.id}')">
-      <div class="pr-top"><span>${p.name}${p.archived?' <span class="muted" style="font-size:.7rem;">(lưu trữ)</span>':''}${debtBadgeHtml(p.id)}</span><span class="pr-level">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span></div>
+      <div class="pr-top"><span>${escapeHtml(p.name)}${p.archived?' <span class="muted" style="font-size:.7rem;">(lưu trữ)</span>':''}${debtBadgeHtml(p.id)}</span><span class="pr-level">${getPlayerPpr(p).toFixed(2)} · ${getPprBand(getPlayerPpr(p))}</span></div>
       <div class="pr-meta">${actStatus.icon} <span class="muted" style="font-size:.72rem; font-weight:700;">${actStatus.label}</span> · ${visits30} lần / 30 ngày · ${matchCount} trận</div>
       <div class="pr-sub">${subLine}</div>
     </div>`;
@@ -38965,7 +39146,7 @@ function renderPlayerDetail(){
       <div class="pp-name-row">
         <div>
           <div class="pp-name">${p.name.toUpperCase()}${p.archived ? ' <span class="muted" style="font-size:.7rem; font-weight:700;">(ĐÃ LƯU TRỮ)</span>' : ''}${debtBadgeHtml(p.id)}</div>
-          <div class="pp-secondary">${p.nickname ? escapeHtml(p.nickname) + ' · ' : ''}${p.phone ? p.phone : '<span class="muted">Chưa có SĐT</span>'}${p.phone ? ` <button class="small secondary pp-copy-btn" onclick="navigator.clipboard && navigator.clipboard.writeText('${p.phone}'); showToast('Đã copy SĐT');">📋 COPY</button>` : ''}</div>
+          <div class="pp-secondary">${p.nickname ? escapeHtml(p.nickname) + ' · ' : ''}${p.phone ? escapeHtml(p.phone) : '<span class="muted">Chưa có SĐT</span>'}${p.phone ? ` <button class="small secondary pp-copy-btn" onclick="navigator.clipboard && navigator.clipboard.writeText('${escapeJsInAttr(p.phone)}'); showToast('Đã copy SĐT');">📋 COPY</button>` : ''}</div>
           <div class="pp-tertiary">${pprVal.toFixed(2)} PPR · ${meta.icon} ${isOnCourt ? meta.label : 'Đã rời sân'}</div>
         </div>
         <div class="pp-actions">
@@ -39090,7 +39271,7 @@ function openAdjustCreditModal(playerId){
   if(!p) return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;">🛠️ Điều chỉnh Credit — ${p.name}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;">🛠️ Điều chỉnh Credit — ${escapeHtml(p.name)}</h2>
     <label>Loại</label>
     <div class="segmented" id="creditAdjustTypeRow">
       <button type="button" class="segment-btn active" data-dir="plus" onclick="pickCreditAdjustDir('plus',this)">+ Cộng</button>
@@ -39269,7 +39450,7 @@ function renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday){
   if(!partners.length){
     html += '<p class="muted small-note">Chưa có dữ liệu.</p>';
   } else {
-    html += partners.map(x=>`<div class="player-partner-row"><span>${x.name}</span><span>${x.count!=null ? x.count+' trận' : ''}</span></div>`).join('');
+    html += partners.map(x=>`<div class="player-partner-row"><span>${escapeHtml(x.name)}</span><span>${x.count!=null ? x.count+' trận' : ''}</span></div>`).join('');
   }
 
   const opponents = getPlayerOpponentStats(p, 5);
@@ -39277,7 +39458,7 @@ function renderPlayerOverviewSubtab(p, openBill, isOnCourt, matchesToday){
   if(!opponents.length){
     html += '<p class="muted small-note">Chưa có dữ liệu.</p>';
   } else {
-    html += opponents.map(x=>`<div class="player-partner-row"><span>${x.name}</span><span>${x.count!=null ? x.count+' trận' : ''}</span></div>`).join('');
+    html += opponents.map(x=>`<div class="player-partner-row"><span>${escapeHtml(x.name)}</span><span>${x.count!=null ? x.count+' trận' : ''}</span></div>`).join('');
   }
 
   // §PROFILE2026-V2 — bo "HOẠT ĐỘNG GẦN ĐÂY"/"BILL HIỆN TẠI" khỏi TỔNG QUAN (trùng lặp với nội dung
@@ -39358,7 +39539,7 @@ function renderPlayerFinanceSubtab(p){
   if(!water.lines.length){
     html += '<p class="muted small-note">Không có.</p>';
   } else {
-    html += water.lines.map(l=>`<div class="player-partner-row"><span>${l.name}</span><span>×${l.qty}</span></div>`).join('');
+    html += water.lines.map(l=>`<div class="player-partner-row"><span>${escapeHtml(l.name)}</span><span>×${l.qty}</span></div>`).join('');
     html += `<div class="player-partner-row" style="font-weight:800;"><span>Tổng</span><span>${fmtVnd(water.total)}</span></div>`;
   }
   return html;
@@ -39383,7 +39564,7 @@ function openEditPlayerModal(playerId){
   if(!p) return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>✏️ Sửa hồ sơ — ${p.name}</h2>
+    <h2>✏️ Sửa hồ sơ — ${escapeHtml(p.name)}</h2>
     <label>Họ tên</label>
     <input type="text" id="editPlayerNameInput" value="${p.name.replace(/"/g,'&quot;')}">
     <label>Nickname <span class="muted" style="font-weight:400;">(không bắt buộc — TV sẽ gọi tên này nếu có)</span></label>
@@ -39490,7 +39671,7 @@ function openManualPprEditModal(playerId){
   const cur = getPlayerPpr(p);
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>🛠️ Sửa PPR thủ công (ADMIN) — ${p.name}</h2>
+    <h2>🛠️ Sửa PPR thủ công (ADMIN) — ${escapeHtml(p.name)}</h2>
     <p class="muted" style="font-size:.85rem;">PPR hiện tại: <b>${cur.toFixed(2)}</b> · ${getPprLabel(cur)} · ${getPprStatusLabel(p.pprStatus||'PROVISIONAL')}</p>
     <label>PPR mới (${MIN_PPR.toFixed(2)} - ${MAX_PPR.toFixed(2)})</label>
     <input type="number" id="manualPprValue" min="${MIN_PPR}" max="${MAX_PPR}" step="0.01" value="${cur.toFixed(2)}">
@@ -39739,6 +39920,7 @@ function attachEntityListener(node){
     }
     lastSyncedSnapshot[node] = {};
     Object.keys(val).forEach(id=>{ lastSyncedSnapshot[node][id] = JSON.stringify(val[id]); });
+    __hydratedNodes.add(node); // §AUDIT-HYDRATE-2026 — tu day node nay moi duoc seed/diff-flush
     try{ normalizeProducts(); }catch(e){ /* normalize phong thu, khong chan render neu loi nho */ }
     /* §HOTFIX-QUOTA — bat loi setItem rieng, PHAI luon reset isRemoteUpdate ve false du co loi hay
        khong, neu khong lan sync ke tiep se bi coi la "remote update" va khong bao gio day len
@@ -39772,6 +39954,7 @@ function attachSettingsListener(){
   if(!SYNC_ENABLED || !dbRoot) return;
   dbRoot.child('settings').on('value', snapshot=>{
     const val = snapshot.val();
+    __hydratedNodes.add('settings'); // §AUDIT-HYDRATE-2026 — da biet settings that tren server (ke ca khi rong)
     if(!val) return;
     isRemoteUpdate = true;
     state.settings = deepMerge(defaultState().settings, val);
@@ -39808,7 +39991,7 @@ function attachSettingsListener(){
        ma __authListenerAttached VAN con false (boot truoc do di nham duong Legacy), CHU DONG goi lai
        beginProductionAuthFlow() ngay, khong doi F5 (F5 se van doc lai cache cu y het, khong tu sua
        duoc — day la ly do F5 truoc do khong giai quyet duoc gi). */
-    if(state.settings.authMode === 'PRODUCTION_FIREBASE' && !DEV_LOCAL_MODE && !__authListenerAttached && typeof beginProductionAuthFlow === 'function'){
+    if(isProductionAuthMode() && !DEV_LOCAL_MODE && !__authListenerAttached && typeof beginProductionAuthFlow === 'function'){
       beginProductionAuthFlow();
     }
     if(typeof renderSettingsTab === 'function' && document.getElementById('tab-settings') && document.getElementById('tab-settings').classList.contains('active')) renderSettingsTab();
