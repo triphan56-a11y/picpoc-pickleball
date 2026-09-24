@@ -2,6 +2,16 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.32 (2026-09-24) — §FIX-CANON-JSON-2026. Admin bao Data Health: 14 player "waiting" nhung KHONG co
+  Active Visit. Doi chieu backup 23/9: Visit da COMPLETED (closeReason PAID, bill paid) nhung player.status van
+  'waiting'. ROOT CAUSE (tai hien duoc offline bang Firebase gia tra khoa theo ABC nhu that): lastSyncedSnapshot
+  luu JSON.stringify theo thu tu khoa LOCAL sau moi lan ghi thanh cong, con Firebase tra khoa XEP ABC va bo gia
+  tri rong -> lan ghi KE TIEP cho cung entity bi CAS (flushDirtyEntityCAS/occFlushEntity) tuong "server da bi
+  may khac sua" -> HUY + keo ban cu ve. Visit (entity khac) van ghi duoc -> lech. Kem theo: diffAndFlushEntities
+  ghi lai hang loat entity khong doi. FIX: fbCanon()/fbCanonJson() (khoa sap xep + bo null/rong giong Firebase)
+  cho MOI cho luu/so sanh lastSyncedSnapshot. Them nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT
+  (repairWaitingWithoutActiveVisit — chi khi khong con bill mo co tien; con no thi de Staff thu tien).
+
   v1.44.31 (2026-09-23) — §AUDIT-2026-09-23 (audit toan bo, xem Picpoc_Audit_ToanBo_2026-09-23.md).
   (1) §AUDIT-HYDRATE-2026: thiet bi moi/cache hong tung seed du lieu mac dinh (Academy Program/Level/Session id
   ngau nhien, 4 san pham p_*, u_admin_default, toan bo settings) va diff-flush len Firebase TRUOC khi nhan du
@@ -8611,6 +8621,24 @@ function isNodeHydrated(node){
   return __hydratedNodes.has(node);
 }
 function areNodesHydrated(nodes){ return nodes.every(isNodeHydrated); }
+/* §FIX-CANON-JSON-2026 — so sanh entity local vs server PHAI theo dang chuan hoa giong Firebase: server tra
+   object voi KHOA XEP THEO ABC va KHONG luu null/undefined/mang rong/object rong. Truoc day dung JSON.stringify
+   tho: (1) lastSyncedSnapshot sau 1 lan ghi thanh cong luu theo thu tu khoa LOCAL -> lan ghi KE TIEP cho CUNG
+   entity bi CAS tuong "server da bi may khac sua" -> HUY ghi + keo ban cu ve (da tai hien offline: player
+   ghi 'paid_and_left' ngay sau 1 lan ghi khac bi huy, server van 'waiting' trong khi Visit da COMPLETED ->
+   loi Data Health WAITING_WITHOUT_ACTIVE_VISIT); (2) diffAndFlushEntities() thay moi entity "khac" -> ghi lai
+   hang loat ban ghi khong doi. fbCanonJson() dung cho MOI cho luu/so sanh lastSyncedSnapshot. */
+function fbCanon(v){
+  if(v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) return null;
+  if(Array.isArray(v)){ const a = v.map(fbCanon); return a.some(x=>x!==null) ? a : null; }
+  if(typeof v === 'object'){
+    const o = {};
+    Object.keys(v).sort().forEach(k=>{ const c = fbCanon(v[k]); if(c !== null) o[k] = c; });
+    return Object.keys(o).length ? o : null;
+  }
+  return v;
+}
+function fbCanonJson(v){ return JSON.stringify(fbCanon(v)); }
 /* §FIX-LISTENER-OVERWRITE-PENDING-WRITE — xem giai thich day du tai attachEntityListener(). Theo doi
    entity nao dang co 1 Firebase .transaction() RIENG CHUA XONG (confirmBillPaymentAtomic/V2/Group...) —
    trong luc do, listener .on('value') toan cuc PHAI GIU NGUYEN gia tri local (thay vi lay snapshot moi
@@ -8700,7 +8728,7 @@ function flushDirtyEntityCAS(node, fb, id){
     ? lastSyncedSnapshot[node][id] : undefined;
   markEntityPendingWrite(node, id);
   dbRoot.child(fb).child(id).transaction(remote=>{
-    const remoteJson = (remote === null || remote === undefined) ? null : JSON.stringify(remote);
+    const remoteJson = (remote === null || remote === undefined) ? null : fbCanonJson(remote);
     if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // server da doi khac tu lan dong bo cuoi cua thiet bi nay -> huy, khong ghi de
     return sanitizeForFirebase(entity);
   }).then(result=>{
@@ -8708,7 +8736,7 @@ function flushDirtyEntityCAS(node, fb, id){
       applyRemoteEntityLocally(node, id, result && result.snapshot ? result.snapshot.val() : null);
     } else {
       if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
-      lastSyncedSnapshot[node][id] = JSON.stringify(entity);
+      lastSyncedSnapshot[node][id] = fbCanonJson(entity);
     }
   }).catch(err=>{ console.error('[markDirty] CAS error', node, id, err); handleWriteError(node,'set',err); })
   .finally(()=>{
@@ -8736,7 +8764,7 @@ function markEntitySynced(node, id){
   else if(arr && typeof arr === 'object') entity = arr[id];
   if(entity === undefined || entity === null) return;
   if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
-  lastSyncedSnapshot[node][id] = JSON.stringify(entity);
+  lastSyncedSnapshot[node][id] = fbCanonJson(entity);
 }
 /* §DATA-ARCH-13/60 — TRU TON KHO AN TOAN da thiet bi cho MOT GIO HANG (co the nhieu san pham).
    Local da tru truoc (offline-first — nhan vien thay phan hoi ngay), nhung day la buoc XAC NHAN
@@ -8979,7 +9007,7 @@ function applyRemoteEntityLocally(node, id, remoteVal){
   } else { return; }
   if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
   if(remoteVal === null || remoteVal === undefined) delete lastSyncedSnapshot[node][id];
-  else lastSyncedSnapshot[node][id] = JSON.stringify(remoteVal);
+  else lastSyncedSnapshot[node][id] = fbCanonJson(remoteVal);
   if(typeof tryCacheStateLocally === 'function') tryCacheStateLocally('applyRemoteEntityLocally');
   if(typeof scopedRenderFor === 'function') scopedRenderFor(node);
 }
@@ -9013,7 +9041,7 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
   }
   markEntityPendingWrite(node, id);
   dbRoot.child(fb).child(id).transaction(remote=>{
-    const remoteJson = (remote === null || remote === undefined) ? null : JSON.stringify(remote);
+    const remoteJson = (remote === null || remote === undefined) ? null : fbCanonJson(remote);
     if(prevJson !== undefined && remoteJson !== prevJson) return undefined; // §FIX-DIFFFLUSH-STALE-DEVICE-OVERWRITE — remote da doi khac tu lan dong bo cuoi cua thiet bi nay, huy
     return desiredEntityOrNull === null ? null : sanitizeForFirebase(desiredEntityOrNull);
   }).then(result=>{
@@ -9029,7 +9057,7 @@ function occFlushEntity(node, fb, id, desiredEntityOrNull, prevJson){
     }
     if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
     if(desiredEntityOrNull === null) delete lastSyncedSnapshot[node][id];
-    else lastSyncedSnapshot[node][id] = JSON.stringify(desiredEntityOrNull);
+    else lastSyncedSnapshot[node][id] = fbCanonJson(desiredEntityOrNull);
   }).catch(err=>{ console.error('[diffFlush] occ error', node, id, err); handleWriteError(node,'transaction',err); })
   .finally(()=>{
     clearEntityPendingWrite(node, id);
@@ -9050,7 +9078,7 @@ function diffAndFlushEntities(){
     const nextMap = Object.assign({}, prevMap); // §FIX-DIFFFLUSH-CAS-RACE-2026 — bat dau tu ban CU (da xac nhan), KHONG phai rong/lac quan
     arr.forEach(entity=>{
       if(!entity || !entity.id) return;
-      const json = JSON.stringify(entity);
+      const json = fbCanonJson(entity);
       if(prevMap[entity.id] !== json){
         occFlushEntity(node, fb, entity.id, entity, prevMap[entity.id]);
         // KHONG gan nextMap[entity.id]=json o day — giu gia tri CU cho toi khi occFlushEntity() tu cap
@@ -9070,7 +9098,7 @@ function diffAndFlushEntities(){
     const prevMap = lastSyncedSnapshot[node] || {};
     const nextMap = Object.assign({}, prevMap);
     Object.keys(obj).forEach(id=>{
-      const json = JSON.stringify(obj[id]);
+      const json = fbCanonJson(obj[id]);
       if(prevMap[id] !== json){
         occFlushEntity(node, fb, id, obj[id], prevMap[id]);
       }
@@ -9113,7 +9141,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.31'; // §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS — chi tiet o CHANGELOG dau file
+const PICPOC_APP_VERSION = 'Picpoc v1.44.32'; // §FIX-CANON-JSON-2026 — so sanh dong bo theo dang chuan Firebase (het huy nham lenh ghi player 'paid_and_left'), nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT — chi tiet o CHANGELOG dau file
+// (ban truoc: 'Picpoc v1.44.31') §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS
 // (ban truoc: 'Picpoc v1.44.30') §FIX-TDZ-BOOTCRASH-2026 — sửa 1 lỗi TDZ có thể khiến app không load được trên 1 số thiết bị (phát hiện qua tự chạy boot app thật bằng jsdom, không chỉ kiểm tra cú pháp) — chi tiết ở CHANGELOG đầu file
 // (lich su cac ban truoc — giu nguyen lam changelog, khong xoa)
 // §PRESGRID — spec "PICPOC — REDESIGN TAB ĐANG Ở SÂN
@@ -15189,6 +15218,25 @@ function repairCompletedVisitStaleStatus(args){
   saveState();
   return { ok:true };
 }
+/* §FIX-CANON-JSON-2026 — sua WAITING_WITHOUT_ACTIVE_VISIT: player 'waiting' ma khong con Visit ACTIVE va
+   khong con bill mo co tien -> 'paid_and_left'. Tu kiem tra lai dieu kien ngay luc sua. */
+function repairWaitingWithoutActiveVisit(args){
+  const p = playerById(args.playerId);
+  if(!p) return { ok:false, reason:'Không tìm thấy Player để sửa (có thể đã bị xoá).' };
+  if(p.status !== 'waiting') return { ok:false, reason:'Player không còn ở trạng thái "waiting" — dữ liệu đã thay đổi, không cần sửa.' };
+  if(getActiveVisitForPlayer(p.id) !== null) return { ok:false, reason:'Player này đã có lượt chơi ACTIVE (vừa check-in lại) — không cần sửa.' };
+  const ob = getOpenBillForPlayer(p.id);
+  if(ob && billTotal(ob) > 0) return { ok:false, reason:'Player còn bill mở chưa thu — thu tiền qua Bill trước, không tự sửa.' };
+  const before = { status: p.status, activeVisitId: p.activeVisitId || null };
+  p.status = 'paid_and_left';
+  if(!p.paidAndLeftAt || (p.lastCheckInAt && p.paidAndLeftAt < p.lastCheckInAt)) p.paidAndLeftAt = Date.now();
+  if(p.activeVisitId) p.activeVisitId = null;
+  logDataIntegrityRepair('WAITING_WITHOUT_ACTIVE_VISIT', 'player', p.id, before, { status: p.status, activeVisitId: p.activeVisitId || null },
+    p.name + ' đang "waiting" nhưng không còn lượt chơi ACTIVE và không còn nợ — đồng bộ lại trạng thái "đã rời sân", không đổi tiền/bill/lịch sử trận.');
+  markEntityDirty('players', p.id);
+  saveState();
+  return { ok:true };
+}
 /* §FIX-ORPHAN-ACTIVEVISITID — xem giai thich day du tai check ORPHAN_ACTIVE_VISIT_ID. Chi go field
    tham chieu p.activeVisitId ve null (khong dung tien/bill/lich su tran dau); neu sau khi go, player
    van con ket o status hoat dong ma khong con Visit ACTIVE nao khac, dong bo luon status ve
@@ -15319,7 +15367,7 @@ function repairDuplicateEmptyOpenBill(args){
   saveState();
   return { ok:true };
 }
-const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef, repairOrphanedCreditLot, repairDuplicateEmptyOpenBill };
+const DATA_INTEGRITY_REPAIR_FNS = { repairPaymentAllocation, repairVoidedPaymentBillStatus, repairOrphanVisitPlayerId, repairStockDoubleIncrement, repairOrphanedTournamentParticipant, repairOrphanedFinanceTransaction, repairOrphanVisitBillRef, repairFullyCollectedButOpenBill, repairSocialPassReconcileMismatch, repairActiveVisitButEndedStatus, repairTvAnnouncementStuckPlaying, repairPurgeLegacyOrphanVisit, repairCollectedExceedsGeneratedLegacyItem, repairSocialPassUsedButTicketCharged, repairCompletedVisitStaleStatus, repairGhostCourtAllPlayersEnded, repairOrphanActiveVisitId, repairStaleCompletedActiveVisitRef, repairOrphanedCreditLot, repairDuplicateEmptyOpenBill, repairWaitingWithoutActiveVisit };
 /* Chay 1 repair rieng le cho 1 issue (nut "SỬA AN TOÀN" tren tung dong) — chi chay neu dung dieu kien
    repairable+DETERMINISTIC (lop chan thu 2, phong truong hop UI render sai). */
 /* §FIX-GHOSTCOURT-ALLENDED — xem giai thich day du tai check GHOST_COURT_ALL_PLAYERS_ENDED. Dung LAI
@@ -34103,7 +34151,21 @@ function runDataIntegrityCheck(){
     // Smart Auto (truoc khi co §MATCHFIX) co the chon nham nguoi da nghi (status con 'waiting' nhung
     // Visit da COMPLETED). isPlayerMatchmakingEligible()/validateRequestedFourCandidates() da tu loai
     // truong hop nay khoi ket qua chon — check nay chi de Staff BIET co du lieu can xem lai.
-    if(p.status === 'waiting' && !v) addIssue('Player','ERROR', p.name + ' đang "waiting" nhưng KHÔNG có Active Visit (WAITING_WITHOUT_ACTIVE_VISIT) — sẽ tự bị Smart Auto loại trừ, nhưng dữ liệu nên được Staff kiểm tra lại.');
+    if(p.status === 'waiting' && !v){
+      // §FIX-CANON-JSON-2026 — nguyen nhan chinh cua loi nay (thanh toan dong Visit nhung lenh ghi player
+      // 'paid_and_left' bi CAS huy nham) da vá o tang dong bo; them nut SUA AN TOAN de don cac ca con sot.
+      // Chi an toan khi KHONG con bill mo co tien (con no thi de nguyen de Staff thay va thu tien).
+      const ob = getOpenBillForPlayer(p.id);
+      const owes = !!(ob && billTotal(ob) > 0);
+      addIssue('Player','ERROR', p.name + ' đang "waiting" nhưng KHÔNG có Active Visit (WAITING_WITHOUT_ACTIVE_VISIT) — sẽ tự bị Smart Auto loại trừ, nhưng dữ liệu nên được Staff kiểm tra lại.', {
+        code:'WAITING_WITHOUT_ACTIVE_VISIT', entityType:'player', entityId:p.id, entityLabel:p.name,
+        impact: owes
+          ? 'Player này còn bill mở ' + fmtVnd(billTotal(ob)) + ' chưa thu — KHÔNG tự sửa. Staff thu tiền qua Bill (phiên sẽ tự đóng) hoặc dùng "ĐÓNG PHIÊN" ở tab ĐANG Ở SÂN.'
+          : 'Lượt chơi đã đóng nhưng trạng thái player vẫn kẹt "waiting" (lệnh ghi trạng thái từng bị huỷ nhầm khi đồng bộ) — sửa về "đã rời sân", không đổi tiền/bill/lịch sử trận.',
+        repairable: !owes, repairConfidence: owes ? 'AMBIGUOUS' : 'DETERMINISTIC',
+        repairFn: owes ? undefined : 'repairWaitingWithoutActiveVisit', repairArgs: owes ? undefined : { playerId:p.id }
+      });
+    }
     if(p.status === 'ready' && !v) addIssue('Player','ERROR', p.name + ' đang "ready" (đã ghép nhóm chờ vào sân) nhưng KHÔNG có Active Visit (READY_WITHOUT_ACTIVE_VISIT).');
     if(p.status === 'playing' && !v) addIssue('Player','ERROR', p.name + ' đang "playing" nhưng KHÔNG có Active Visit (PLAYING_WITHOUT_ACTIVE_VISIT).');
     // B) Active Visit van con nhung status da la 1 trong cac trang thai "ket thuc that su"
@@ -39919,7 +39981,7 @@ function attachEntityListener(node){
       }
     }
     lastSyncedSnapshot[node] = {};
-    Object.keys(val).forEach(id=>{ lastSyncedSnapshot[node][id] = JSON.stringify(val[id]); });
+    Object.keys(val).forEach(id=>{ lastSyncedSnapshot[node][id] = fbCanonJson(val[id]); });
     __hydratedNodes.add(node); // §AUDIT-HYDRATE-2026 — tu day node nay moi duoc seed/diff-flush
     try{ normalizeProducts(); }catch(e){ /* normalize phong thu, khong chan render neu loi nho */ }
     /* §HOTFIX-QUOTA — bat loi setItem rieng, PHAI luon reset isRemoteUpdate ve false du co loi hay
