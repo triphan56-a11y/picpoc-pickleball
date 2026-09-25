@@ -2,6 +2,25 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.35 (2026-09-25) — §AUDIT-DEEP-2026-09-25. Audit chuyen sau lan 2: chay app offline (jsdom + Firebase gia AP
+  DUNG Rules v2 theo tung role, du lieu backup 23/9), bam qua 6 tab + 28 tab con, chay Data Health, chay luong tien
+  check-in -> them nuoc -> thanh toan voi ca STAFF va ADMIN. Sua:
+  (1) §FIX-CURRICULUM-ADMINONLY-2026 — may STAFF tu backfill giao trinh Academy luc mo app -> bi Rules chan 73 lenh
+      ghi, badge "Lỗi đồng bộ" do thuong truc. Gio chi may dang nhap ADMIN moi chay seed/migrate giao trinh.
+  (2) §FIX-APPENDONLY-LOG-2026 — local chi giu 300 dong nhat ky, dong cu bi diff XOA tren /auditLogs (mat dan lich
+      su; nay Rules chan -> loi moi lan ghi log). overrideLog gio chi day dong MOI, khong xoa/sua. Kem: vong xoa
+      dung Set thay vi arr.some() (O(n^2)).
+  (3) §FIX-PRICING-ARRAY-2026 — Firebase tra bang gia Academy dang mang [null,{..}] -> man Academy > Cai dat crash
+      ("reading 'pricePerStudent'"). normalizeAcademyPricingTable().
+  (4) §FIX-UTC-DATE-2026 — 2 cho Academy dung toISOString().slice(0,10) (ngay UTC) -> localDateKey().
+  (5) §FIX-EMPTYBILL-FALSEPOSITIVE-2026 — Data Health bao ERROR BILL_MALFORMED_ITEMS cho bill 0đ khong co khoan
+      (Firebase khong luu mang rong). Chi bao khi co payment that ma mat items.
+  (6) §FIX-AUTHLINK-FALSEALARM-2026 — Data Health bao "KHÔNG còn ADMIN nào liên kết Auth" du Admin dang nhap binh
+      thuong: gio tinh ca lien ket qua /authProfiles.userId.
+  (7) §FIX-LOGOUT-CLEARCACHE-2026 — dang xuat Production xoa cache localStorage (ten/SDT khach, bill...).
+  (8) §AUDIT-XSS-2026 dot 2 — 14 cho ghep chuoi con chen ten nhom/ghi chu/phu huynh/HLV/hoc vien/khach booking/
+      SDT/ly do xung dot vao HTML chua escape.
+
   v1.44.34 (2026-09-25) — §FIX-AUTH-RETRY-2026. Sau khi deploy Rules that, Admin gap man "KHÔNG THỂ XÁC THỰC"
   khi mo app. Man nay hien khi .once('/authProfiles/{uid}') bi loi HOAC khi bat ky exception nao xay ra trong
   luc vao app (cung 1 .catch). Lan doc dau ngay sau onAuthStateChanged co the bi PERMISSION_DENIED neu ket noi
@@ -8564,6 +8583,7 @@ const ACADEMY_ENTITY_NODES = ['academyLeads','academyStudents','academyGuardians
 const ARRAY_ENTITY_NODES = ['players','playerVisits','history','bills','payments','products','inventoryLog','waterLoss','bookings','bookingSeries','overrideLog','dailyClosures','users','pprHistory','tournamentEntryParticipants','socialRequestedFours','socialGroups','financeTransactions','socialPassPackages','socialPassUsages','tournamentSeries','creditLots','creditTransactions','tvAnnouncements'].concat(ACADEMY_ENTITY_NODES); // §TVANNOUNCE2026 — tvAnnouncements dung LAI dung co che entity-sync nay (per-id set), khong tao pipeline rieng // §CREDIT2026 — creditLots/creditTransactions dung LAI dung co che entity-sync nay (per-id set/transaction), khong tao pipeline rieng // §RESTRUCTURE2026-WS3 muc 8-9/93 — tournamentSeries dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline rieng // §SOCIALPASS2026 — dung LAI dung co che entity-sync co san (per-id set/transaction), khong tao pipeline Firebase rieng // §FINANCE1 — financeTransactions dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite), giong het pattern tournamentEntryParticipants/socialRequestedFours — khong tao pipeline sync rieng // §AI — pprHistory them vao entity sync giong cac node khac; §CC — Academy entities dung chung co che nay; §TOURN-ENTRY-9 — Ve tham gia giai dung lai dung co che entity-sync nay (khong tao pipeline rieng); §SOCIAL4-35 — socialRequestedFours/socialGroups dung LAI dung co che entity-sync nay (per-id set/transaction, khong full-state overwrite) de Staff B thay Staff A tao Requested Four/Group gan realtime — LUU Y: day la sync TOT HON readyGroups hien tai (readyGroups KHONG nam trong ARRAY_ENTITY_NODES, chi luu local/localStorage — han che co san cua kien truc, khong phai loi moi)
 /* Cac collection da la OBJECT map-by-id san trong state (courts keyed by courtId, tournaments
    keyed by catKey) — khop thang voi schema entity, khong can convert. */
+const APPEND_ONLY_ENTITY_NODES = ['overrideLog']; // §FIX-APPENDONLY-LOG-2026 — /auditLogs: Rules chi cho TAO MOI
 const OBJECT_ENTITY_NODES = ['courts','tournaments','authProfiles','displayAudioLeader']; // §AUTH-33/38 — authProfiles la object map-by-authUid, dung LAI co che entity-sync co san (khong tao pipeline rieng); §TVANNOUNCE2026/§65-67 — displayAudioLeader la 1 O DUY NHAT (khong phai list), dung LAI dung co che nay
 
 /* Firebase RTDB tu choi gia tri `undefined` va khong xu ly tot Date/NaN — chuan hoa truoc khi ghi. */
@@ -9103,8 +9123,13 @@ function diffAndFlushEntities(){
     const fb = fbNodeNameFor(node);
     const prevMap = lastSyncedSnapshot[node] || {};
     const nextMap = Object.assign({}, prevMap); // §FIX-DIFFFLUSH-CAS-RACE-2026 — bat dau tu ban CU (da xac nhan), KHONG phai rong/lac quan
+    // §FIX-APPENDONLY-LOG-2026 — nhat ky (overrideLog -> /auditLogs) la CHI THEM MOI: local chi giu 300 dong gan
+    // nhat (slice(0,300)) nen dong cu bi day ra -> truoc day diff XOA luon tren server (mat dan lich su audit), nay
+    // Rules chan xoa/sua -> loi dong bo moi lan co log moi. Chi day dong MOI, khong bao gio xoa/sua dong da co.
+    const appendOnly = APPEND_ONLY_ENTITY_NODES.includes(node);
     arr.forEach(entity=>{
       if(!entity || !entity.id) return;
+      if(appendOnly && prevMap[entity.id] !== undefined) return;
       const json = fbCanonJson(entity);
       if(prevMap[entity.id] !== json){
         occFlushEntity(node, fb, entity.id, entity, prevMap[entity.id]);
@@ -9112,9 +9137,12 @@ function diffAndFlushEntities(){
         // nhat CHINH XAC sau khi co ket qua that tu server (xem giai thich §FIX-DIFFFLUSH-CAS-RACE-2026)
       }
     });
-    Object.keys(prevMap).forEach(id=>{
-      if(!arr.some(e=>e && e.id===id)) occFlushEntity(node, fb, id, null, prevMap[id]);
-    });
+    if(!appendOnly){
+      const localIds = new Set(arr.map(e=>e && e.id)); // Set thay vi arr.some() long trong forEach (O(n^2) voi node lon)
+      Object.keys(prevMap).forEach(id=>{
+        if(!localIds.has(id)) occFlushEntity(node, fb, id, null, prevMap[id]);
+      });
+    }
     lastSyncedSnapshot[node] = nextMap;
   });
   OBJECT_ENTITY_NODES.forEach(node=>{
@@ -9168,7 +9196,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.34'; // §FIX-AUTH-RETRY-2026 — doc authProfiles tu thu lai + lam moi token, tach loi vao app, man chan co THU LAI + ma loi
+const PICPOC_APP_VERSION = 'Picpoc v1.44.35'; // §AUDIT-DEEP-2026-09-25 — xem CHANGELOG dau file
+// (ban truoc: 'Picpoc v1.44.34') // §FIX-AUTH-RETRY-2026 — doc authProfiles tu thu lai + lam moi token, tach loi vao app, man chan co THU LAI + ma loi
 // (ban truoc: 'Picpoc v1.44.33') // §TOURN-CLUB-LINK-2026 — noi cap dau/ve giai voi ho so Nguoi choi Club
 // (ban truoc: 'Picpoc v1.44.32') // §FIX-CANON-JSON-2026 — so sanh dong bo theo dang chuan Firebase (het huy nham lenh ghi player 'paid_and_left'), nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT — chi tiet o CHANGELOG dau file
 // (ban truoc: 'Picpoc v1.44.31') §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS
@@ -11046,6 +11075,19 @@ const ACADEMY_DEFAULT_SETTINGS = {
     sessionConfirmDelayHours: 24, reEnrollmentSessionsRemaining: 2
   }
 };
+/* §FIX-PRICING-ARRAY-2026 — Firebase tu doi object khoa so {1:{..},2:{..}} thanh MANG [null,{..},{..}] khi doc ve.
+   Object.assign(defaults, mang) sinh them khoa "0" = null -> man Academy > Cai dat crash ("reading
+   'pricePerStudent'" cua null — tai hien offline). Chi giu cac bac hop le (so >= 1, gia tri la object). */
+function normalizeAcademyPricingTable(defaults, raw){
+  const out = Object.assign({}, defaults);
+  if(raw && typeof raw === 'object'){
+    Object.keys(raw).forEach(k=>{
+      const n = Number(k), v = raw[k];
+      if(Number.isInteger(n) && n >= 1 && v && typeof v === 'object') out[n] = Object.assign({}, defaults[n] || {}, v);
+    });
+  }
+  return out;
+}
 function getAcademySettings(){
   const s = state && state.settings && state.settings.academy;
   if(!s || typeof s !== 'object') return ACADEMY_DEFAULT_SETTINGS;
@@ -11053,10 +11095,10 @@ function getAcademySettings(){
     pricingVersion: (typeof s.pricingVersion === 'number') ? s.pricingVersion : ACADEMY_DEFAULT_SETTINGS.pricingVersion,
     coachPayVersion: (typeof s.coachPayVersion === 'number') ? s.coachPayVersion : ACADEMY_DEFAULT_SETTINGS.coachPayVersion,
     policyVersion: (typeof s.policyVersion === 'number') ? s.policyVersion : ACADEMY_DEFAULT_SETTINGS.policyVersion,
-    adultPricing: Object.assign({}, ACADEMY_DEFAULT_SETTINGS.adultPricing, s.adultPricing || {}),
+    adultPricing: normalizeAcademyPricingTable(ACADEMY_DEFAULT_SETTINGS.adultPricing, s.adultPricing),
     adultTotalSessions: (typeof s.adultTotalSessions === 'number' && s.adultTotalSessions > 0) ? s.adultTotalSessions : ACADEMY_DEFAULT_SETTINGS.adultTotalSessions,
     adultMaxClassSize: (typeof s.adultMaxClassSize === 'number' && s.adultMaxClassSize > 0) ? s.adultMaxClassSize : ACADEMY_DEFAULT_SETTINGS.adultMaxClassSize,
-    kidsPricing: Object.assign({}, ACADEMY_DEFAULT_SETTINGS.kidsPricing, s.kidsPricing || {}),
+    kidsPricing: normalizeAcademyPricingTable(ACADEMY_DEFAULT_SETTINGS.kidsPricing, s.kidsPricing),
     kidsTotalSessions: (typeof s.kidsTotalSessions === 'number' && s.kidsTotalSessions > 0) ? s.kidsTotalSessions : ACADEMY_DEFAULT_SETTINGS.kidsTotalSessions,
     kidsMaxClassSize: (typeof s.kidsMaxClassSize === 'number' && s.kidsMaxClassSize > 0) ? s.kidsMaxClassSize : ACADEMY_DEFAULT_SETTINGS.kidsMaxClassSize,
     privateValidityDays: (typeof s.privateValidityDays === 'number' && s.privateValidityDays > 0) ? s.privateValidityDays : ACADEMY_DEFAULT_SETTINGS.privateValidityDays,
@@ -11739,6 +11781,15 @@ async function logoutCurrentUser(){
   if(productionOn) __firebaseAuthUser = null; // §11 — invariant: firebaseAuth.currentUser==null => Picpoc currentUser phai null
   localUi.currentUserId = null;
   saveLocalUiState();
+  // §FIX-LOGOUT-CLEARCACHE-2026 — xoa ban cache toan bo du lieu (ten/SDT khach, bill, thanh toan...) khoi
+  // localStorage khi dang xuat Production: truoc day van nam lai tren may dung chung, ai mo DevTools cung doc
+  // duoc du da dang xuat. Lan dang nhap sau tai lai tu Firebase (du lieu goc).
+  if(productionOn){
+    try{
+      if(typeof __localCacheWriteTimer !== 'undefined' && __localCacheWriteTimer){ clearTimeout(__localCacheWriteTimer); __localCacheWriteTimer = null; }
+      localStorage.removeItem(STORAGE_KEY);
+    }catch(e){ /* localStorage bi chan — bo qua */ }
+  }
   if(!productionOn) saveState(); // Legacy mode: giu nguyen hanh vi cu (saveState() truoc khi renderAll())
 
   // ===== BƯỚC C — Render UI. BỌC RIÊNG (§1/§16): tu day logout DA THANH CONG that su (Buoc A/B da
@@ -12332,6 +12383,14 @@ function normalizeAcademy(){
   // lieu that tu Firebase (xem __hydratedNodes) — neu chay som, moi thiet bi moi se tao them 1 bo Program/Level/
   // Session id ngau nhien va day len server (nguyen nhan 114 Program trung tren production).
   if(!areNodesHydrated(['academyPrograms','academyCurriculumLevels','academyCurriculumSessions'])) return;
+  // §FIX-CURRICULUM-ADMINONLY-2026 — Rules chi cho ADMIN ghi giao trinh. Truoc day MOI thiet bi (ke ca STAFF) tu
+  // backfill/chuan hoa noi dung giao trinh luc mo app -> may STAFF bi chan hang chuc lenh ghi, badge "Lỗi đồng bộ"
+  // do thuong truc (tai hien offline). Chi thiet bi dang dang nhap ADMIN moi chay 4 buoc duoi (khi co Firebase).
+  if(SYNC_ENABLED && dbRoot){
+    let u = null;
+    try{ u = (typeof getCurrentUser === 'function') ? getCurrentUser() : null; }catch(e){ u = null; }
+    if(!u || u.role !== 'ADMIN') return;
+  }
   seedAcademyCurriculumIfEmpty(); // §179 — tao Program/Level/Session mac dinh neu chua co (idempotent, khong ghi de du lieu da chinh sua)
   migrateLegacyCurriculumLevelNamesIfNeeded(); // §212 — chuan hoa field version/status/assessmentSkills + ten Level cu (idempotent)
   fillCurriculumSessionContentIfNeeded(); // §215/PHẦN R — backfill noi dung giao trinh THAT cho install cu, chi chay 1 lan (idempotent qua curriculumSeedVersion)
@@ -17343,7 +17402,7 @@ function readyGroupSourceBadgeHtml(g){
   const allIds = [...g.team1, ...g.team2];
   const groups = allIds.map(id=>getPlayerSocialGroup(id));
   if(groups.every(x=>x) && new Set(groups.map(x=>x.id)).size === 1){
-    return ' <span class="pill-status pill-waiting" style="font-size:.68rem; padding:1px 8px;">NHÓM ' + groups[0].name.toUpperCase() + '</span>';
+    return ' <span class="pill-status pill-waiting" style="font-size:.68rem; padding:1px 8px;">NHÓM ' + escapeHtml(groups[0].name.toUpperCase()) + '</span>';
   }
   return '';
 }
@@ -17351,7 +17410,7 @@ function readyGroupSourceBadgeHtml(g){
 function playerGroupTagHtml(playerId){
   const g = getPlayerSocialGroup(playerId);
   if(!g) return '';
-  return '<div class="muted" style="font-size:.68rem; margin-top:1px; display:flex; align-items:center; gap:3px;"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12.5 3H5a2 2 0 0 0-2 2v7.5a2 2 0 0 0 .59 1.41l9.5 9.5a2 2 0 0 0 2.82 0l7.5-7.5a2 2 0 0 0 0-2.82l-9.5-9.5A2 2 0 0 0 12.5 3Z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>' + g.name + '</div>';
+  return '<div class="muted" style="font-size:.68rem; margin-top:1px; display:flex; align-items:center; gap:3px;"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12.5 3H5a2 2 0 0 0-2 2v7.5a2 2 0 0 0 .59 1.41l9.5 9.5a2 2 0 0 0 2.82 0l7.5-7.5a2 2 0 0 0 0-2.82l-9.5-9.5A2 2 0 0 0 12.5 3Z"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/></svg>' + escapeHtml(g.name) + '</div>';
 }
 /* §RF8 — badge nho cho A/B/C (nhung nguoi da 'waiting' nhung dang duoc 1 Requested Four giu cho) trong
    bang Hang cho: "ĐÃ GIỮ CHO TRẬN SAU" (dang PENDING_PLAYERS — con 1 nguoi khac dang PLAYING) hoac
@@ -17423,7 +17482,7 @@ function renderRequestedFoursWaitingList(){
         <div class="names">4 NGƯỜI MUỐN ĐÁNH CÙNG ${statusTag}${teamNote}</div>
         <div style="font-size:.82rem; line-height:1.7; margin-top:2px;">${memberLines}</div>
         ${footerNote}
-        ${r.note ? '<div class="muted" style="font-size:.76rem;">Ghi chú: ' + r.note + '</div>' : ''}
+        ${r.note ? '<div class="muted" style="font-size:.76rem;">Ghi chú: ' + escapeHtml(r.note) + '</div>' : ''}
       </div>
       ${actionsHtml}
     </div>`;
@@ -22359,7 +22418,7 @@ function renderAcademyCurriculumBox(){
           </tr>`).join('')}
       </tbody>
     </table>
-    <p class="muted" style="font-size:.8rem;">${sessions.length} BUỔI${curLevel?(' · '+curLevel.name):''}</p>
+    <p class="muted" style="font-size:.8rem;">${sessions.length} BUỔI${curLevel?(' · '+escapeHtml(curLevel.name)):''}</p>
     ${canEdit && !inUse ? '<button class="big" style="margin-top:10px;" onclick="saveAcademyCurriculum(\''+program.id+'\')">💾 LƯU TIÊU ĐỀ</button>' : ''}
   `;
 }
@@ -22585,7 +22644,7 @@ function renderAcademyStudentDetailBody(studentId){
     body.innerHTML = `
       <div class="level-map-row"><label>Loại</label><span>${s.target==='ADULT'?'Người lớn':'Trẻ em'}</span></div>
       <div class="level-map-row"><label>Ngày sinh</label><span>${s.dob||'—'}</span></div>
-      ${guardian ? '<div class="level-map-row"><label>Phụ huynh</label><span>'+guardian.name+' — '+guardian.phone+'</span></div>' : ''}
+      ${guardian ? '<div class="level-map-row"><label>Phụ huynh</label><span>'+escapeHtml(guardian.name)+' — '+escapeHtml(guardian.phone)+'</span></div>' : ''}
       <h3 style="margin:14px 0 6px;">LỊCH SỬ LEVEL (theo Enrollment)</h3>
       ${levelHistory.length ? '<table class="rule-config-table" style="width:100%;"><thead><tr><th>Lớp</th><th>Level</th><th>Version</th><th>Trạng thái</th><th>Final</th></tr></thead><tbody>' +
         levelHistory.map(h=>'<tr><td>'+(h.classCode||'—')+'</td><td>'+h.levelName+'</td><td>'+(h.curriculumVersion||'—')+'</td><td>'+h.status+'</td><td>'+(h.finalCompleted?(h.status==='ACTIVE'||h.status==='PAUSED'?'Completed — ':'')+'Final: '+ACADEMY_FINAL_RECOMMENDATION_LABELS[h.finalRecommendation]:'—')+'</td></tr>').join('') +
@@ -22954,7 +23013,7 @@ function openScheduleTrialModal(leadId){
     <div class="level-map-row"><label>Giờ bắt đầu</label><input type="time" id="trialStart" value="18:00"></div>
     <div class="level-map-row"><label>Giờ kết thúc</label><input type="time" id="trialEnd" value="19:00"></div>
     <div class="level-map-row"><label>HLV phụ trách</label>
-      <select id="trialCoach"><option value="">— Chưa chọn —</option>${coaches.map(c=>'<option value="'+c.id+'">'+c.name+'</option>').join('')}</select>
+      <select id="trialCoach"><option value="">— Chưa chọn —</option>${coaches.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.name)+'</option>').join('')}</select>
     </div>
     <div id="trialScheduleError" style="color:#dc2626; margin-top:6px;"></div>
     <div style="display:flex; gap:10px; margin-top:14px;">
@@ -23557,7 +23616,7 @@ function getClassSizeMetrics(classId){
   const cls = academyClassById(classId);
   if(!cls) return null;
   const activeEnrollmentCount = getClassActiveEnrollmentCountNow(classId);
-  const todaySessionDate = new Date().toISOString().slice(0,10);
+  const todaySessionDate = localDateKey(new Date()); // §FIX-UTC-DATE-2026 — toISOString() la ngay UTC, lech 1 ngay tu 0h-7h sang gio VN
   const presentCount = (state.academyAttendance||[]).filter(a=>{
     const sess = (state.academySessions||[]).find(s=>s.id===a.sessionId);
     return sess && sess.classId === classId && (sess.scheduledStart||'').slice(0,10) === todaySessionDate && a.status === 'PRESENT';
@@ -24104,7 +24163,7 @@ function getCoachCompensationsInRange(coachId, startDate, endDate){
   return (state.academyCoachCompensations||[]).filter(c=>{
     if(c.coachId !== coachId) return false;
     if(c.status === 'REVERSED') return false;
-    const d = new Date(c.createdAt).toISOString().slice(0,10);
+    const d = localDateKey(new Date(c.createdAt)); // §FIX-UTC-DATE-2026
     return d >= startDate && d <= endDate;
   });
 }
@@ -25120,7 +25179,7 @@ function submitRescheduleSession(sessionId){
   const res = rescheduleSession(sessionId, newStart, newEnd, court||null);
   if(!res.ok){
     // §PHẦN 39/52 — hien chi tiet xung dot, KHONG dong modal, KHONG mat du lieu vua nhap
-    document.getElementById('resConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+res.reason+'</p>';
+    document.getElementById('resConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+escapeHtml(res.reason)+'</p>';
     return;
   }
   closeModal();
@@ -25164,12 +25223,12 @@ function submitChangeSessionCoach(sessionId){
   // §PHẦN 38 — hien chi tiet xung dot cu the (khong chi toast chung chung) truoc khi goi service
   const chk = checkCoachConflict(newCoachId, sess.scheduledStart, sess.scheduledEnd, sessionId);
   if(chk.conflict){
-    document.getElementById('coachConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+chk.reason+'</p>';
+    document.getElementById('coachConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+escapeHtml(chk.reason)+'</p>';
     return;
   }
   const res = changeSessionCoach(sessionId, newCoachId, 'Đổi từ Session Quick Drawer');
   if(!res.ok){
-    document.getElementById('coachConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+res.reason+'</p>';
+    document.getElementById('coachConflictBox').innerHTML = '<p style="color:#dc2626; font-weight:600; margin:0;">⚠ '+escapeHtml(res.reason)+'</p>';
     return;
   }
   closeModal();
@@ -26976,7 +27035,7 @@ function openDecidePprProposalModal(proposalId){
     <h2>DUYỆT ĐỀ XUẤT PPR — ${st?st.name:'?'}</h2>
     <p class="muted">${ACADEMY_FINAL_RECOMMENDATION_LABELS[p.suggestedRecommendation]}${p.coachNote?(' — Ghi chú Coach: "'+p.coachNote+'"'):''}</p>
     ${(!st || !st.linkedPlayerId) ? `<div class="level-map-row"><label>Liên kết Player (Club)</label>
-      <select id="pprPropLinkPlayer"><option value="">— Chưa liên kết —</option>${players.map(pl=>'<option value="'+pl.id+'">'+pl.name+'</option>').join('')}</select>
+      <select id="pprPropLinkPlayer"><option value="">— Chưa liên kết —</option>${players.map(pl=>'<option value="'+pl.id+'">'+escapeHtml(pl.name)+'</option>').join('')}</select>
     </div>` : `<p class="muted">Đã liên kết Player: ${playerById(st.linkedPlayerId)?playerById(st.linkedPlayerId).name:'?'}</p>`}
     <div class="level-map-row"><label>Delta PPR áp dụng</label><input type="number" step="0.01" id="pprPropDelta" value="${p.suggestedDelta.toFixed(2)}"></div>
     <div class="level-map-row"><label>Ghi chú quyết định</label><textarea id="pprPropDecisionNote" rows="2"></textarea></div>
@@ -28131,13 +28190,13 @@ function openCreatePrivateModal(){
   box.innerHTML = `
     <h2>TẠO GÓI PRIVATE 1:1</h2>
     <div class="level-map-row"><label>Học viên</label>
-      <select id="privNewStudent">${students.map(s=>'<option value="'+s.id+'">'+s.name+'</option>').join('')}</select>
+      <select id="privNewStudent">${students.map(s=>'<option value="'+s.id+'">'+escapeHtml(s.name)+'</option>').join('')}</select>
     </div>
     <div class="level-map-row"><label>Loại</label>
       <select id="privNewTarget"><option value="ADULT">Người lớn</option><option value="KIDS">Trẻ em</option></select>
     </div>
     <div class="level-map-row"><label>Huấn luyện viên</label>
-      <select id="privNewCoach">${coaches.map(c=>'<option value="'+c.id+'">'+c.name+'</option>').join('')}</select>
+      <select id="privNewCoach">${coaches.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.name)+'</option>').join('')}</select>
     </div>
     <p class="muted" style="margin-top:8px;">Gói gồm 10 buổi, học phí và công HLV áp dụng theo bảng giá tier 1 người hiện hành. Hạn sử dụng 30 ngày sẽ tính từ buổi học ĐẦU TIÊN được đặt (không phải từ ngày tạo gói).</p>
     <div style="display:flex; gap:10px; margin-top:14px;">
@@ -31595,7 +31654,7 @@ function renderSalesHistory(){
   const entries = [];
   state.sales.filter(s=>inRange(s.timestamp) && !s.voided).forEach(s=>{
     entries.push({ ts:s.timestamp, type:'sale', html:
-      s.items.map(it=>it.name+' ×'+it.qty).join(', ') + ' — <b>' + fmtVnd(s.total) + '</b>' });
+      escapeHtml(s.items.map(it=>it.name+' ×'+it.qty).join(', ')) + ' — <b>' + fmtVnd(s.total) + '</b>' });
   });
   state.inventoryLog.filter(l=>inRange(l.timestamp)).forEach(l=>{
     if(l.type==='import' || l.type==='opening_stock'){
@@ -32500,7 +32559,7 @@ function openMonthlyConflictModal(){
         else if(e.resolution === 'court') resolutionLabel = '✓ Đã đổi sân: Sân ' + e.overrideCourt;
         return `<div class="presence-card ${e.resolution ? '' : 'urgent'}" style="margin-bottom:8px; padding:10px 12px;">
           <div><b>${fmtDateLabel(e.date)} · ${fmtWeekdayShortFromDate(e.date)}</b> — Sân ${pendingSeries.court} ${fmtHourLabel(pendingSeries.start)}–${fmtHourLabel(pendingSeries.end)}</div>
-          <div class="muted" style="font-size:.82rem;">Trùng với: ${conflictBk ? conflictBk.customerName + ' (' + fmtHourLabel(conflictBk.startTime) + '–' + fmtHourLabel(conflictBk.endTime) + ')' : '(đã xử lý)'}</div>
+          <div class="muted" style="font-size:.82rem;">Trùng với: ${conflictBk ? escapeHtml(conflictBk.customerName) + ' (' + fmtHourLabel(conflictBk.startTime) + '–' + fmtHourLabel(conflictBk.endTime) + ')' : '(đã xử lý)'}</div>
           ${resolutionLabel ? `<div style="color:var(--success); font-weight:700; margin-top:4px;">${resolutionLabel}</div>` : ''}
           <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap;">
             <button class="small secondary" onclick="openResolveConflictChangeCourt(${i})">ĐỔI SÂN</button>
@@ -32757,7 +32816,7 @@ function openBookingDetailModal(bookingId){
   }
   content.innerHTML = `
     <h3>Chi tiết booking</h3>
-    <div class="bill-line"><span>Khách</span><span>${escapeHtml(b.customerName)}${b.phone?' · '+b.phone:''}</span></div>
+    <div class="bill-line"><span>Khách</span><span>${escapeHtml(b.customerName)}${b.phone?' · '+escapeHtml(b.phone):''}</span></div>
     <div class="bill-line"><span>Ngày</span><span>${fmtDateLabel(b.date)} · ${fmtWeekdayShortFromDate(b.date)}</span></div>
     <div class="bill-line"><span>Sân</span><span>Sân ${b.courtId}</span></div>
     <div class="bill-line"><span>Giờ</span><span>${fmtHourLabel(b.startTime)}–${fmtHourLabel(b.endTime)}</span></div>
@@ -33646,6 +33705,13 @@ function runDataIntegrityCheck(){
      phong thu (Array.isArray) nen KHONG crash nua, nhung Data Health van chua CHU DONG bao cao neu tinh
      huong nay tai dien o 1 duong khac chua vá — them check don gian de phat hien SOM. */
   state.bills.forEach(b=>{
+    // §FIX-EMPTYBILL-FALSEPOSITIVE-2026 — Firebase KHONG luu mang rong, nen bill 0đ khong co khoan nao (vd dong phien
+    // 0đ) doc ve se MAT han field items (undefined) — KHONG phai loi. Chi bao khi items co gia tri nhung khong phai
+    // mang, HOAC items mat ma bill lai co payment thu tien that (>0, chua huy) — do moi la dau hieu mat khoan that.
+    const itemsMissing = b.items === undefined || b.items === null;
+    const hasRealPayment = itemsMissing && (state.payments||[]).some(p=> !p.voided && (p.amount||0) > 0 &&
+      (((p.billIds||[]).includes(b.id)) || (p.allocations||[]).some(a=>a && a.billId===b.id && !a.voided && (a.amount||0) > 0)));
+    if(itemsMissing && !hasRealPayment) return;
     if(!Array.isArray(b.items)){
       addIssue('Bill','ERROR', 'Bill "' + b.id + '" của "' + (b.playerName||playerName(b.playerId)) + '" thiếu/hỏng field "items" (không phải danh sách hợp lệ) — dấu hiệu dữ liệu bị lỗi đồng bộ (BILL_MALFORMED_ITEMS).', {
         code:'BILL_MALFORMED_ITEMS', entityType:'bill', entityId:b.id, entityLabel:b.id,
@@ -35004,13 +35070,18 @@ function runDataIntegrityCheck(){
     // (d) Production Auth dang BAT nhung khong con ADMIN active nao co authUid — tinh trang nay se khoa
     // toan bo he thong (khong ai dang nhap duoc), phai bao ERROR khan cap thay vi de phat hien khi da qua muon.
     if(isProductionAuthMode()){
-      const linkedActiveAdmins = users.filter(u=>u.role==='ADMIN' && u.active && u.authUid).length;
+      // §FIX-AUTHLINK-FALSEALARM-2026 — nguon lien ket THAT la /authProfiles/{uid}.userId (resolveEnterAppFor dung
+      // dung nguon nay), khong chi users[].authUid. Truoc day chi dem authUid -> bao ERROR "khong con ADMIN nao
+      // lien ket" trong khi Admin van dang nhap binh thuong qua authProfiles.
+      const profileUserIds = new Set(Object.values(state.authProfiles||{}).filter(ap=>ap && ap.active !== false && ap.userId).map(ap=>ap.userId));
+      const isLinked = u => !!u.authUid || profileUserIds.has(u.id);
+      const linkedActiveAdmins = users.filter(u=>u.role==='ADMIN' && u.active && isLinked(u)).length;
       if(linkedActiveAdmins < 1) addIssue('Settings','ERROR','Production Auth đang BẬT nhưng KHÔNG còn ADMIN active nào đã liên kết Auth — hệ thống có nguy cơ không ai đăng nhập được.');
       // (e) §AUTHFIX2026/§12 — user active nhung CHUA lien ket authUid khi Production Auth dang BAT —
       // nguoi nay se KHONG dang nhap duoc (Production Auth khong fallback Legacy) — canh bao SOM cho
       // Admin thay vi de Staff/Coach tu phat hien luc bi khoa ngoai.
       users.forEach(u=>{
-        if(u.active !== false && !u.authUid){
+        if(u.active !== false && !isLinked(u)){
           addIssue('Settings','WARNING','Người dùng "' + u.name + '" (' + u.role + ') đang active nhưng CHƯA liên kết Firebase Auth — sẽ không đăng nhập được khi Production Auth đang bật.',
             { code:'USER_ACTIVE_WITHOUT_AUTH_LINK', entityType:'user', entityId:u.id, entityLabel:u.name, repairable:false, repairConfidence:'AMBIGUOUS' });
         }
@@ -35172,7 +35243,7 @@ function renderDataIntegrityModal(issues){
       </div>
       <div id="${detailId}" style="display:none; margin-top:8px; padding:8px; background:var(--bg-soft,#f8fafc); border-radius:6px; font-size:.82rem; max-height:240px; overflow:auto;">
         ${i.impact ? `<div style="margin-bottom:6px;"><b>Ảnh hưởng:</b> ${i.impact}</div>` : ''}
-        ${items.slice(0,200).map(it=>`<div style="padding:3px 0; border-bottom:1px dashed var(--border,#e5e7eb);">Trận "${it.historyId||''}" — sân ${it.courtId||''} — ${it.time ? new Date(it.time).toLocaleString('vi-VN') : ''} — ${it.side==='team1Players'?'Đội 1':'Đội 2'} — playerId "${it.playerId}"${it.name?(' (' + it.name + ')'):''}</div>`).join('')}
+        ${items.slice(0,200).map(it=>`<div style="padding:3px 0; border-bottom:1px dashed var(--border,#e5e7eb);">Trận "${it.historyId||''}" — sân ${it.courtId||''} — ${it.time ? new Date(it.time).toLocaleString('vi-VN') : ''} — ${it.side==='team1Players'?'Đội 1':'Đội 2'} — playerId "${it.playerId}"${it.name?(' (' + escapeHtml(it.name) + ')'):''}</div>`).join('')}
         ${items.length>200 ? `<div class="muted" style="margin-top:4px;">... và ${items.length-200} bản ghi khác (đã ẩn bớt để không làm chậm trình duyệt — dữ liệu gốc vẫn giữ nguyên trong lịch sử).</div>` : ''}
       </div>
     </div>`;
