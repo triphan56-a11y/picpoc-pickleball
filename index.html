@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.34 (2026-09-25) — §FIX-AUTH-RETRY-2026. Sau khi deploy Rules that, Admin gap man "KHÔNG THỂ XÁC THỰC"
+  khi mo app. Man nay hien khi .once('/authProfiles/{uid}') bi loi HOAC khi bat ky exception nao xay ra trong
+  luc vao app (cung 1 .catch). Lan doc dau ngay sau onAuthStateChanged co the bi PERMISSION_DENIED neu ket noi
+  DB chua kip gan token (truoc day DB mo nen khong lo ra). FIX: getIdToken(true) + doc lai toi da 3 lan (700ms,
+  1.4s, 2.1s); try/catch rieng cho buoc vao app (man "LỖI KHI MỞ ỨNG DỤNG"); showAuthBlockedScreen() co nut THỬ
+  LẠI + dong "Mã lỗi" + ghi systemLogs. Da test offline: 1-2 lan loi dau -> vao app binh thuong.
+
   v1.44.33 (2026-09-24) — §TOURN-CLUB-LINK-2026. Admin: "chỉnh phần đồng bộ giữa club và giải đấu". Truoc
   day cap dau chi la chuoi ten, 112/112 ve tham gia giai khong gan ho so Player nao; Credits/Top-2 Series do
   ten (chi tach '&'/'/', so khop chinh xac) nen cap ghi "A - B" hoac ten lech dau khong phat duoc thuong.
@@ -9161,7 +9168,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.33'; // §TOURN-CLUB-LINK-2026 — noi cap dau/ve giai voi ho so Nguoi choi Club
+const PICPOC_APP_VERSION = 'Picpoc v1.44.34'; // §FIX-AUTH-RETRY-2026 — doc authProfiles tu thu lai + lam moi token, tach loi vao app, man chan co THU LAI + ma loi
+// (ban truoc: 'Picpoc v1.44.33') // §TOURN-CLUB-LINK-2026 — noi cap dau/ve giai voi ho so Nguoi choi Club
 // (ban truoc: 'Picpoc v1.44.32') // §FIX-CANON-JSON-2026 — so sanh dong bo theo dang chuan Firebase (het huy nham lenh ghi player 'paid_and_left'), nut SUA AN TOAN cho WAITING_WITHOUT_ACTIVE_VISIT — chi tiet o CHANGELOG dau file
 // (ban truoc: 'Picpoc v1.44.31') §AUDIT-2026-09-23 — chan seed/flush truoc khi hydrate, bat buoc Production Auth khi co Firebase, escape XSS
 // (ban truoc: 'Picpoc v1.44.30') §FIX-TDZ-BOOTCRASH-2026 — sửa 1 lỗi TDZ có thể khiến app không load được trên 1 số thiết bị (phát hiện qua tự chạy boot app thật bằng jsdom, không chỉ kiểm tra cú pháp) — chi tiết ở CHANGELOG đầu file
@@ -11952,15 +11960,18 @@ function showLoginScreen(errorMsg){
   const emailEl = document.getElementById('loginEmailInput');
   if(emailEl) emailEl.focus();
 }
-function showAuthBlockedScreen(title, message){
+function showAuthBlockedScreen(title, message, techDetail){
   const box = document.getElementById('productionAuthOverlayBox');
   if(!box) return;
   box.className = 'app-loading-box';
+  // §FIX-AUTH-RETRY-2026 — them nut THU LAI (tai lai trang) + dong ma loi ky thuat nho de Admin chup gui ho tro
   box.innerHTML = `
     ${getAuthScreenLogoHtml()}
     <div class="conn-fail-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 9v5"/><path d="M12 17.5h.01"/></svg>${title}</div>
     <div class="conn-fail-cache-note" style="display:block;">${message}</div>
-    <button class="big js-logout-btn" style="margin-top:12px;" onclick="logoutCurrentUser()">ĐĂNG XUẤT</button>
+    ${techDetail ? `<div class="conn-fail-cache-note" style="display:block; opacity:.6; font-size:.72rem; margin-top:6px;">Mã lỗi: ${escapeHtml(String(techDetail).slice(0,160))}</div>` : ''}
+    <button class="big" style="margin-top:12px;" onclick="location.reload()">THỬ LẠI</button>
+    <button class="big secondary js-logout-btn" style="margin-top:8px;" onclick="logoutCurrentUser()">ĐĂNG XUẤT</button>
   `;
   showProductionAuthOverlay();
 }
@@ -40486,11 +40497,23 @@ function beginProductionAuthFlow(){
     // quyet dinh "UID nay co quyen hay khong" — KHONG con doc truc tiep tu state.users.authUid (co the
     // dang la du lieu local stale/chua kip hydrate) nhu ban cu nua.
     showAuthCheckingOverlay();
-    dbRoot.child('authProfiles').child(firebaseUser.uid).once('value').then(function(snap){
+    /* §FIX-AUTH-RETRY-2026 — sau khi deploy Rules that (database khong con mo), lan doc authProfiles DAU TIEN
+       ngay sau onAuthStateChanged co the bi PERMISSION_DENIED neu ket noi database chua kip gan token dang
+       nhap (truoc day DB mo nen khong bao gio lo ra). Tu lam moi token (getIdToken(true)) roi doc lai toi da 3
+       lan truoc khi bao loi. Dong thoi TACH loi code khi vao app (truoc day bi gom chung vao cung 1 .catch nen
+       moi exception deu hien sai la "Không đọc được thông tin phân quyền"). */
+    const readAuthProfile = attempt => dbRoot.child('authProfiles').child(firebaseUser.uid).once('value').catch(err=>{
+      if(attempt >= 3 || !__firebaseAuthUser || __firebaseAuthUser.uid !== firebaseUser.uid) throw err;
+      console.warn('[auth] authProfiles read failed (attempt ' + (attempt+1) + '), refreshing token and retrying', err && (err.code || err.message));
+      return Promise.resolve(firebaseUser.getIdToken ? firebaseUser.getIdToken(true) : null).catch(()=>null)
+        .then(()=>new Promise(r=>setTimeout(r, 700 * (attempt + 1))))
+        .then(()=>readAuthProfile(attempt + 1));
+    });
+    readAuthProfile(0).then(function(snap){
       if(!__firebaseAuthUser || __firebaseAuthUser.uid !== firebaseUser.uid) return; // §guard — da doi auth state trong luc cho
       const authProfile = snap.val();
       if(!authProfile){
-        showAuthBlockedScreen('TÀI KHOẢN CHƯA ĐƯỢC CẤP QUYỀN PICPOC', 'Tài khoản Firebase Auth này chưa được Admin liên kết với hồ sơ Picpoc nào. Liên hệ Admin để được cấp quyền.');
+        showAuthBlockedScreen('TÀI KHOẢN CHƯA ĐƯỢC CẤP QUYỀN PICPOC', 'Tài khoản Firebase Auth này chưa được Admin liên kết với hồ sơ Picpoc nào. Liên hệ Admin để được cấp quyền.', 'uid ' + firebaseUser.uid);
         return;
       }
       if(authProfile.active === false){
@@ -40499,11 +40522,18 @@ function beginProductionAuthFlow(){
       }
       // §AUTH-11/56 — hop le theo authProfiles: gan cac listener entity nghiep vu NGAY (kho tra ve
       // state.users that qua listener /users hoac cache local da co san) — CHI sau khi da xac thuc xong.
-      attachAllBusinessEntityListenersOnce();
-      resolveEnterAppFor(firebaseUser, authProfile);
+      try{
+        attachAllBusinessEntityListenersOnce();
+        resolveEnterAppFor(firebaseUser, authProfile);
+      }catch(e){
+        console.error('[auth] enter app failed', e);
+        if(typeof logSystemError === 'function') logSystemError('auth', 'enter app failed: ' + (e && e.message), e && e.stack);
+        showAuthBlockedScreen('LỖI KHI MỞ ỨNG DỤNG', 'Đã xác thực đúng nhưng gặp lỗi khi tải giao diện. Bấm THỬ LẠI; nếu vẫn lỗi, chụp màn hình này gửi hỗ trợ.', (e && (e.message || e)) || 'unknown');
+      }
     }).catch(function(err){
       console.error('[auth] authProfiles read failed', err);
-      showAuthBlockedScreen('KHÔNG THỂ XÁC THỰC', 'Không đọc được thông tin phân quyền (lỗi kết nối/quyền đọc). Vui lòng kiểm tra mạng và thử lại.');
+      if(typeof logSystemError === 'function') logSystemError('auth', 'authProfiles read failed after retries: ' + (err && (err.code || err.message)), err && err.stack);
+      showAuthBlockedScreen('KHÔNG THỂ XÁC THỰC', 'Không đọc được thông tin phân quyền (lỗi kết nối/quyền đọc). Vui lòng kiểm tra mạng rồi bấm THỬ LẠI.', (err && (err.code || err.message)) || String(err));
     });
   });
 }
