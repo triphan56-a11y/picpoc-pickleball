@@ -2,6 +2,14 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.39 (2026-09-26) — §AUTO-END-OF-DAY-V2-2026. Admin: "chỗ Ky và chị Ý là sao" — Ky (nghi 13 ngay, bill 0d) va
+  chi Y (nghi ~3,8 ngay, con 30.000d) van nam o "Dang o san": status 'checked_out' (da KET THUC, chua dong phien),
+  KHONG con Visit ACTIVE nen autoEndPreviousDays() v1.44.37 bo sot; con khach no ngay truoc thi v1.44.37 lai dua ve
+  dung 'checked_out' -> nam li. MOI: moi khach o trang thai "o san" co hoat dong cuoi truoc hom nay (hoac Visit
+  ACTIVE tu truoc hom nay) duoc dong han: con tien -> allowBillDebt() (ghi cong no nhu nut CHO NỢ, debtCreatedBy
+  'Tự động (kết thúc ngày)'), 0d -> bill paid AUTO_ZERO; player -> paid_and_left, Visit dong. Khach hom nay (ke ca
+  da KET THUC chua tra tien hom nay) giu nguyen. Buoc don san treo chay truoc. Test offline dat.
+
   v1.44.38 (2026-09-26) — §FIX-CHECKIN-STALEREF-2026. Admin: "A Sơn: staff check in nhưng tự động biến mất khỏi
   màn hình đang ở sân, check in 4 lần đều tự biến mất" + Cong no "4 bill chưa thu đủ" 120.000đ. confirmCheckInAtomic()
   chan check-in neu /players/{id}.activeVisitId tren server khac Visit vua tao — KHONG xet Visit do con ACTIVE hay da
@@ -9226,7 +9234,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.38'; // §FIX-CHECKIN-STALEREF-2026 — check-in bi hoan tac nham + bill Ve Social no oan
+const PICPOC_APP_VERSION = 'Picpoc v1.44.39'; // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
+// (ban truoc: 'Picpoc v1.44.38') // §FIX-CHECKIN-STALEREF-2026 — check-in bi hoan tac nham + bill Ve Social no oan
 // (ban truoc: 'Picpoc v1.44.37') // §AUTO-END-OF-DAY-2026 — tu dong ket thuc cac ngay truoc
 // (ban truoc: 'Picpoc v1.44.36') // §AUTO-CLOSE-STALE-ZERO-2026 — tu dong dong phien ngay truoc bill 0d
 // (ban truoc: 'Picpoc v1.44.35') // §AUDIT-DEEP-2026-09-25 — xem CHANGELOG dau file
@@ -18828,14 +18837,15 @@ function autoCloseStaleZeroSessions(){
   // §AUTO-END-OF-DAY-2026 — sau khi dong sach cac phien 0d, tu chot cac ngay truoc (thay nut "Kết thúc ngày")
   let eod = null;
   try{ if(typeof autoEndPreviousDays === 'function') eod = autoEndPreviousDays(); }catch(e){ console.error('[autoEndOfDay]', e); }
-  const eodChanged = eod && (eod.closures.length || eod.visits || eod.courts);
+  const eodChanged = eod && (eod.closures.length || eod.visits || eod.courts || eod.sessions);
   if(closed.length || eodChanged){
     if(typeof renderPresenceTab === 'function') renderPresenceTab();
     if(typeof renderLiveTab === 'function') renderLiveTab();
     const parts = [];
     if(closed.length) parts.push('đóng ' + closed.length + ' phiên 0đ (' + closed.join(', ') + ')');
     if(eod && eod.closures.length) parts.push('chốt ngày ' + eod.closures.map(d=>d.slice(8,10)+'/'+d.slice(5,7)).join(', '));
-    if(eod && eod.visits) parts.push('đóng ' + eod.visits + ' lượt chơi còn mở');
+    if(eod && eod.sessions) parts.push('đóng ' + eod.sessions + ' phiên ngày trước');
+    if(eod && eod.debts && eod.debts.length) parts.push('ghi công nợ ' + eod.debts.length + ' khách');
     if(eod && eod.courts) parts.push('dọn ' + eod.courts + ' sân treo');
     showToast('✓ Tự động kết thúc ngày cũ: ' + parts.join(' · '));
   }
@@ -33705,7 +33715,7 @@ function openEndOfDayModal(){
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2>🔒 Kết thúc ngày</h2>
-    <p class="muted small-note" style="margin-top:-4px;">Không bắt buộc: nếu không bấm, sáng hôm sau app tự kết thúc ngày cũ (chốt số liệu, đóng lượt chơi còn mở; bill còn nợ vẫn giữ để thu).</p>
+    <p class="muted small-note" style="margin-top:-4px;">Không bắt buộc: nếu không bấm, sáng hôm sau app tự kết thúc ngày cũ (chốt số liệu, đóng phiên còn sót; khách còn nợ được ghi vào Công nợ để thu sau).</p>
     ${issues.length ? `<div class="presence-warn" style="display:block; margin-bottom:10px;">${issues.join('<br>')}</div>` : '<p class="muted">Không còn hoạt động nào đang diễn ra.</p>'}
     ${openBills.length ? `
       <p><b>CÒN ${openBills.length} BILL CHƯA THANH TOÁN — TỔNG ${fmtVnd(outstanding)}</b></p>
@@ -33847,23 +33857,7 @@ function autoEndPreviousDays(){
       changed.closures.push(dStr);
     }catch(e){ console.error('[autoEndOfDay] snapshot ' + dStr, e); }
   }
-  // (2) dong phien con mo tu truoc hom nay
-  (state.playerVisits||[]).filter(v=>v && v.status==='ACTIVE' && (v.checkInAt||0) < todayTs).forEach(v=>{
-    const p = playerById(v.playerId);
-    if(p && getActiveVisitForPlayer(p.id) !== v) return; // >1 Visit ACTIVE (bat thuong) -> de Data Health xu ly
-    if(p){
-      removePlayerFromOperationalQueues(p.id);
-      if(['waiting','ready','playing','away','waiting_payment'].includes(p.status)){
-        p.status = 'checked_out';
-        p.finishedPlayingAt = p.finishedPlayingAt || nowTs;
-        markEntityDirty('players', p.id);
-      }
-    }
-    completePlayerVisit(v.playerId, 'END_OF_DAY');
-    markEntityDirty('playerVisits', v.id);
-    changed.visits++;
-  });
-  // (3) san "dang chay" tu truoc hom nay
+  // (3) san "dang chay" tu truoc hom nay (lam TRUOC buoc 2 de nguoi tren san ma cung duoc dong phien)
   Object.keys(state.courts||{}).forEach(cid=>{
     const c = state.courts[cid];
     const startedAt = c && (c.startTime || c.startedAt || c.createdAt);
@@ -33873,10 +33867,59 @@ function autoEndPreviousDays(){
       changed.courts++;
     }
   });
-  if(changed.closures.length || changed.visits || changed.courts){
+  // (2) §AUTO-END-OF-DAY-V2-2026 — Admin: "chỗ Ky và chị Ý là sao" — 2 khach da ve tu 13 ngay / 3,8 ngay truoc van
+  // nam o "Dang o san" (status 'checked_out' = da bam KET THUC nhung chua dong phien, KHONG con Visit ACTIVE nen
+  // ban dau bi bo sot; ban dau con dua khach no ve DUNG trang thai 'checked_out' nay -> nam li o man hinh). Gio MOI
+  // khach con o trang thai "o san" (waiting/ready/playing/away/waiting_payment/checked_out) co hoat dong cuoi TRUOC
+  // hom nay, hoac con Visit ACTIVE tu truoc hom nay, duoc dong han phien:
+  //   - con tien chua thu -> GHI CONG NO dung nhu nut "CHO NỢ" (allowBillDebt): bill giu nguyen, hien o Tai chinh >
+  //     Cong no de thu sau, khong mat dong nao;
+  //   - bill 0d -> dong nhu "ĐÓNG PHIÊN" (bill paid AUTO_ZERO).
+  // Khach cua HOM NAY (check-in/hoat dong hom nay, hoac dang tren san hom nay) khong bi dong vao.
+  const ONSITE = ['waiting','ready','playing','away','waiting_payment','checked_out'];
+  const onCourtNow = new Set(Object.values(state.courts||{}).flatMap(c=>[...(c && c.team1 || []), ...(c && c.team2 || [])]));
+  const candidates = new Set();
+  (state.playerVisits||[]).forEach(v=>{ if(v && v.status==='ACTIVE' && (v.checkInAt||0) < todayTs) candidates.add(v.playerId); });
+  (state.players||[]).forEach(p=>{
+    if(!p || !ONSITE.includes(p.status)) return;
+    const lastActivity = Math.max(p.lastCheckInAt||0, p.waitSince||0, p.finishedPlayingAt||0);
+    if(lastActivity < todayTs) candidates.add(p.id);
+  });
+  changed.debts = [];
+  changed.sessions = 0;
+  candidates.forEach(pid=>{
+    const p = playerById(pid);
+    if(onCourtNow.has(pid)) return;
+    const av = getActiveVisitForPlayer(pid);
+    if(av && (av.checkInAt||0) >= todayTs) return; // phien HOM NAY
+    if(p && Math.max(p.lastCheckInAt||0, p.waitSince||0) >= todayTs) return; // vua check-in hom nay
+    const openBills = (state.bills||[]).filter(b=>b.playerId===pid && b.status==='open');
+    openBills.forEach(b=>{
+      const outstanding = typeof getBillOutstanding === 'function' ? getBillOutstanding(b) : billTotal(b);
+      if(outstanding > 0){
+        if(!b.debtCreatedAt && p){
+          const r = allowBillDebt(b.id);
+          if(r && r.ok){ b.debtCreatedBy = 'Tự động (kết thúc ngày)'; markEntityDirty('bills', b.id); changed.debts.push((p.name||pid) + ' ' + fmtVnd(outstanding)); }
+        }
+      } else {
+        b.status = 'paid'; b.paidAt = nowTs; b.paymentMethod = 'AUTO_ZERO'; markEntityDirty('bills', b.id);
+      }
+    });
+    let guard = 0, closedVisit;
+    while(guard++ < 20 && (closedVisit = completePlayerVisit(pid, 'END_OF_DAY'))){ markEntityDirty('playerVisits', closedVisit.id); changed.visits++; }
+    if(p){
+      removePlayerFromOperationalQueues(pid);
+      if(p.status !== 'paid_and_left'){ p.status = 'paid_and_left'; p.paidAndLeftAt = nowTs; }
+      p.finishedPlayingAt = p.finishedPlayingAt || nowTs;
+      p.socialParticipation = false;
+      markEntityDirty('players', pid);
+    }
+    changed.sessions++;
+  });
+  if(changed.closures.length || changed.visits || changed.courts || changed.sessions){
     logOverride('auto_end_of_day', 'Tự động kết thúc ngày cũ' + (changed.closures.length ? ' — chốt ' + changed.closures.join(', ') : '') +
-      (changed.visits ? ' — đóng ' + changed.visits + ' lượt chơi còn mở' : '') + (changed.courts ? ' — dọn ' + changed.courts + ' sân còn treo' : '') +
-      ' (bill còn nợ giữ nguyên)', 'system', null);
+      (changed.sessions ? ' — đóng ' + changed.sessions + ' phiên ngày trước' : '') + (changed.courts ? ' — dọn ' + changed.courts + ' sân còn treo' : '') +
+      (changed.debts.length ? ' — ghi công nợ: ' + changed.debts.join(', ') : ''), 'system', null);
     saveState();
   }
   return changed;
