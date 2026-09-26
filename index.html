@@ -2,6 +2,12 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.40 (2026-09-26) — §FIX-EMPTYBILL-ITEMS-2026. Admin: "Thuê máy bắn bóng — Trí Phan: không thêm vào bill được".
+  Firebase khong luu mang rong: bill mo 0d chua co khoan nao doc ve tu server MAT field items -> moi luong them khoan
+  (+ SẢN PHẨM, Thue may ban bong, Khoan khac, Ve Social qua Goi) goi bill.items.push() -> TypeError (dung loi
+  "reading 'push'" trong nhat ky production). Bu items=[] trong normalizeProducts(), ensureOpenBillForPlayer(),
+  addBillItem(), applyRemoteEntityLocally() va nhanh Goi Social. Test offline: ban cu loi, ban moi them duoc.
+
   v1.44.39 (2026-09-26) — §AUTO-END-OF-DAY-V2-2026. Admin: "chỗ Ky và chị Ý là sao" — Ky (nghi 13 ngay, bill 0d) va
   chi Y (nghi ~3,8 ngay, con 30.000d) van nam o "Dang o san": status 'checked_out' (da KET THUC, chua dong phien),
   KHONG con Visit ACTIVE nen autoEndPreviousDays() v1.44.37 bo sot; con khach no ngay truoc thi v1.44.37 lai dua ve
@@ -9078,6 +9084,7 @@ function releaseBookingSlotAtomic(date, courtId, bookingId){
    thay đổi VÀ xoá entity (tránh trường hợp thiết bị "ngủ" tưởng 1 entity cần xoá theo bản cũ trong
    khi thiết bị khác đã cập nhật nó thành giá trị mới thật sự). */
 function applyRemoteEntityLocally(node, id, remoteVal){
+  if(node === 'bills' && remoteVal && typeof remoteVal === 'object' && !Array.isArray(remoteVal.items)) remoteVal.items = []; // §FIX-EMPTYBILL-ITEMS-2026
   if(ARRAY_ENTITY_NODES.includes(node)){
     const arr = state[node];
     if(!Array.isArray(arr)) return;
@@ -9234,7 +9241,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.39'; // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.40'; // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
+// (ban truoc: 'Picpoc v1.44.39') // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
 // (ban truoc: 'Picpoc v1.44.38') // §FIX-CHECKIN-STALEREF-2026 — check-in bi hoan tac nham + bill Ve Social no oan
 // (ban truoc: 'Picpoc v1.44.37') // §AUTO-END-OF-DAY-2026 — tu dong ket thuc cac ngay truoc
 // (ban truoc: 'Picpoc v1.44.36') // §AUTO-CLOSE-STALE-ZERO-2026 — tu dong dong phien ngay truoc bill 0d
@@ -12918,6 +12926,12 @@ function normalizeProducts(){
     if(u.coachId === undefined) u.coachId = null;
     if(u.updatedAt === undefined) u.updatedAt = u.createdAt;
   });
+  /* §FIX-EMPTYBILL-ITEMS-2026 — Admin: "Thuê máy bắn bóng — Trí Phan: không thêm vào bill được". Firebase KHONG luu
+     mang rong -> bill mo 0d chua co khoan nao (vd vua check-in bang Goi Social, hoac khong ban Ve Social) doc ve
+     tu server MAT han field items -> addBillItem()/"+ SẢN PHẨM"/Khoan khac goi bill.items.push() -> TypeError
+     "reading 'push'" (co trong nhat ky loi production). Bu lai mang rong cho MOI bill tai day (normalize chay moi
+     lan du lieu ve) — khong gay ghi len server vi fbCanonJson() coi [] va "khong co" la nhu nhau. */
+  (state.bills||[]).forEach(b=>{ if(b && !Array.isArray(b.items)) b.items = []; });
   if(typeof state.settings.forgottenPaymentWarnMinutes !== 'number') state.settings.forgottenPaymentWarnMinutes = 15;
   if(typeof state.settings.queueHealthGoodMax !== 'number') state.settings.queueHealthGoodMax = 8;
   if(typeof state.settings.queueHealthBusyMax !== 'number') state.settings.queueHealthBusyMax = 15;
@@ -13343,6 +13357,7 @@ function consumeSocialPassForVisit(playerId, visitId){
         markEntityDirty('socialPassUsages', usage.id);
         const openBill = getOpenBillForPlayer(playerId);
         if(openBill && openBill.visitId === visitId && !hasSocialTicketForVisit(visitId) && state.settings.socialTicketEnabled){
+          if(!Array.isArray(openBill.items)) openBill.items = []; // §FIX-EMPTYBILL-ITEMS-2026
           openBill.items.push({ id: uid('bi'), type:'ticket', label:'Vé Social', amount: state.settings.socialTicketPrice, qty:1, unitPrice: state.settings.socialTicketPrice, timestamp: Date.now(), visitId });
           if(typeof renderSalesTab === 'function') renderSalesTab();
           if(typeof renderMoneyTab === 'function') renderMoneyTab();
@@ -14263,7 +14278,7 @@ function ensureOpenBillForPlayer(player){
   // visitId cua no se KHAC voi Visit MOI cua lan check-in nay — tu dong KHONG duoc coi la reusable nua,
   // ep tao 1 bill hoan toan moi ben duoi (dung cho phien hien tai), giu bill no cu nguyen ven doc lap.
   if(bill && visitId && bill.visitId !== visitId) bill = null;
-  if(bill) return bill;
+  if(bill){ if(!Array.isArray(bill.items)) bill.items = []; return bill; } // §FIX-EMPTYBILL-ITEMS-2026
   bill = { id: uid('bill'), playerId: player.id, playerName: player.name, status:'open', items: [], openedAt: Date.now(), paidAt: null, visitId };
   /* §SOCIALFIX-2/5/26 — FIX GOC: truoc day chi kiem tra "socialTicketEnabled" roi THEM VE SOCIAL VO
      DIEU KIEN moi khi tao 1 bill moi (vd sau khi bill truoc da PAID, player mua them nuoc) — day la
@@ -14685,6 +14700,7 @@ function addBillItem(playerId, item){
   if(!player) return null;
   const bill = ensureOpenBillForPlayer(player);
   const newItem = Object.assign({ id: uid('bi'), timestamp: Date.now() }, item);
+  if(!Array.isArray(bill.items)) bill.items = []; // §FIX-EMPTYBILL-ITEMS-2026
   bill.items.push(newItem);
   if(SYNC_ENABLED && dbRoot){
     DataService.bills.transaction(bill.id, remoteBill=>{
