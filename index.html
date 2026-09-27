@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.41 (2026-09-27) — §PRINT-RECEIPT-2026. Admin: "thiết kế mẫu để in bill ra đưa cho khách". MOI: nut "IN BILL"
+  trong man Bill (moi bill, mo/da tra); Cai dat > the "Thông tin in bill" (ten, dia chi, SDT, ngan hang + so TK + chu
+  TK cho QR, kho giay 80mm/58mm/A5, loi cam on) + nut "IN THỬ BILL MẪU". Bill: logo (in den), thong tin club, "PHIẾU
+  TẠM TÍNH"/"HOÁ ĐƠN THANH TOÁN", so bill, khach, gio vao san, gio in, thu ngan, tung dong (SL x don gia = thanh
+  tien), Ve Social dung Goi, tong, da tra theo hinh thuc, CÒN PHẢI TRẢ/CÒN NỢ, QR VietQR dien san dung so tien con
+  phai tra + noi dung "PICPOC <so bill>", loi cam on. Chi DOC du lieu. In qua iframe an; cho anh QR/logo toi da 3,5s.
+
   v1.44.40 (2026-09-26) — §FIX-EMPTYBILL-ITEMS-2026. Admin: "Thuê máy bắn bóng — Trí Phan: không thêm vào bill được".
   Firebase khong luu mang rong: bill mo 0d chua co khoan nao doc ve tu server MAT field items -> moi luong them khoan
   (+ SẢN PHẨM, Thue may ban bong, Khoan khac, Ve Social qua Goi) goi bill.items.push() -> TypeError (dung loi
@@ -7985,6 +7992,45 @@
         <select id="tournEntryWaterProductSelect" onchange="markSettingsDirty('pricing')"></select>
         <div class="small-note">Đây là GIÁ TRỊ MẶC ĐỊNH áp dụng khi kích hoạt tính năng cho 1 giải mới — giải đã kích hoạt trước đó giữ nguyên mức giá lúc kích hoạt (không hồi tố).</div>
       </div>
+      <!-- §PRINT-RECEIPT-2026 — THONG TIN IN BILL (thong tin club + tai khoan nhan chuyen khoan cho QR + kho giay). -->
+      <div class="card settings-card-full">
+        <h2><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></svg>Thông tin in bill</h2>
+        <div class="small-note">In lên đầu và cuối bill đưa khách. Có tài khoản ngân hàng thì bill in kèm mã QR chuyển khoản đúng số tiền còn phải trả.</div>
+        <div class="grid-2col">
+          <div><label>Tên hiển thị</label><input type="text" id="receiptClubNameInput" placeholder="PICPOC PICKLEBALL CLUB" oninput="markSettingsDirty('receipt')"></div>
+          <div><label>Số điện thoại</label><input type="text" id="receiptPhoneInput" placeholder="09xx xxx xxx" oninput="markSettingsDirty('receipt')"></div>
+        </div>
+        <label>Địa chỉ</label>
+        <input type="text" id="receiptAddressInput" placeholder="Số nhà, đường, phường, quận/huyện" oninput="markSettingsDirty('receipt')">
+        <div class="grid-2col">
+          <div><label>Ngân hàng (cho mã QR)</label>
+            <select id="receiptBankInput" onchange="markSettingsDirty('receipt')">
+              <option value="">— Không in QR —</option>
+              <option value="vcb">Vietcombank</option><option value="tcb">Techcombank</option><option value="mb">MB Bank</option>
+              <option value="acb">ACB</option><option value="bidv">BIDV</option><option value="icb">VietinBank</option>
+              <option value="vba">Agribank</option><option value="vpb">VPBank</option><option value="tpb">TPBank</option>
+              <option value="stb">Sacombank</option><option value="vib">VIB</option><option value="hdb">HDBank</option>
+              <option value="ocb">OCB</option><option value="shb">SHB</option><option value="msb">MSB</option>
+              <option value="scb">SCB</option><option value="eib">Eximbank</option><option value="seab">SeABank</option>
+              <option value="lpb">LPBank</option><option value="nab">Nam A Bank</option><option value="timo">Timo</option><option value="cake">CAKE</option>
+            </select></div>
+          <div><label>Số tài khoản</label><input type="text" id="receiptAccountNoInput" inputmode="numeric" oninput="markSettingsDirty('receipt')"></div>
+        </div>
+        <div class="grid-2col">
+          <div><label>Tên chủ tài khoản</label><input type="text" id="receiptAccountNameInput" placeholder="NGUYEN VAN A" oninput="markSettingsDirty('receipt')"></div>
+          <div><label>Khổ giấy</label>
+            <select id="receiptPaperInput" onchange="markSettingsDirty('receipt')">
+              <option value="80">Máy in nhiệt 80mm</option><option value="58">Máy in nhiệt 58mm</option><option value="A5">Giấy A5</option>
+            </select></div>
+        </div>
+        <label>Lời cảm ơn cuối bill</label>
+        <input type="text" id="receiptFooterInput" placeholder="Cảm ơn bạn đã ghé Picpoc — hẹn gặp lại trên sân!" oninput="markSettingsDirty('receipt')">
+        <div class="settings-save-row" data-require-permission="SETTINGS_EDIT">
+          <button onclick="saveReceiptSettings()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>LƯU THAY ĐỔI</button>
+          <span class="settings-dirty-note" id="receiptDirtyNote">Có thay đổi chưa lưu</span>
+          <button class="secondary" onclick="printReceiptSample()" style="margin-left:auto;">🖨 IN THỬ BILL MẪU</button>
+        </div>
+      </div>
       <!-- §CREDIT2026-59-62 — PICPOC CREDITS. The RIENG, LUU RIENG (khong dung chung dirty-flag 'pricing'
            voi cac card khac de tranh dong cham/rui ro voi ham savePricingSettings() hien co) — dung
            populatePicpocCreditsSettingsForm()/savePicpocCreditsSettings() rieng. -->
@@ -9241,7 +9287,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.40'; // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
+const PICPOC_APP_VERSION = 'Picpoc v1.44.41'; // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
+// (ban truoc: 'Picpoc v1.44.40') // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
 // (ban truoc: 'Picpoc v1.44.39') // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
 // (ban truoc: 'Picpoc v1.44.38') // §FIX-CHECKIN-STALEREF-2026 — check-in bi hoan tac nham + bill Ve Social no oan
 // (ban truoc: 'Picpoc v1.44.37') // §AUTO-END-OF-DAY-2026 — tu dong ket thuc cac ngay truoc
@@ -13971,6 +14018,178 @@ function saveTvAnnouncerSettings(){
   settingsDirtyFlags.tvAnnouncer = false;
   const note = document.getElementById('tvAnnouncerDirtyNote'); if(note) note.classList.remove('show');
   showToast('Đã lưu cài đặt Gọi VĐV trên TV');
+}
+/* ================= §PRINT-RECEIPT-2026 — IN BILL DUA KHACH =================
+   Admin: "thiết kế mẫu để in bill ra đưa cho khách". Bill in theo kho may in nhiet 80mm (mac dinh) / 58mm / A5:
+   logo + thong tin club, ma bill, khach, gio vao san, tung dong (SL x don gia = thanh tien), tong, da thanh toan
+   theo tung hinh thuc, con phai tra, QR chuyen khoan VietQR dien san DUNG so tien con phai tra (neu cai tai
+   khoan), loi cam on. Chi DOC du lieu, khong ghi gi. In qua iframe an (khong bi chan popup). */
+function getReceiptSettings(){
+  const r = (state && state.settings && state.settings.receipt) || {};
+  return {
+    clubName: r.clubName || 'PICPOC PICKLEBALL CLUB', phone: r.phone || '', address: r.address || '',
+    bank: r.bank || '', accountNo: String(r.accountNo || '').replace(/\s+/g,''), accountName: r.accountName || '',
+    paper: ['80','58','A5'].includes(r.paper) ? r.paper : '80',
+    footer: r.footer || 'Cảm ơn bạn đã ghé Picpoc — hẹn gặp lại trên sân!'
+  };
+}
+function populateReceiptSettingsForm(){
+  const r = getReceiptSettings(), raw = (state.settings && state.settings.receipt) || {};
+  const canEdit = (typeof can === 'function') ? can(PERMISSION.SETTINGS_EDIT) : true;
+  const set = (id, v)=>{ const el = document.getElementById(id); if(el){ el.value = v; el.disabled = !canEdit; } };
+  set('receiptClubNameInput', raw.clubName || ''); set('receiptPhoneInput', r.phone); set('receiptAddressInput', r.address);
+  set('receiptBankInput', r.bank); set('receiptAccountNoInput', r.accountNo); set('receiptAccountNameInput', r.accountName);
+  set('receiptPaperInput', r.paper); set('receiptFooterInput', raw.footer || '');
+  settingsDirtyFlags.receipt = false;
+  const note = document.getElementById('receiptDirtyNote'); if(note) note.classList.remove('show');
+}
+function saveReceiptSettings(){
+  if(!requirePermission(PERMISSION.SETTINGS_EDIT)) return;
+  const val = id=>{ const el = document.getElementById(id); return el ? String(el.value||'').trim() : ''; };
+  state.settings.receipt = {
+    clubName: val('receiptClubNameInput'), phone: val('receiptPhoneInput'), address: val('receiptAddressInput'),
+    bank: val('receiptBankInput'), accountNo: val('receiptAccountNoInput').replace(/\s+/g,''),
+    accountName: val('receiptAccountNameInput').toUpperCase(), paper: val('receiptPaperInput') || '80', footer: val('receiptFooterInput')
+  };
+  if(state.settings.receipt.bank && !/^\d{6,19}$/.test(state.settings.receipt.accountNo)){ showToast('Số tài khoản chỉ gồm 6–19 chữ số'); return; }
+  logOverride('settings_update', 'Cập nhật Thông tin in bill', 'settings', 'receipt');
+  saveState();
+  settingsDirtyFlags.receipt = false;
+  const note = document.getElementById('receiptDirtyNote'); if(note) note.classList.remove('show');
+  showToast('Đã lưu Thông tin in bill');
+}
+function receiptMethodLabel(m){
+  return m === 'CASH' ? 'Tiền mặt' : m === 'BANK_TRANSFER' ? 'Chuyển khoản' : m === 'CREDIT' ? 'Picpoc Credits' : (m || 'Khác');
+}
+function buildReceiptHtml(data){
+  // data: { code, customer, checkInAt, items:[{label, qty, unitPrice, amount}], passUsed, payments:[{method, amount, at}],
+  //         total, collected, outstanding, isDebt, isPaid, cashier, sample }
+  const cfg = getReceiptSettings();
+  const E = s => escapeHtml(s == null ? '' : String(s));
+  const money = n => (Math.round(Number(n)||0)).toLocaleString('vi-VN') + 'đ';
+  const dt = t => t ? new Date(t).toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+  const paper = cfg.paper;
+  const pageCss = paper === 'A5' ? '@page{ size:A5 portrait; margin:10mm; } body{ width:auto; font-size:13px; }'
+    : paper === '58' ? '@page{ size:58mm auto; margin:2mm; } body{ width:52mm; font-size:11px; }'
+    : '@page{ size:80mm auto; margin:3mm; } body{ width:72mm; font-size:12px; }';
+  const logoImg = document.querySelector('#appSidebarBrand img');
+  const logo = logoImg && logoImg.src ? `<img class="logo" src="${logoImg.src}" alt="">` : '';
+  const itemsHtml = (data.items||[]).map(it=>{
+    const qty = Number(it.qty) || 1;
+    const unit = (it.unitPrice != null && it.unitPrice !== '') ? Number(it.unitPrice) : (Number(it.amount)||0) / qty;
+    return `<div class="item"><div class="iname">${E(it.label || 'Khoản')}</div>
+      <div class="row sub"><span>${qty > 1 ? qty + ' × ' + money(unit) : ''}</span><span>${money(it.amount)}</span></div></div>`;
+  }).join('') || '<div class="muted center">Chưa có khoản nào</div>';
+  const passLine = data.passUsed ? `<div class="item"><div class="row"><span>Vé Social — dùng Gói Social</span><span>0đ</span></div></div>` : '';
+  const payLines = (data.payments||[]).filter(p=>(Number(p.amount)||0) > 0)
+    .map(p=>`<div class="row"><span>Đã trả · ${E(receiptMethodLabel(p.method))}${p.at ? ' <small>' + E(dt(p.at)) + '</small>' : ''}</span><span>${money(p.amount)}</span></div>`).join('');
+  const showQr = cfg.bank && cfg.accountNo && data.outstanding > 0;
+  const qrInfo = ('PICPOC ' + (data.code || '')).trim();
+  const qrUrl = showQr ? `https://img.vietqr.io/image/${encodeURIComponent(cfg.bank)}-${encodeURIComponent(cfg.accountNo)}-qr_only.png?amount=${Math.round(data.outstanding)}&addInfo=${encodeURIComponent(qrInfo)}&accountName=${encodeURIComponent(cfg.accountName)}` : '';
+  const title = data.isPaid ? 'HOÁ ĐƠN THANH TOÁN' : 'PHIẾU TẠM TÍNH';
+  return `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><title>Bill ${E(data.code)}</title><style>
+    ${pageCss}
+    *{ box-sizing:border-box; } html,body{ margin:0; padding:0; background:#fff; color:#000; }
+    body{ font-family:"Segoe UI", Roboto, Arial, sans-serif; line-height:1.35; margin:0 auto; }
+    .center{ text-align:center; } .muted{ color:#444; } small{ font-size:.8em; color:#333; }
+    .logo{ display:block; margin:0 auto 4px; height:34px; width:auto; filter:brightness(0); }
+    .club{ font-weight:800; font-size:1.15em; letter-spacing:.3px; }
+    .title{ font-weight:800; font-size:1.1em; margin:8px 0 2px; letter-spacing:.5px; }
+    .dash{ border-top:1px dashed #000; margin:6px 0; } .solid{ border-top:1.5px solid #000; margin:6px 0; }
+    .row{ display:flex; justify-content:space-between; gap:8px; } .row span:last-child{ white-space:nowrap; text-align:right; }
+    .meta .row span:first-child{ color:#333; }
+    .item{ margin:3px 0; } .iname{ font-weight:600; } .sub{ font-size:.92em; color:#222; }
+    .total{ font-weight:800; font-size:1.25em; margin:4px 0; }
+    .due{ font-weight:800; font-size:1.15em; border:1.5px solid #000; padding:4px 6px; margin:6px 0; }
+    .qr{ text-align:center; margin:8px 0 4px; } .qr img{ width:${paper === '58' ? '38mm' : '46mm'}; height:auto; image-rendering:pixelated; }
+    .foot{ text-align:center; margin-top:8px; font-weight:600; } .tiny{ text-align:center; font-size:.75em; color:#444; margin-top:4px; }
+    .sample{ text-align:center; font-weight:800; border:1px dashed #000; padding:2px; margin-bottom:6px; }
+    @media screen{ body{ padding:10px; box-shadow:0 0 0 1px #ddd; } }
+  </style></head><body>
+    ${data.sample ? '<div class="sample">BILL MẪU — IN THỬ</div>' : ''}
+    <div class="center">${logo}<div class="club">${E(cfg.clubName)}</div>
+      ${cfg.address ? `<div class="muted">${E(cfg.address)}</div>` : ''}${cfg.phone ? `<div class="muted">ĐT: ${E(cfg.phone)}</div>` : ''}
+      <div class="title">${title}</div></div>
+    <div class="dash"></div>
+    <div class="meta">
+      <div class="row"><span>Số bill</span><span>#${E(data.code)}</span></div>
+      <div class="row"><span>Khách</span><span>${E(data.customer || 'Khách lẻ')}</span></div>
+      ${data.checkInAt ? `<div class="row"><span>Vào sân</span><span>${E(dt(data.checkInAt))}</span></div>` : ''}
+      <div class="row"><span>In lúc</span><span>${E(dt(Date.now()))}</span></div>
+      ${data.cashier ? `<div class="row"><span>Thu ngân</span><span>${E(data.cashier)}</span></div>` : ''}
+    </div>
+    <div class="dash"></div>
+    ${passLine}${itemsHtml}
+    <div class="solid"></div>
+    <div class="row total"><span>TỔNG CỘNG</span><span>${money(data.total)}</span></div>
+    ${payLines}
+    ${data.outstanding > 0 ? `<div class="row due"><span>${data.isDebt ? 'CÒN NỢ' : 'CÒN PHẢI TRẢ'}</span><span>${money(data.outstanding)}</span></div>`
+      : `<div class="row" style="font-weight:700;"><span>Trạng thái</span><span>ĐÃ THANH TOÁN ĐỦ</span></div>`}
+    ${showQr ? `<div class="qr"><img src="${qrUrl}" alt="QR chuyển khoản"><div><b>Quét để chuyển khoản ${money(data.outstanding)}</b></div>
+      <div class="muted">${E(cfg.accountName)} · ${E(cfg.accountNo)}</div><div class="muted">Nội dung: ${E(qrInfo)}</div></div>` : ''}
+    <div class="dash"></div>
+    <div class="foot">${E(cfg.footer)}</div>
+    <div class="tiny">Bill in từ Picpoc</div>
+  </body></html>`;
+}
+let __receiptPrinting = false;
+function printHtmlDocument(html){
+  if(__receiptPrinting) return;
+  __receiptPrinting = true;
+  const f = document.createElement('iframe');
+  f.setAttribute('aria-hidden', 'true');
+  f.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0; visibility:hidden;';
+  document.body.appendChild(f);
+  const d = f.contentWindow.document;
+  d.open(); d.write(html); d.close();
+  let done = false;
+  const go = ()=>{
+    if(done) return; done = true;
+    try{ f.contentWindow.focus(); f.contentWindow.print(); }catch(e){ console.error('[print]', e); showToast('Không mở được hộp thoại in trên thiết bị này'); }
+    __receiptPrinting = false;
+    setTimeout(()=>{ try{ f.remove(); }catch(e){} }, 60000);
+  };
+  const imgs = Array.from(d.images || []);
+  let pending = imgs.filter(i=>!i.complete).length;
+  if(!pending){ setTimeout(go, 200); return; }
+  const one = ()=>{ if(--pending <= 0) go(); };
+  imgs.forEach(i=>{ if(!i.complete){ i.onload = one; i.onerror = one; } });
+  setTimeout(go, 3500); // QR/logo tai cham (mat mang) -> van in, khong treo
+}
+function buildReceiptDataFromBill(bill){
+  const payments = (state.payments||[]).map(p=>{
+    normalizePaymentAllocations(p);
+    const a = (p.allocations||[]).find(x=>x.billId===bill.id && !x.voided);
+    return a ? { method: p.paymentMethod, amount: a.amount, at: p.createdAt } : null;
+  }).filter(Boolean).sort((a,b)=>(a.at||0)-(b.at||0));
+  const visit = bill.visitId ? (state.playerVisits||[]).find(v=>v.id===bill.visitId) : null;
+  const total = billTotal(bill), collected = getBillCollected(bill), outstanding = getBillOutstanding(bill);
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  return {
+    code: String(bill.id||'').replace(/^bill_/,'').slice(-6).toUpperCase(),
+    customer: bill.playerName || (bill.playerId ? playerName(bill.playerId) : 'Khách lẻ'),
+    checkInAt: visit ? visit.checkInAt : bill.openedAt,
+    items: (bill.items||[]).map(it=>({ label: it.label, qty: it.qty, unitPrice: it.unitPrice, amount: it.amount })),
+    passUsed: !!(bill.visitId && typeof hasSocialPassUsageForVisit === 'function' && hasSocialPassUsageForVisit(bill.visitId)),
+    payments, total, collected, outstanding, isDebt: !!bill.debtCreatedAt && outstanding > 0,
+    isPaid: bill.status === 'paid' || (total > 0 && outstanding <= 0), cashier: u ? u.name : ''
+  };
+}
+function printBill(billId){
+  const bill = (state.bills||[]).find(b=>b.id===billId);
+  if(!bill){ showToast('Không tìm thấy bill'); return; }
+  printHtmlDocument(buildReceiptHtml(buildReceiptDataFromBill(bill)));
+}
+function printReceiptSample(){
+  const products = (state.products||[]).filter(p=>p.active!==false).slice(0,2);
+  const price = (state.settings && state.settings.socialTicketPrice) || 30000;
+  const items = [{ label:'Vé Social', qty:1, unitPrice:price, amount:price }]
+    .concat(products.map((p,i)=>({ label:p.name, qty:i+1, unitPrice:p.price, amount:p.price*(i+1) })));
+  const total = items.reduce((s,it)=>s+it.amount,0);
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  printHtmlDocument(buildReceiptHtml({ code:'MAU001', customer:'Nguyễn Văn A', checkInAt: Date.now()-90*60000, items,
+    payments:[{ method:'CASH', amount: price, at: Date.now()-30*60000 }], total, collected: price, outstanding: total - price,
+    isDebt:false, isPaid:false, cashier: u ? u.name : 'Thu ngân', sample:true }));
 }
 /* §37 — nut THỬ GIỌNG: phat 1 cau mau NGAY (khong can luu cai dat truoc, khong can dang o TV mode) de
    Staff nghe thu giong/toc do truoc khi ap dung that su tren TV.
@@ -21625,6 +21844,7 @@ function renderSettingsTab(){
   }
   if(typeof populatePicpocCreditsSettingsForm === 'function') populatePicpocCreditsSettingsForm(); // §CREDIT2026-59-62
   if(typeof populateTvAnnouncerSettingsForm === 'function') populateTvAnnouncerSettingsForm(); // §TVANNOUNCE2026/§41
+  if(typeof populateReceiptSettingsForm === 'function') populateReceiptSettingsForm(); // §PRINT-RECEIPT-2026
   // §TOURN-ENTRY-25/26 — Phi tham gia giai (dung chung PRICING_EDIT, dropdown lay tu state.products,
   // KHONG tu chon san pham theo ten — de trong ("— Chưa chọn —") neu Admin chua cau hinh (§26).
   document.getElementById('tournEntryFeeInput').value = state.settings.tournamentEntryFeePerPlayer != null ? state.settings.tournamentEntryFeePerPlayer : 90000;
@@ -30765,7 +30985,10 @@ function openBillModal(playerId, explicitBillId){
     ${bill.status==='open' ? `<button class="secondary" style="width:100%; margin:6px 0; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openAddProductToBillModal('${bill.playerId}')">➕ Thêm sản phẩm / dịch vụ khác</button>` : ''}
     ${bill.status==='open' ? billCreditSectionHtml(bill) : ''}
     ${footer}
-    <button class="secondary" onclick="closeModal()">Đóng</button>
+    <div style="display:flex; gap:8px; margin-top:6px;">
+      <button class="secondary" style="flex:1; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="printBill('${bill.id}')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/></svg>IN BILL</button>
+      <button class="secondary" style="flex:1;" onclick="closeModal()">Đóng</button>
+    </div>
   `;
   document.getElementById('matchModal').classList.add('show');
 }
