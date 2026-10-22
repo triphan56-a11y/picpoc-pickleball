@@ -2,6 +2,12 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.46 (2026-10-22) — §TOURN-NEW-CYCLE-2026. Admin hỏi "muốn tạo giải mới là bấm MỞ LẠI GIẢI hả" — trước đây
+  phải biết bấm "Xóa danh sách cặp" mới sang chu kỳ mới. Thêm nút "🆕 TẠO GIẢI MỚI" cạnh "Đã kết thúc … · MỞ LẠI GIẢI":
+  huỷ participant cũ, làm trống cặp/bảng/lịch/phí giải, reset kết thúc + creditPrizeConfig, gán t.cycleId mới.
+  operationId trao thưởng Credits giải đấu thêm cycleId (giải cũ không có cycleId giữ nguyên id) — trước đây cùng 1
+  VĐV vô địch 2 giải liên tiếp trên cùng catKey sẽ bị coi là "đã trao" ở giải sau.
+
   v1.44.45 (2026-10-22) — §TOURN-FEE-CHANGE-2026. Admin: "ko chỉnh giá giải đấu lại được" — giá trong Cài đặt chỉ
   là mặc định khi KÍCH HOẠT giải mới, giải đang chạy đã snapshot giá. Thêm nút "ĐỔI GIÁ" cạnh "Đã kích hoạt · …/VĐV"
   (quyền PRICING_EDIT, ẩn khi giải đã kết thúc): đổi t.entryFeeConfig + entryFeeAmount của VĐV UNPAID, và VĐV DEBT
@@ -9326,7 +9332,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.45'; // §TOURN-FEE-CHANGE-2026 — nut DOI GIA ve cho giai dang chay
+const PICPOC_APP_VERSION = 'Picpoc v1.44.46'; // §TOURN-NEW-CYCLE-2026 — nut TAO GIAI MOI sau khi ket thuc giai
+// (ban truoc: 'Picpoc v1.44.45') // §TOURN-FEE-CHANGE-2026 — nut DOI GIA ve cho giai dang chay
 // (ban truoc: 'Picpoc v1.44.44') // §TOURN-BULK-COLLECT-2026 — nut THU TAT CA phi giai trong man Ket thuc giai
 // (ban truoc: 'Picpoc v1.44.43') // §CREDIT-TOURN-DEFAULTS-2026 — o muc thuong mac dinh Nhat/Nhi/Ba trong Cai dat
 // (ban truoc: 'Picpoc v1.44.42') // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
@@ -36621,10 +36628,27 @@ function clearPairs(){
   (t.pairs||[]).forEach(pair=> cancelParticipantsForPair(pair.id, 'TOURNAMENT_CLEARED')); // §TOURN-ENTRY-8/37 — huy (khong xoa) participant cu, giu audit
   t.pairs = []; t.groups = []; t.schedule = [];
   t.entryFeeConfig = null; // §TOURN-ENTRY-8 — reset ve tinh nang CHUA kich hoat cho chu ky giai moi (cung catKey) — lan kich hoat tiep theo se snapshot Settings hien hanh, KHONG dung config cu
-  if(t.endedAt){ // §TOURN-END-2026 — giai da ket thuc + luu archives -> bat dau chu ky giai moi sach se (archives giu nguyen)
-    t.endedAt = null; t.endedBy = null; t.manualPodium = null; t.knockout = []; t.status = 'DRAFT'; t.tournamentCompletedWitnessedAt = null;
-  }
+  if(t.endedAt) resetEndedTournamentCycle(t); // §TOURN-END-2026 — giai da ket thuc + luu archives -> bat dau chu ky giai moi sach se (archives giu nguyen)
   saveState(); renderTournamentTab();
+}
+/* §TOURN-NEW-CYCLE-2026 — giai da ket thuc -> chu ky moi tren CUNG catKey. cycleId moi de operationId trao thuong
+   Credits cua giai sau khong trung voi giai truoc (cung VDV vo dich 2 giai lien tiep van duoc trao). */
+function resetEndedTournamentCycle(t){
+  t.endedAt = null; t.endedBy = null; t.manualPodium = null; t.knockout = []; t.status = 'DRAFT'; t.tournamentCompletedWitnessedAt = null;
+  t.creditPrizeConfig = null;
+  t.cycleId = uid('tcy');
+}
+function startNewTournament(){
+  const t = currentTournament();
+  if(!t || !t.endedAt) return;
+  if(!confirm('Tạo giải mới?\n\nKết quả + tiền phí giải "' + t.label + '" đã lưu vào lịch sử. Danh sách cặp, bảng đấu, lịch thi đấu sẽ được làm trống để nhập giải mới.')) return;
+  (t.pairs||[]).forEach(pair=> cancelParticipantsForPair(pair.id, 'TOURNAMENT_CLEARED'));
+  t.pairs = []; t.groups = []; t.schedule = [];
+  t.entryFeeConfig = null;
+  resetEndedTournamentCycle(t);
+  logOverride('tournament_new_cycle', 'Tạo giải mới (sau khi kết thúc ' + t.label + ')', 'tournament', state.currentCat);
+  saveState(); renderTournamentTab();
+  showToast('✓ Đã tạo giải mới — nhập tên giải, ngày thi đấu và danh sách cặp');
 }
 function setPairGroup(pairId, value){
   const t = currentTournament();
@@ -37897,6 +37921,7 @@ function renderTournamentEndButton(){
   if(!t){ el.innerHTML = ''; return; }
   el.innerHTML = t.endedAt
     ? `<span class="muted" style="font-size:.78rem;">Đã kết thúc ${new Date(t.endedAt).toLocaleDateString('vi-VN')}${t.endedBy ? ' · ' + escapeHtml(t.endedBy) : ''}</span>
+       <button class="small no-print" onclick="startNewTournament()">🆕 TẠO GIẢI MỚI</button>
        <button class="small secondary no-print" data-require-permission="PAYMENT_VOID" onclick="reopenTournament()">MỞ LẠI GIẢI</button>`
     : `<button class="small no-print" onclick="openEndTournamentModal()">🏁 KẾT THÚC GIẢI</button>`;
 }
@@ -39360,7 +39385,7 @@ function computeTournamentAwardPlan(catKey){
     if(!snap.playerIds.length){ unresolved.push({ placement: placementLabel, label: snap.teamNameSnapshot }); return; }
     snap.playerIds.forEach(pid=>{
       const p = playerById(pid);
-      const operationId = 'tourn_' + catKey + '_' + placement + '_' + pid;
+      const operationId = 'tourn_' + catKey + (t.cycleId ? '_' + t.cycleId : '') + '_' + placement + '_' + pid; // §TOURN-NEW-CYCLE-2026 — giai cu (khong cycleId) giu nguyen id
       const already = (state.creditTransactions||[]).some(tx=>tx.operationId===operationId && tx.type==='ISSUE');
       rows.push({ placement: placementLabel, pairId, playerId: pid, playerName: p?p.name:snap.teamNameSnapshot, amount, operationId, already });
     });
