@@ -2,6 +2,26 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.42 (2026-10-22) — §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026. Admin: "nên có nút kết thúc giải đấu"; "công
+  nợ người chơi trong giải: đã có trên hệ thống thì link qua và lưu công nợ bên club, chưa có thì tạo người chơi mới"
+  — chot: xu ly TUNG NGUOI, tao moi BAT BUOC SDT.
+  (1) Nut "🏁 KẾT THÚC GIẢI" (canh trang thai giai): chot ket qua (chung ket tu dong, khong co thi chon tay Nhat/Nhi/
+      Ba — computePodium() gio dung t.manualPodium -> Credits/Top-2 Series chay duoc ca giai chi da vong bang); liet
+      ke VDV chua dong/dang no: THU hoac CHUYỂN CÔNG NỢ CLUB tung nguoi — con nguoi chua xu ly thi KHONG cho ket thuc;
+      ket thuc -> status COMPLETED + endedAt/endedBy + t.archives (tom tat ket qua/cap/phi); "MỞ LẠI GIẢI" (ADMIN).
+      Xoa danh sach cap sau khi ket thuc -> giai ve NHÁP, archives giu nguyen; con no chua xu ly thi canh bao truoc khi xoa.
+  (2) moveTournamentFeeToClubDebt(): tao bill CONG NO CLUB dung ten Player (source TOURNAMENT), chuyen dung dong phi cua
+      VDV (+ san pham kem cua bill gop theo nguoi dau tien) khoi bill giai; bill giai het dong -> cancelled
+      MOVED_TO_CLUB_DEBT. Participant 'CLUB_DEBT' = da xu ly o man giai (khong thu lai duoc o giai, thu bang THU NỢ
+      o Tai chinh > Cong no). Bill da thu 1 phan -> khong tu chuyen.
+  (3) Bam "CHO NỢ" trong giai -> ngay sau do mo buoc chuyen cong no Club cho tung nguoi: chon ho so goi y (ten/SDT/
+      lien ket cap) hoac tao ho so moi (ten + SDT bat buoc, kiem tra trung SDT + gioi tinh; status paid_and_left, tag
+      "GIẢI ĐẤU"); "Để sau" giu no trong giai nhu cu.
+  (4) No phi cac giai truoc (danh sach da xoa, bill no khong gan ai) hien trong man Ket thuc giai de chuyen tung nguoi.
+  Test offline (STAFF + Rules): no ca cap -> chuyen 1 nguoi co san + tao moi nguoi kia (thieu SDT/trung SDT/thieu gioi
+  tinh bi tu choi); ket thuc bi chan khi con no; ket thuc + podium chon tay + archives; thu no Club OK; khong thu
+  trung o giai; xoa danh sach giu archives. 0 lenh bi chan, 0 loi.
+
   v1.44.41 (2026-09-27) — §PRINT-RECEIPT-2026. Admin: "thiết kế mẫu để in bill ra đưa cho khách". MOI: nut "IN BILL"
   trong man Bill (moi bill, mo/da tra); Cai dat > the "Thông tin in bill" (ten, dia chi, SDT, ngan hang + so TK + chu
   TK cho QR, kho giay 80mm/58mm/A5, loi cam on) + nut "IN THỬ BILL MẪU". Bill: logo (in den), thong tin club, "PHIẾU
@@ -7431,7 +7451,7 @@
         <div class="tourn-step-section">
           <div class="tourn-step-head"><span class="tourn-step-num">01</span><h2 class="tourn-step-title">THÔNG TIN &amp; QUY CHẾ</h2></div>
           <div class="card no-print" id="tournamentSetupCard">
-            <h3 class="tourn-subcard-title">THÔNG TIN GIẢI <span class="badge" id="tournamentStatusBadge" style="margin-left:8px;"></span></h3>
+            <h3 class="tourn-subcard-title" style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">THÔNG TIN GIẢI <span class="badge" id="tournamentStatusBadge"></span><span id="tournEndBtnWrap" style="margin-left:auto; display:inline-flex; align-items:center; gap:8px;"></span></h3>
             <div class="tournament-setup-grid">
               <div><label>Tên giải</label><input type="text" id="tsName" placeholder="VD: Giải Picpoc Mùa Hè 2026" onchange="saveTournamentSetup()"></div>
               <div><label>Nội dung</label><input type="text" id="tsContent" placeholder="VD: Đôi Nam 5.4" onchange="saveTournamentSetup()"></div>
@@ -9287,7 +9307,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.41'; // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.42'; // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
+// (ban truoc: 'Picpoc v1.44.41') // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
 // (ban truoc: 'Picpoc v1.44.40') // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
 // (ban truoc: 'Picpoc v1.44.39') // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
 // (ban truoc: 'Picpoc v1.44.38') // §FIX-CHECKIN-STALEREF-2026 — check-in bi hoan tac nham + bill Ve Social no oan
@@ -36567,11 +36588,17 @@ function removePair(id){
   saveState(); renderTournamentTab();
 }
 function clearPairs(){
-  if(!confirm('Xóa toàn bộ danh sách cặp của giải này?')) return;
   const t = currentTournament();
+  // §TOURN-END-2026 — con VDV chua dong/dang no ma xoa danh sach thi khoan no se "mo coi" (khong gan ai) -> nhac Ket thuc giai truoc
+  const unsettled = (t && t.entryFeeConfig && !t.endedAt) ? getTournamentUnsettledParticipants(state.currentCat) : [];
+  const warn = unsettled.length ? '\n\n⚠ Còn ' + unsettled.length + ' VĐV chưa đóng/đang nợ phí giải. Nên bấm "KẾT THÚC GIẢI" để thu hoặc chuyển công nợ Club cho từng người trước khi xoá.' : '';
+  if(!confirm('Xóa toàn bộ danh sách cặp của giải này?' + (t && t.endedAt ? ' (Giải đã kết thúc — kết quả đã được lưu vào lịch sử giải.)' : '') + warn)) return;
   (t.pairs||[]).forEach(pair=> cancelParticipantsForPair(pair.id, 'TOURNAMENT_CLEARED')); // §TOURN-ENTRY-8/37 — huy (khong xoa) participant cu, giu audit
   t.pairs = []; t.groups = []; t.schedule = [];
   t.entryFeeConfig = null; // §TOURN-ENTRY-8 — reset ve tinh nang CHUA kich hoat cho chu ky giai moi (cung catKey) — lan kich hoat tiep theo se snapshot Settings hien hanh, KHONG dung config cu
+  if(t.endedAt){ // §TOURN-END-2026 — giai da ket thuc + luu archives -> bat dau chu ky giai moi sach se (archives giu nguyen)
+    t.endedAt = null; t.endedBy = null; t.manualPodium = null; t.knockout = []; t.status = 'DRAFT'; t.tournamentCompletedWitnessedAt = null;
+  }
   saveState(); renderTournamentTab();
 }
 function setPairGroup(pairId, value){
@@ -36922,6 +36949,7 @@ function applyTournamentExtraStockUpdates(stockUpdates, playerLabel){
 function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
   if(!participant || participant.canceled) return null;
+  if(participant.entryFeeStatus === 'CLUB_DEBT'){ showToast('VĐV này đã chuyển sang công nợ Club — thu ở Tài chính > Công nợ.'); return null; } // §TOURN-DEBT-TO-CLUB-2026
   if(participant.entryFeeStatus === 'PAID') return null; // §idempotent — đã thu rồi, double-click không tạo bill/payment lần 2
   const extra = buildTournamentExtraBillItems(extraItems);
   if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
@@ -36953,7 +36981,7 @@ function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
    2 chai). Chỉ thu các participant còn UNPAID trong cặp (nếu 1 người đã đóng riêng trước đó thì
    không thu lại — §double-payment). */
 function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems){
-  const participants = getTournamentEntryParticipantsForPair(pairId).filter(p=>p.entryFeeStatus!=='PAID');
+  const participants = getTournamentEntryParticipantsForPair(pairId).filter(p=>!isTournFeeSettled(p));
   if(!participants.length) return null; // §idempotent — cả đôi đã thu đủ rồi
   const extra = buildTournamentExtraBillItems(extraItems);
   if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
@@ -36985,8 +37013,8 @@ function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems){
    se TAI SU DUNG dung bill nay (da co san logic o tren), khong tao bill trung. */
 function allowTournamentEntryFeeDebt(mode, targetId, extraItems){
   const participants = mode==='single'
-    ? [state.tournamentEntryParticipants.find(p=>p.id===targetId)].filter(p=>p && !p.canceled && p.entryFeeStatus!=='PAID')
-    : getTournamentEntryParticipantsForPair(targetId).filter(p=>p.entryFeeStatus!=='PAID');
+    ? [state.tournamentEntryParticipants.find(p=>p.id===targetId)].filter(p=>p && !p.canceled && !isTournFeeSettled(p))
+    : getTournamentEntryParticipantsForPair(targetId).filter(p=>!isTournFeeSettled(p));
   if(!participants.length) return null; // §idempotent
   const extra = buildTournamentExtraBillItems(extraItems);
   if(extra.error){ showToast('⚠️ ' + extra.error); return null; }
@@ -37133,13 +37161,15 @@ function cancelTournamentEntryParticipant(participantId){
 function getTournamentEntryFeeSummary(catKey){
   const list = getTournamentEntryParticipantsForCat(catKey);
   const paid = list.filter(p=>p.entryFeeStatus==='PAID');
+  const movedToClub = list.filter(p=>p.entryFeeStatus==='CLUB_DEBT'); // §TOURN-DEBT-TO-CLUB-2026 — da xu ly (thu o Cong no Club)
   const totalDue = list.reduce((s,p)=>s+p.entryFeeAmount,0);
   const totalCollected = paid.reduce((s,p)=>s+p.entryFeeAmount,0);
   const waterEntitledTotal = list.reduce((s,p)=>s+p.waterEntitledQty,0);
   const waterIssuedTotal = list.reduce((s,p)=>s+Math.min(p.waterIssuedQty,p.waterEntitledQty),0);
   return {
-    registered: list.length, paidCount: paid.length, unpaidCount: list.length-paid.length,
-    totalDue, totalCollected, totalOutstanding: totalDue-totalCollected,
+    registered: list.length, paidCount: paid.length, unpaidCount: list.length-paid.length-movedToClub.length,
+    clubDebtCount: movedToClub.length, clubDebtAmount: movedToClub.reduce((s,p)=>s+p.entryFeeAmount,0),
+    totalDue, totalCollected, totalOutstanding: totalDue-totalCollected-movedToClub.reduce((s,p)=>s+p.entryFeeAmount,0),
     waterEntitledTotal, waterIssuedTotal, waterPendingTotal: waterEntitledTotal-waterIssuedTotal
   };
 }
@@ -37217,7 +37247,7 @@ function renderTournamentEntryFeeSection(catKey){
     if(!parts.length) return null; // cap them sau khi kich hoat nhung chua kip sync (khong nen xay ra, an toan)
     const freshNames = splitPairLabel(pair.label);
     const players = parts.map(p=>({ p, name: p.slot === 'A' ? freshNames[0] : freshNames[1] }));
-    const paidCount = parts.filter(p=>p.entryFeeStatus==='PAID').length;
+    const paidCount = parts.filter(p=>isTournFeeSettled(p)).length; // §TOURN-DEBT-TO-CLUB-2026 — CLUB_DEBT = da xu ly
     const unpaidCount = parts.length - paidCount;
     const pairTotal = parts.reduce((sum,p)=>sum+p.entryFeeAmount,0);
     return { pair, parts, players, paidCount, unpaidCount, total: parts.length, pairTotal };
@@ -37250,12 +37280,13 @@ function renderTournamentEntryFeeSection(catKey){
 
   const unpaidDetailHtml = info => {
     const rows = info.players.map(({p,name})=>{
-      const paid = p.entryFeeStatus === 'PAID';
+      const paid = isTournFeeSettled(p);
+      const movedClub = p.entryFeeStatus === 'CLUB_DEBT';
       // §FEATURE-TOURNFEE-DEBT-WATER — phan biet rieng trang thai DEBT (da ghi no, cho thu sau) voi
       // UNPAID thuong (chua ai lam gi) — tranh Staff tuong nham "chua ai xu ly" trong khi thuc ra da
       // duoc ghi no co chu dich.
       const isDebt = p.entryFeeStatus === 'DEBT';
-      const dot = paid ? '<span class="tfee-fee-dot tfee-dot-paid">✓ Đã đóng</span>'
+      const dot = movedClub ? '<span class="tfee-fee-dot tfee-dot-paid" style="color:#b45309;">→ Công nợ Club</span>' : paid ? '<span class="tfee-fee-dot tfee-dot-paid">✓ Đã đóng</span>'
         : isDebt ? '<span class="tfee-fee-dot tfee-dot-unpaid" style="color:#b91c1c;">📒 Đã ghi nợ</span>'
         : '<span class="tfee-fee-dot tfee-dot-unpaid">● Chưa đóng</span>';
       const btn = paid ? '' : `<button class="small tfee-detail-collect" onclick="event.stopPropagation(); showTournEntryFeeConfirm('${p.id}')">THU ${fmtVnd(p.entryFeeAmount)}</button>`;
@@ -37287,7 +37318,7 @@ function renderTournamentEntryFeeSection(catKey){
 
   const unpaidRowsHtml = unpaidList.map(info=>{
     const expanded = expandedId === info.pair.id;
-    const outstanding = info.parts.filter(p=>p.entryFeeStatus!=='PAID').reduce((sum,p)=>sum+p.entryFeeAmount,0);
+    const outstanding = info.parts.filter(p=>!isTournFeeSettled(p)).reduce((sum,p)=>sum+p.entryFeeAmount,0);
     let statusLabel, actionBtn;
     if(info.paidCount === 0){
       // §11 — chua ai dong: nhan "Chưa đóng N/N" + nut gop "THU CẢ ĐÔI" (CHI hien khi CA HAI cung
@@ -37297,7 +37328,7 @@ function renderTournamentEntryFeeSection(catKey){
     } else {
       // §12 — da dong 1 phan: nhan "Đã đóng k/N" + CHI 1 nut "THU {amount}" cho DUNG nguoi con lai
       // chua dong (khong bao gio hien "THU CẢ ĐÔI" nua o day — tranh thu trung nguoi da dong).
-      const remaining = info.parts.find(p=>p.entryFeeStatus!=='PAID');
+      const remaining = info.parts.find(p=>!isTournFeeSettled(p));
       statusLabel = `<span class="tfee-row-status tfee-status-partial">Đã đóng ${info.paidCount}/${info.total}</span>`;
       actionBtn = remaining ? `<button class="small tfee-action-btn" onclick="event.stopPropagation(); showTournEntryFeeConfirm('${remaining.id}')">THU ${fmtVnd(remaining.entryFeeAmount)}</button>` : '';
     }
@@ -37462,12 +37493,13 @@ function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
 function showTournEntryFeeConfirm(participantId){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
   if(!participant || participant.canceled || participant.entryFeeStatus==='PAID') return;
+  if(participant.entryFeeStatus==='CLUB_DEBT'){ showToast('VĐV này đã chuyển sang công nợ Club — thu ở Tài chính > Công nợ.'); return; } // §TOURN-DEBT-TO-CLUB-2026
   tournEntryModalPaymentMethod = 'BANK_TRANSFER'; // moi lan mo phai mac dinh chuyen khoan, giong showPayConfirm()
   tournEntryModalExtraItems = []; // §FEATURE-TOURNFEE-DEBT-WATER — reset gio hang tam moi lan mo modal
   renderTournEntryFeeConfirmModal(participant.name, participant.entryFeeAmount, 'single', participantId);
 }
 function showTournEntryFeeForPairConfirm(pairId){
-  const parts = getTournamentEntryParticipantsForPair(pairId).filter(p=>p.entryFeeStatus!=='PAID');
+  const parts = getTournamentEntryParticipantsForPair(pairId).filter(p=>!isTournFeeSettled(p));
   if(!parts.length) return;
   const t = state.tournaments[parts[0].catKey];
   const pair = t && (t.pairs||[]).find(pr=>pr.id===pairId);
@@ -37506,8 +37538,290 @@ function confirmTournEntryFeeDebtModal(mode, targetId){
   closeModal();
   renderTournamentTab();
   showToast('📒 Đã ghi nợ ' + fmtVnd(billTotal(result.bill)) + ' cho ' + result.participants.map(p=>p.name).join(', '));
+  // §TOURN-DEBT-TO-CLUB-2026 — ghi no xong thi xu ly TUNG NGUOI: noi ho so Club (hoac tao moi, SDT bat buoc) va
+  // chuyen khoan no sang Cong no Club ngay luc nguoi do con o quay. "Để sau" thi van ghi no trong giai nhu cu.
+  startTournFeeClubDebtFlow(result.participants.map(p=>p.id));
 }
 
+/* ================= §TOURN-DEBT-TO-CLUB-2026 + §TOURN-END-2026 =================
+   Admin: (1) "trong phần giải đấu, nên có nút kết thúc giải đấu"; (2) "công nợ người chơi trong giải đấu, nếu
+   người chơi đã có trên hệ thống thì link qua và lưu công nợ bên club; nếu chưa có thì tạo người chơi mới trên
+   club và lưu công nợ" — chot: KET THUC GIAI phai XU LY TUNG NGUOI con no/chua dong; tao ho so moi BAT BUOC SDT.
+   - Chuyen no = tao bill CONG NO CLUB dung ten Player (debtCreatedAt, source 'TOURNAMENT'), chuyen DUNG dong phi
+     cua VDV do (+ san pham kem neu bill gop: theo nguoi DAU TIEN duoc chuyen) ra khoi bill giai; bill giai het dong
+     -> 'cancelled' (MOVED_TO_CLUB_DEBT) => khong tinh tien 2 lan. Participant -> 'CLUB_DEBT' (coi la DA XU LY o man
+     giai, thu tiep o Tai chinh > Cong no bang THU NỢ). Bill da thu 1 phan -> khong tu chuyen.
+   - Ket thuc giai: chot ket qua (chung ket tu dong, hoac chon tay Nhat/Nhi/Ba, hoac khong xep hang) -> tung VDV
+     chua dong/dang no: THU hoac CHUYEN CONG NO CLUB -> moi cho bam KET THUC (status COMPLETED + endedAt) va luu
+     ban tom tat vao t.archives (khong mat lich su khi xoa danh sach cap cho giai moi). ADMIN mo lai duoc. */
+function isTournFeeSettled(p){ return !!p && (p.entryFeeStatus === 'PAID' || p.entryFeeStatus === 'CLUB_DEBT'); }
+function moveTournamentFeeToClubDebt(participantId, playerId){
+  const part = (state.tournamentEntryParticipants||[]).find(p=>p.id===participantId);
+  if(!part || (part.canceled && part.entryFeeStatus !== 'DEBT')) return { ok:false, reason:'Không tìm thấy VĐV (có thể đã huỷ đăng ký).' }; // no giai cu (danh sach da xoa) van chuyen duoc
+  if(isTournFeeSettled(part)) return { ok:false, reason: part.entryFeeStatus==='PAID' ? 'VĐV này đã đóng phí.' : 'VĐV này đã được chuyển công nợ Club.' };
+  const pl = playerById(playerId);
+  if(!pl) return { ok:false, reason:'Không tìm thấy hồ sơ người chơi.' };
+  const t = state.tournaments[part.catKey];
+  const now = Date.now();
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  const src = part.billId ? (state.bills||[]).find(b=>b.id===part.billId && b.status==='open') : null;
+  if(src && getBillCollected(src) > 0) return { ok:false, reason:'Bill phí giải này đã thu một phần — thu nốt ở màn Phí tham gia giải.' };
+  let moved = [];
+  if(src){
+    if(!Array.isArray(src.items)) src.items = [];
+    const mine = src.items.filter(it=>it && it.meta && it.meta.participantId === part.id);
+    const othersEntry = src.items.filter(it=>it && it.type === 'tournament_entry' && !(it.meta && it.meta.participantId === part.id));
+    const extras = src.items.filter(it=>it && it.type !== 'tournament_entry');
+    moved = mine.concat(extras); // san pham kem (nuoc...) di theo nguoi dau tien duoc chuyen khoi bill gop
+    src.items = othersEntry;
+    if(!src.items.length){ src.status = 'cancelled'; src.cancelledAt = now; src.cancelledBy = 'system-move-club-debt'; src.cancelReason = 'MOVED_TO_CLUB_DEBT'; }
+  }
+  if(!moved.some(it=>it.type === 'tournament_entry')){
+    moved.unshift({ id: uid('bi'), type:'tournament_entry', label:'Vé tham gia giải' + (t ? (' — ' + t.label) : ''), amount: part.entryFeeAmount, qty:1, unitPrice: part.entryFeeAmount, timestamp: now, meta:{ participantId: part.id, catKey: part.catKey } });
+  }
+  moved.forEach(it=>{ if(it.type === 'tournament_entry' && t && !/—/.test(it.label||'')) it.label = 'Vé tham gia giải — ' + t.label; });
+  const cb = { id: uid('bill'), playerId: pl.id, playerName: pl.name, status:'open', items: moved, openedAt: now, paidAt: null, visitId: null,
+    debtCreatedAt: (src && src.debtCreatedAt) || now, debtCreatedBy: u ? u.name : 'staff',
+    source:'TOURNAMENT', sourceCatKey: part.catKey, sourceBillId: src ? src.id : null };
+  state.bills.push(cb);
+  if(src){ src.movedToClubBillIds = (src.movedToClubBillIds||[]).concat([cb.id]); markEntityDirty('bills', src.id); }
+  markEntityDirty('bills', cb.id);
+  part.playerId = pl.id; part.entryFeeStatus = 'CLUB_DEBT'; part.billId = cb.id; part.clubDebtAt = now;
+  markEntityDirty('tournamentEntryParticipants', part.id);
+  const f = (typeof findPairById === 'function') ? findPairById(part.pairId) : null;
+  if(f){ const ids = getPairPlayerIds(f.pair); if(part.slot === 'A') setPairPlayerIds(f.pair, pl.id, ids[1]); else setPairPlayerIds(f.pair, ids[0], pl.id); }
+  logOverride('tournament_fee_moved_to_club_debt', 'Chuyển nợ phí giải ' + (t ? t.label : part.catKey) + ' của ' + part.name + ' sang công nợ Club — hồ sơ "' + pl.name + '"' + (pl.phone ? ' (' + pl.phone + ')' : '') + ' — ' + fmtVnd(billTotal(cb)), 'bill', cb.id);
+  saveState();
+  return { ok:true, bill: cb, player: pl, amount: billTotal(cb) };
+}
+/* Tao ho so Player moi TU GIAI (SDT bat buoc) — cung cac field nhu checkInPlayer(), nhung status 'paid_and_left'
+   (khong hien o Dang o san) va khong mo phien/bill. */
+function createPlayerFromTournament(name, phoneRaw, gender){
+  name = String(name||'').trim();
+  if(!name) return { ok:false, reason:'Nhập tên người chơi.' };
+  const ph = normalizePhone(phoneRaw);
+  if(!ph.phoneDigits || !ph.valid) return { ok:false, reason:'Số điện thoại bắt buộc — đúng 10 số, bắt đầu bằng 0.' };
+  const dup = findPlayerByPhoneDigits(ph.phoneDigits, null);
+  if(dup) return { ok:false, reason:'SĐT này đã thuộc hồ sơ "' + dup.name + '" — hãy chọn hồ sơ đó ở danh sách phía trên.', dupId: dup.id };
+  if(gender !== 'MALE' && gender !== 'FEMALE') return { ok:false, reason:'Chọn giới tính.' };
+  const pprSet = getPprSettings();
+  const seedPpr = clampPpr(pprSet.seedMap && pprSet.seedMap.coban != null ? pprSet.seedMap.coban : DEFAULT_PPR);
+  const now = Date.now();
+  const player = { id: uid('p'), name, level: 2.5, gamesPlayed:0, status:'paid_and_left', waitSince: null, paidAndLeftAt: now,
+    restOneRound:false, notReadyStrikes:0, consecutivePlayed:0, lastSelectedRound:0, recentPartners:[], recentOpponents:[],
+    checkins:0, createdAt: now, lastCheckInAt: null, archived:false, tags:['GIẢI ĐẤU'], note:'Tạo từ Giải đấu (công nợ phí giải)',
+    phone: ph.phone, phoneDigits: ph.phoneDigits, socialParticipation:false,
+    gender, ppr: seedPpr, pprInitial: seedPpr, pprInitialSource:'SEED_LEVEL_PICK', pprInitialAt: now,
+    pprUncertainty: pprSet.initialUncertainty, pprConfidence: 0, pprRatedMatches: 0, pprStatus:'PROVISIONAL', pprLastRatedMatchAt: null,
+    pprAlgorithmVersion: PPR_ALGORITHM_VERSION, pprManualOverrideAt: null, pprManualOverrideBy: null, initialAssessment: null };
+  state.players.push(player);
+  markEntityDirty('players', player.id);
+  logOverride('player_created_from_tournament', 'Tạo hồ sơ người chơi "' + name + '" (' + ph.phone + ') từ Giải đấu', 'player', player.id);
+  return { ok:true, player };
+}
+/* Hang doi xu ly TUNG NGUOI: moi lan 1 modal cho 1 VDV — chon ho so co san (goi y theo ten/SDT) hoac tao moi (SDT). */
+let __tournDebtQueue = [];
+let __tournDebtAfter = null;
+function startTournFeeClubDebtFlow(participantIds, after){
+  __tournDebtQueue = (participantIds||[]).slice();
+  __tournDebtAfter = after || null;
+  nextTournFeeClubDebt();
+}
+function nextTournFeeClubDebt(){
+  while(__tournDebtQueue.length){
+    const id = __tournDebtQueue[0];
+    const part = (state.tournamentEntryParticipants||[]).find(p=>p.id===id);
+    if(part && (!part.canceled || part.entryFeeStatus === 'DEBT') && !isTournFeeSettled(part)){ renderTournFeeClubDebtModal(part); return; }
+    __tournDebtQueue.shift();
+  }
+  const after = __tournDebtAfter; __tournDebtAfter = null;
+  closeModal();
+  renderTournamentTab();
+  if(typeof after === 'function') after();
+}
+function skipTournFeeClubDebt(){ __tournDebtQueue.shift(); nextTournFeeClubDebt(); }
+function tournDebtCandidatePlayers(part, query){
+  const q = vnFold(String(query||'').trim()).toLowerCase();
+  const qDigits = normalizeSearchPhoneQuery(query||'');
+  const guess = (()=>{ const f = findPairById(part.pairId); if(!f) return null; const ids = getPairPlayerIds(f.pair); return part.slot === 'A' ? ids[0] : ids[1]; })();
+  const nameKey = vnFold(String(part.name||'').replace(/\(\d\)$/,'').trim()).toLowerCase();
+  const tokens = nameKey.split(/\s+/).filter(t=>t.length >= 2);
+  const scored = (state.players||[]).filter(p=>!p.archived).map(p=>{
+    const n = vnFold(p.name||'').toLowerCase();
+    let s = 0;
+    if(p.id === guess) s += 100;
+    if(q){ if(n.includes(q)) s += 50; if(qDigits.length >= 3 && (p.phoneDigits||'').includes(qDigits)) s += 60; }
+    else { if(n === nameKey) s += 40; tokens.forEach(t=>{ if(n.includes(t)) s += 10; }); }
+    return { p, s };
+  }).filter(x=>x.s > 0).sort((a,b)=>b.s-a.s).slice(0, 8);
+  return scored.map(x=>x.p);
+}
+function renderTournFeeClubDebtModal(part, query){
+  const t = state.tournaments[part.catKey];
+  const src = part.billId ? (state.bills||[]).find(b=>b.id===part.billId && b.status==='open') : null;
+  const amount = src ? (src.items||[]).filter(it=>it.meta && it.meta.participantId === part.id).reduce((s,it)=>s+(it.amount||0),0) || part.entryFeeAmount : part.entryFeeAmount;
+  const cands = tournDebtCandidatePlayers(part, query);
+  const left = __tournDebtQueue.length;
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>📒 Chuyển công nợ Club — ${escapeHtml(part.name)}</h2>
+    <div class="small-note">${escapeHtml(t ? t.label : '')} · Nợ phí giải <b>${fmtVnd(amount)}</b>${left > 1 ? ' · còn ' + (left-1) + ' người sau' : ''}. Khoản nợ sẽ nằm ở Tài chính → Công nợ của hồ sơ được chọn.</div>
+    <h3 style="margin:10px 0 4px;">1. Chọn hồ sơ có sẵn</h3>
+    <input type="text" id="tdSearch" placeholder="Tìm tên hoặc SĐT..." value="${escapeHtml(query||'')}" oninput="renderTournFeeClubDebtModalSearch('${part.id}', this.value)">
+    <div id="tdCands" style="max-height:220px; overflow:auto; margin-top:6px;">
+      ${cands.length ? cands.map(p=>`<div class="bill-line" style="align-items:center;"><span><b>${escapeHtml(p.name)}</b>${p.phone ? ' <span class="muted">· ' + escapeHtml(p.phone) + '</span>' : ' <span class="muted">· chưa có SĐT</span>'}</span>
+        <button class="small" onclick="confirmTournFeeToPlayer('${part.id}','${p.id}')">CHỌN</button></div>`).join('') : '<div class="muted small-note">Không có hồ sơ gợi ý — tìm theo tên/SĐT hoặc tạo hồ sơ mới bên dưới.</div>'}
+    </div>
+    <h3 style="margin:12px 0 4px;">2. Hoặc tạo hồ sơ mới</h3>
+    <div class="grid-2col">
+      <div><label>Tên</label><input type="text" id="tdNewName" value="${escapeHtml(String(part.name||'').replace(/\s*\(\d\)$/,''))}"></div>
+      <div><label>SĐT (bắt buộc)</label><input type="tel" id="tdNewPhone" inputmode="numeric" placeholder="09xx xxx xxx"></div>
+    </div>
+    <label>Giới tính</label>
+    <select id="tdNewGender"><option value="">— Chọn —</option><option value="MALE">Nam</option><option value="FEMALE">Nữ</option></select>
+    <button class="big" style="margin-top:8px;" onclick="createAndMoveTournFee('${part.id}')">TẠO HỒ SƠ & CHUYỂN NỢ</button>
+    <button class="secondary" onclick="skipTournFeeClubDebt()">Để sau (vẫn ghi nợ trong giải)</button>
+  `;
+  document.getElementById('matchModal').classList.add('show');
+}
+const renderTournFeeClubDebtModalSearch = debounce(function(partId, q){
+  const part = (state.tournamentEntryParticipants||[]).find(p=>p.id===partId);
+  if(!part) return;
+  const cands = tournDebtCandidatePlayers(part, q);
+  const el = document.getElementById('tdCands');
+  if(!el) return;
+  el.innerHTML = cands.length ? cands.map(p=>`<div class="bill-line" style="align-items:center;"><span><b>${escapeHtml(p.name)}</b>${p.phone ? ' <span class="muted">· ' + escapeHtml(p.phone) + '</span>' : ' <span class="muted">· chưa có SĐT</span>'}</span>
+    <button class="small" onclick="confirmTournFeeToPlayer('${part.id}','${p.id}')">CHỌN</button></div>`).join('') : '<div class="muted small-note">Không tìm thấy — tạo hồ sơ mới bên dưới.</div>';
+}, 200);
+function confirmTournFeeToPlayer(partId, playerId){
+  const pl = playerById(playerId);
+  const part = (state.tournamentEntryParticipants||[]).find(p=>p.id===partId);
+  if(!pl || !part) return;
+  if(!confirm('Chuyển nợ phí giải của "' + part.name + '" sang công nợ Club của hồ sơ "' + pl.name + '"' + (pl.phone ? ' (' + pl.phone + ')' : '') + '?')) return;
+  const r = moveTournamentFeeToClubDebt(partId, playerId);
+  if(!r.ok){ showToast('⚠️ ' + r.reason); return; }
+  showToast('📒 Đã chuyển ' + fmtVnd(r.amount) + ' sang công nợ của ' + r.player.name);
+  __tournDebtQueue.shift();
+  nextTournFeeClubDebt();
+}
+function createAndMoveTournFee(partId){
+  const name = (document.getElementById('tdNewName')||{}).value || '';
+  const phone = (document.getElementById('tdNewPhone')||{}).value || '';
+  const gender = (document.getElementById('tdNewGender')||{}).value || '';
+  const c = createPlayerFromTournament(name, phone, gender);
+  if(!c.ok){ showToast('⚠️ ' + c.reason); return; }
+  const r = moveTournamentFeeToClubDebt(partId, c.player.id);
+  if(!r.ok){ showToast('⚠️ ' + r.reason); return; }
+  showToast('✓ Đã tạo hồ sơ ' + c.player.name + ' và chuyển ' + fmtVnd(r.amount) + ' sang công nợ Club');
+  __tournDebtQueue.shift();
+  nextTournFeeClubDebt();
+}
+/* ---- KET THUC GIAI ---- */
+function getTournamentUnsettledParticipants(catKey){
+  return getTournamentEntryParticipantsForCat(catKey).filter(p=>!isTournFeeSettled(p) && (p.entryFeeAmount||0) > 0);
+}
+/* No phi giai CU: ve da bi huy khi xoa danh sach cap (TOURNAMENT_CLEARED/PAIR_REMOVED) nhung bill no van mo, khong
+   gan nguoi choi nao -> truoc day khong hien o Cong no Club cua ai. */
+function getOrphanTournamentDebts(){
+  return (state.tournamentEntryParticipants||[]).filter(p=>p && p.canceled && p.entryFeeStatus === 'DEBT' && p.billId &&
+    (state.bills||[]).some(b=>b.id===p.billId && b.status==='open' && getBillOutstanding(b) > 0));
+}
+function openEndTournamentModal(){
+  const catKey = state.currentCat;
+  const t = state.tournaments[catKey];
+  if(!t) return;
+  if(t.endedAt){ showToast('Giải này đã kết thúc lúc ' + new Date(t.endedAt).toLocaleString('vi-VN')); return; }
+  const autoPodium = computeKnockoutPodium(catKey);
+  const unsettled = t.entryFeeConfig ? getTournamentUnsettledParticipants(catKey) : [];
+  const pairOpts = sel => '<option value="">— Không chọn —</option>' + (t.pairs||[]).map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${escapeHtml(p.label)}</option>`).join('');
+  const mp = t.manualPodium || {};
+  const resultHtml = autoPodium
+    ? `<div class="bill-line"><span>🥇 Nhất</span><span>${escapeHtml(pairLabel(autoPodium.champion))}</span></div>
+       <div class="bill-line"><span>🥈 Nhì</span><span>${escapeHtml(pairLabel(autoPodium.runnerUp))}</span></div>
+       ${(autoPodium.thirdPlace||[]).map(id=>`<div class="bill-line"><span>🥉 Ba</span><span>${escapeHtml(pairLabel(id))}</span></div>`).join('')}
+       <div class="small-note">Lấy tự động từ trận chung kết.</div>`
+    : `<div class="small-note">Giải chưa có kết quả chung kết — chọn tay (để trống nếu kết thúc không xếp hạng).</div>
+       <label>🥇 Nhất</label><select id="endChampion">${pairOpts(mp.champion)}</select>
+       <label>🥈 Nhì</label><select id="endRunnerUp">${pairOpts(mp.runnerUp)}</select>
+       <label>🥉 Ba</label><select id="endThird">${pairOpts((mp.thirdPlace||[])[0])}</select>`;
+  const feeHtml = !t.entryFeeConfig ? '<div class="small-note">Giải không bật Phí tham gia giải.</div>'
+    : unsettled.length
+      ? `<div class="small-note" style="color:var(--danger);">Còn <b>${unsettled.length}</b> VĐV chưa đóng/đang nợ — xử lý TỪNG NGƯỜI (thu tiền hoặc chuyển công nợ Club) rồi mới kết thúc được.</div>` +
+        unsettled.map(p=>`<div class="bill-line" style="align-items:center;"><span>${escapeHtml(p.name)} <span class="muted">· ${p.entryFeeStatus==='DEBT'?'đang ghi nợ trong giải':'chưa đóng'} · ${fmtVnd(p.entryFeeAmount)}</span></span>
+          <span style="display:inline-flex; gap:6px;"><button class="small" onclick="closeModal(); showTournEntryFeeConfirm('${p.id}')">THU</button>
+          <button class="small secondary" onclick="startTournFeeClubDebtFlow(['${p.id}'], openEndTournamentModal)">CHUYỂN CÔNG NỢ CLUB</button></span></div>`).join('')
+      : '<div class="small-note">✓ Tất cả VĐV đã đóng phí hoặc đã chuyển công nợ Club.</div>';
+  const water = t.entryFeeConfig ? getTournamentEntryParticipantsForCat(catKey).reduce((s,p)=>s+Math.max(0,(p.waterEntitledQty||0)-(p.waterIssuedQty||0)),0) : 0;
+  const orphans = getOrphanTournamentDebts();
+  const orphanHtml = orphans.length ? `<h3 style="margin:12px 0 4px;">Nợ phí các giải trước (chưa gắn người chơi)</h3>
+    <div class="small-note">Danh sách cặp của các giải này đã bị xoá nên khoản nợ không nằm trong Công nợ Club của ai. Chuyển từng người (không bắt buộc để kết thúc giải này).</div>` +
+    orphans.map(p=>`<div class="bill-line" style="align-items:center;"><span>${escapeHtml(p.name)} <span class="muted">· ${escapeHtml((state.tournaments[p.catKey]||{}).label || p.catKey)} · ${fmtVnd(p.entryFeeAmount)}</span></span>
+      <button class="small secondary" onclick="startTournFeeClubDebtFlow(['${p.id}'], openEndTournamentModal)">CHUYỂN CÔNG NỢ CLUB</button></div>`).join('') : '';
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>🏁 Kết thúc giải — ${escapeHtml(t.label)}</h2>
+    <h3 style="margin:8px 0 4px;">1. Kết quả</h3>${resultHtml}
+    <h3 style="margin:12px 0 4px;">2. Phí tham gia giải</h3>${feeHtml}
+    ${water > 0 ? `<div class="small-note">Còn ${water} chai nước kèm vé chưa phát — sẽ bỏ qua, không trừ kho.</div>` : ''}
+    ${t.creditPrizeConfig ? '<div class="small-note">Giải có thưởng Picpoc Credits — sau khi kết thúc, vào thẻ "Giải thưởng Picpoc Credits" để trao thưởng.</div>' : ''}
+    ${orphanHtml}
+    <button class="big" style="margin-top:10px;" ${unsettled.length ? 'disabled' : ''} onclick="confirmEndTournament()">🏁 KẾT THÚC GIẢI</button>
+    <button class="secondary" onclick="closeModal()">Đóng</button>
+  `;
+  document.getElementById('matchModal').classList.add('show');
+}
+function confirmEndTournament(){
+  const catKey = state.currentCat;
+  const t = state.tournaments[catKey];
+  if(!t || t.endedAt) return;
+  if(t.entryFeeConfig && getTournamentUnsettledParticipants(catKey).length){ showToast('Còn VĐV chưa xử lý phí — thu tiền hoặc chuyển công nợ Club trước.'); openEndTournamentModal(); return; }
+  const auto = computeKnockoutPodium(catKey);
+  if(!auto){
+    const v = id=>{ const el = document.getElementById(id); return el && el.value ? el.value : null; };
+    const champion = v('endChampion'), runnerUp = v('endRunnerUp'), third = v('endThird');
+    if((champion && runnerUp && champion === runnerUp) || (third && (third === champion || third === runnerUp))){ showToast('Một cặp không thể giữ 2 hạng.'); return; }
+    t.manualPodium = (champion || runnerUp || third) ? { champion, runnerUp, thirdPlace: third ? [third] : [] } : null;
+  }
+  if(!confirm('Kết thúc giải "' + t.label + '"? Kết quả và tiền phí sẽ được chốt (ADMIN có thể mở lại nếu nhầm).')) return;
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  const podium = computePodium(catKey);
+  const s = t.entryFeeConfig ? getTournamentEntryFeeSummary(catKey) : null;
+  t.status = 'COMPLETED';
+  t.endedAt = Date.now();
+  t.endedBy = u ? u.name : 'staff';
+  t.archives = (t.archives||[]).concat([{
+    id: uid('tarc'), endedAt: t.endedAt, endedBy: t.endedBy, label: t.label, setup: Object.assign({}, t.setup||{}),
+    pairs: (t.pairs||[]).map(p=>({ id:p.id, label:p.label, playerIdA: p.playerIdA||null, playerIdB: p.playerIdB||null })),
+    podium: podium ? { champion: podium.champion ? pairLabel(podium.champion) : null, runnerUp: podium.runnerUp ? pairLabel(podium.runnerUp) : null, thirdPlace: (podium.thirdPlace||[]).map(pairLabel) } : null,
+    fees: s ? { registered: s.registered, collected: s.totalCollected, movedToClubDebt: getTournamentEntryParticipantsForCat(catKey).filter(p=>p.entryFeeStatus==='CLUB_DEBT').reduce((x,p)=>x+(p.entryFeeAmount||0),0) } : null
+  }]);
+  logOverride('tournament_ended', 'Kết thúc giải ' + t.label + (podium && podium.champion ? ' — Vô địch: ' + pairLabel(podium.champion) : ' — không xếp hạng'), 'tournament', catKey);
+  saveState();
+  closeModal();
+  renderTournamentTab();
+  showToast('🏁 Đã kết thúc giải ' + t.label);
+}
+function reopenTournament(){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return; // ADMIN-only (dung lai quyen nhay cam san co)
+  const t = currentTournament();
+  if(!t || !t.endedAt) return;
+  if(!confirm('Mở lại giải "' + t.label + '"? Kết quả chọn tay sẽ được giữ, có thể sửa lại khi kết thúc lần nữa.')) return;
+  t.endedAt = null; t.endedBy = null; t.reopenedAt = Date.now();
+  if(!computeKnockoutPodium(state.currentCat)) t.status = (t.knockout && t.knockout.length) ? 'KNOCKOUT' : ((t.groups && t.groups.length) ? 'GROUP_STAGE' : 'DRAFT');
+  logOverride('tournament_reopened', 'Mở lại giải ' + t.label, 'tournament', state.currentCat);
+  saveState();
+  renderTournamentTab();
+}
+function renderTournamentEndButton(){
+  const el = document.getElementById('tournEndBtnWrap');
+  if(!el) return;
+  const t = currentTournament();
+  if(!t){ el.innerHTML = ''; return; }
+  el.innerHTML = t.endedAt
+    ? `<span class="muted" style="font-size:.78rem;">Đã kết thúc ${new Date(t.endedAt).toLocaleDateString('vi-VN')}${t.endedBy ? ' · ' + escapeHtml(t.endedBy) : ''}</span>
+       <button class="small secondary no-print" data-require-permission="PAYMENT_VOID" onclick="reopenTournament()">MỞ LẠI GIẢI</button>`
+    : `<button class="small no-print" onclick="openEndTournamentModal()">🏁 KẾT THÚC GIẢI</button>`;
+}
 /* ================= §THIET LAP GIAI / BOC THAM UX-2 — 1 nguon du lieu duy nhat =================
    t.groupCount + t.groupingMode + t.courtsList la NGUON DUY NHAT cho so bang/cach chia bang/san.
    Khong con input rieng o phan Boc tham nua — Boc tham chi DOC config nay. */
@@ -38873,7 +39187,16 @@ function resetKnockoutBranch(catKey, roundIdx, matchIdx){
 }
 /* §C.44 — PODIUM: 1/2 tu tran Chung ket. Neu KHONG co tran tranh hang 3 rieng (thuong khong co trong
    bracket don gian nay), mac dinh cho DONG HANG BA (ca 2 doi thua Ban ket) — dung nhu mo ta trong yeu cau. */
+/* §TOURN-END-2026 — ket qua tu chung ket (neu co), khong thi lay ket qua CHON TAY khi Kết thúc giải (t.manualPodium) —
+   de giai chi da vong bang van chot duoc Nhat/Nhi/Ba va trao thuong Credits/Top-2 Series. */
 function computePodium(catKey){
+  const ko = computeKnockoutPodium(catKey);
+  if(ko) return ko;
+  const t = state.tournaments[catKey];
+  if(t && t.manualPodium && (t.manualPodium.champion || t.manualPodium.runnerUp)) return { champion: t.manualPodium.champion || null, runnerUp: t.manualPodium.runnerUp || null, thirdPlace: (t.manualPodium.thirdPlace||[]).filter(Boolean) };
+  return null;
+}
+function computeKnockoutPodium(catKey){
   const t = state.tournaments[catKey];
   if(!t || !t.knockout || !t.knockout.length) return null;
   const finalRound = t.knockout[t.knockout.length - 1];
@@ -39251,7 +39574,8 @@ function renderTournamentTab(){
   document.getElementById('tsMatchDate').value = t.setup.matchDate || '';
   document.getElementById('tsStartTime').value = t.setup.startTime || ''; // §TOURNTV2026-AUTOSTART
   document.getElementById('tsNote').value = t.setup.note || '';
-  document.getElementById('tournamentStatusBadge').textContent = TOURNAMENT_STATUS_LABELS[t.status] || t.status || 'NHÁP';
+  document.getElementById('tournamentStatusBadge').textContent = t.endedAt ? 'ĐÃ KẾT THÚC' : (TOURNAMENT_STATUS_LABELS[t.status] || t.status || 'NHÁP');
+  if(typeof renderTournamentEndButton === 'function') renderTournamentEndButton(); // §TOURN-END-2026
   renderRuleConfigTable();
   renderTournamentSetupControls(catKey); // §1/§4/§5/§6 — so bang/san/cach chia bang: 1 nguon duy nhat
   renderTournamentSetupProgress(t); // §HOTFIX-TOURNSETUP1 — status summary dau man Thiet lap
@@ -40285,7 +40609,7 @@ function getPlayerTournamentEntries(playerId){
   return out;
 }
 function getPlayerUnpaidTournamentFees(playerId){
-  return getPlayerTournamentEntries(playerId).filter(e=>e.part && !e.part.canceled && e.part.entryFeeStatus !== 'PAID' && e.part.entryFeeAmount > 0);
+  return getPlayerTournamentEntries(playerId).filter(e=>e.part && !e.part.canceled && !isTournFeeSettled(e.part) && e.part.entryFeeAmount > 0);
 }
 function renderPlayerTournamentSection(p){
   const entries = getPlayerTournamentEntries(p.id);
@@ -40294,7 +40618,8 @@ function renderPlayerTournamentSection(p){
     const part = e.part;
     let fee = '<span class="muted">Chưa kích hoạt phí giải</span>';
     if(part){
-      fee = part.entryFeeStatus === 'PAID' ? `✓ Đã đóng ${fmtVnd(part.entryFeeAmount)}`
+      fee = part.entryFeeStatus === 'CLUB_DEBT' ? `<b style="color:var(--danger);">→ Đã chuyển công nợ Club ${fmtVnd(part.entryFeeAmount)}</b>`
+        : part.entryFeeStatus === 'PAID' ? `✓ Đã đóng ${fmtVnd(part.entryFeeAmount)}`
         : part.entryFeeStatus === 'DEBT' ? `<b style="color:var(--danger);">📒 Ghi nợ ${fmtVnd(part.entryFeeAmount)}</b>`
         : `<b style="color:var(--danger);">● Chưa đóng ${fmtVnd(part.entryFeeAmount)}</b>`;
       if(part.canceled) fee += ' <span class="muted">(giải đã xoá danh sách)</span>';
