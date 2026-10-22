@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.45 (2026-10-22) — §TOURN-FEE-CHANGE-2026. Admin: "ko chỉnh giá giải đấu lại được" — giá trong Cài đặt chỉ
+  là mặc định khi KÍCH HOẠT giải mới, giải đang chạy đã snapshot giá. Thêm nút "ĐỔI GIÁ" cạnh "Đã kích hoạt · …/VĐV"
+  (quyền PRICING_EDIT, ẩn khi giải đã kết thúc): đổi t.entryFeeConfig + entryFeeAmount của VĐV UNPAID, và VĐV DEBT
+  (sửa luôn dòng vé trên bill nợ nếu bill chưa thu đồng nào). PAID/CLUB_DEBT giữ nguyên. Ghi audit.
+
   v1.44.44 (2026-10-22) — §TOURN-BULK-COLLECT-2026. Admin: 28 VĐV đã trả phí giải nhưng nhân viên quên bấm THU.
   Màn Kết thúc giải thêm nút "THU TẤT CẢ" (chọn Tiền mặt/Chuyển khoản, có xác nhận): gọi collectTournamentEntryFee
   cho từng VĐV còn chưa đóng/đang nợ (mỗi người 1 payment như bấm THU tay, bill nợ cũ được tái sử dụng) + ghi audit.
@@ -8019,7 +8024,7 @@
         </div>
         <label>Sản phẩm nước kèm vé</label>
         <select id="tournEntryWaterProductSelect" onchange="markSettingsDirty('pricing')"></select>
-        <div class="small-note">Đây là GIÁ TRỊ MẶC ĐỊNH áp dụng khi kích hoạt tính năng cho 1 giải mới — giải đã kích hoạt trước đó giữ nguyên mức giá lúc kích hoạt (không hồi tố).</div>
+        <div class="small-note">Đây là GIÁ TRỊ MẶC ĐỊNH áp dụng khi kích hoạt tính năng cho 1 giải mới — giải đã kích hoạt trước đó giữ nguyên mức giá lúc kích hoạt (không hồi tố). Muốn đổi giá giải ĐANG CHẠY: tab Giải đấu → Phí tham gia giải → nút <b>ĐỔI GIÁ</b>.</div>
       </div>
       <!-- §PRINT-RECEIPT-2026 — THONG TIN IN BILL (thong tin club + tai khoan nhan chuyen khoan cho QR + kho giay). -->
       <div class="card settings-card-full">
@@ -9321,7 +9326,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.44'; // §TOURN-BULK-COLLECT-2026 — nut THU TAT CA phi giai trong man Ket thuc giai
+const PICPOC_APP_VERSION = 'Picpoc v1.44.45'; // §TOURN-FEE-CHANGE-2026 — nut DOI GIA ve cho giai dang chay
+// (ban truoc: 'Picpoc v1.44.44') // §TOURN-BULK-COLLECT-2026 — nut THU TAT CA phi giai trong man Ket thuc giai
 // (ban truoc: 'Picpoc v1.44.43') // §CREDIT-TOURN-DEFAULTS-2026 — o muc thuong mac dinh Nhat/Nhi/Ba trong Cai dat
 // (ban truoc: 'Picpoc v1.44.42') // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
 // (ban truoc: 'Picpoc v1.44.41') // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
@@ -36866,6 +36872,36 @@ function activateTournamentEntryFee(catKey){
   showToast('✓ Đã kích hoạt Phí tham gia giải cho ' + t.label);
 }
 
+/* Doi gia ve cho GIAI DANG CHAY (Cai dat chi la gia mac dinh cho giai moi). Ap cho VDV chua dong va VDV dang
+   ghi no trong giai (sua luon dong tien tren bill no neu bill chua thu dong nao). Nguoi da dong / da chuyen
+   cong no Club giu nguyen so tien da chot. */
+function changeTournamentEntryFee(catKey){
+  if(!requirePermission(PERMISSION.PRICING_EDIT)) return;
+  const t = state.tournaments[catKey];
+  if(!t || !t.entryFeeConfig || t.endedAt) return;
+  const raw = prompt('Giá vé mới / VĐV cho giải "' + t.label + '" (hiện tại ' + fmtVnd(t.entryFeeConfig.entryFeePerPlayer) + '):\n\nÁp cho VĐV chưa đóng và đang ghi nợ trong giải. Người đã đóng / đã chuyển công nợ Club giữ nguyên.', t.entryFeeConfig.entryFeePerPlayer);
+  if(raw === null) return;
+  const fee = Math.round(Number(String(raw).replace(/[^\d]/g,'')));
+  if(!(fee >= 0) || String(raw).replace(/[^\d]/g,'') === ''){ showToast('Giá không hợp lệ'); return; }
+  const old = t.entryFeeConfig.entryFeePerPlayer;
+  let changed = 0, kept = 0;
+  getTournamentEntryParticipantsForCat(catKey).forEach(p=>{
+    if(p.entryFeeStatus === 'UNPAID'){
+      p.entryFeeAmount = fee; changed++; markEntityDirty('tournamentEntryParticipants', p.id);
+    } else if(p.entryFeeStatus === 'DEBT'){
+      const bill = p.billId ? state.bills.find(b=>b.id===p.billId && b.status==='open') : null;
+      const item = bill && getBillCollected(bill) === 0 ? (bill.items||[]).find(i=>i.type==='tournament_entry' && i.meta && i.meta.participantId===p.id) : null;
+      if(item){ item.amount = fee; item.unitPrice = fee; p.entryFeeAmount = fee; changed++; markEntityDirty('bills', bill.id); markEntityDirty('tournamentEntryParticipants', p.id); }
+      else kept++;
+    } else kept++;
+  });
+  t.entryFeeConfig.entryFeePerPlayer = fee;
+  logOverride('tournament_entry_fee_changed', 'Đổi giá vé giải ' + t.label + ': ' + fmtVnd(old) + ' → ' + fmtVnd(fee) + ' (' + changed + ' VĐV áp giá mới, ' + kept + ' giữ nguyên)', 'tournament', catKey);
+  saveState();
+  renderTournamentTab();
+  showToast('✓ Giá vé giải: ' + fmtVnd(fee) + '/VĐV — ' + changed + ' VĐV áp giá mới' + (kept ? ', ' + kept + ' đã chốt giữ nguyên' : ''));
+}
+
 /* Đảm bảo MỖI cặp hiện có trong t.pairs đều có đúng 2 participant chưa bị huỷ — idempotent, KHÔNG
    tạo trùng nếu đã đủ. Gọi ngay sau kích hoạt, và sau mỗi lần thêm cặp mới (nếu đã kích hoạt trước đó). */
 function syncTournamentEntryParticipants(catKey){
@@ -37387,7 +37423,7 @@ function renderTournamentEntryFeeSection(catKey){
   box.innerHTML = `
     <div class="tfee-header">
       <h2>🎟 Phí tham gia giải</h2>
-      <span class="tfee-header-meta">Đã kích hoạt · ${fmtVnd(cfg.entryFeePerPlayer)}/VĐV</span>
+      <span class="tfee-header-meta">Đã kích hoạt · ${fmtVnd(cfg.entryFeePerPlayer)}/VĐV${t.endedAt ? '' : ` <button class="small secondary" style="margin-left:6px;" onclick="changeTournamentEntryFee('${catKey}')">ĐỔI GIÁ</button>`}</span>
     </div>
     <div class="tfee-kpi-grid">
       <div class="tfee-kpi-card tfee-kpi-registered"><div class="tfee-kpi-icon">👥</div><div class="tfee-kpi-num">${s.registered}</div><div class="tfee-kpi-label">VĐV đăng ký</div></div>
