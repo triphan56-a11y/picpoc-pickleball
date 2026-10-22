@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.44 (2026-10-22) — §TOURN-BULK-COLLECT-2026. Admin: 28 VĐV đã trả phí giải nhưng nhân viên quên bấm THU.
+  Màn Kết thúc giải thêm nút "THU TẤT CẢ" (chọn Tiền mặt/Chuyển khoản, có xác nhận): gọi collectTournamentEntryFee
+  cho từng VĐV còn chưa đóng/đang nợ (mỗi người 1 payment như bấm THU tay, bill nợ cũ được tái sử dụng) + ghi audit.
+
   v1.44.43 (2026-10-22) — §CREDIT-TOURN-DEFAULTS-2026. Admin: "không thấy các mức 300k, 200k, 100k ở đâu". Cai dat >
   Picpoc Credits > Thuong giai dau co lai 3 o "Mặc định Hạng nhất/nhì/ba (/VĐV)" (doc/luu settings.picpocCredits.
   tournamentReward.first/second/third) — chi la muc dien san khi KICH HOAT thuong cho 1 giai moi; giai da kich hoat
@@ -9317,7 +9321,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.43'; // §CREDIT-TOURN-DEFAULTS-2026 — o muc thuong mac dinh Nhat/Nhi/Ba trong Cai dat
+const PICPOC_APP_VERSION = 'Picpoc v1.44.44'; // §TOURN-BULK-COLLECT-2026 — nut THU TAT CA phi giai trong man Ket thuc giai
+// (ban truoc: 'Picpoc v1.44.43') // §CREDIT-TOURN-DEFAULTS-2026 — o muc thuong mac dinh Nhat/Nhi/Ba trong Cai dat
 // (ban truoc: 'Picpoc v1.44.42') // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
 // (ban truoc: 'Picpoc v1.44.41') // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
 // (ban truoc: 'Picpoc v1.44.40') // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
@@ -37761,6 +37766,9 @@ function openEndTournamentModal(){
   const feeHtml = !t.entryFeeConfig ? '<div class="small-note">Giải không bật Phí tham gia giải.</div>'
     : unsettled.length
       ? `<div class="small-note" style="color:var(--danger);">Còn <b>${unsettled.length}</b> VĐV chưa đóng/đang nợ — xử lý TỪNG NGƯỜI (thu tiền hoặc chuyển công nợ Club) rồi mới kết thúc được.</div>` +
+        `<div class="bill-line" style="align-items:center; gap:6px; flex-wrap:wrap;"><span class="small-note" style="margin:0;">Tất cả đã trả tiền mà chưa bấm thu?</span>
+          <span style="display:inline-flex; gap:6px;"><select id="tournBulkPm" style="width:auto; margin:0;"><option value="CASH">Tiền mặt</option><option value="BANK_TRANSFER">Chuyển khoản</option></select>
+          <button class="small" onclick="collectAllTournamentEntryFees()">THU TẤT CẢ (${unsettled.length} · ${fmtVnd(unsettled.reduce((s,p)=>s+(p.entryFeeAmount||0),0))})</button></span></div>` +
         unsettled.map(p=>`<div class="bill-line" style="align-items:center;"><span>${escapeHtml(p.name)} <span class="muted">· ${p.entryFeeStatus==='DEBT'?'đang ghi nợ trong giải':'chưa đóng'} · ${fmtVnd(p.entryFeeAmount)}</span></span>
           <span style="display:inline-flex; gap:6px;"><button class="small" onclick="closeModal(); showTournEntryFeeConfirm('${p.id}')">THU</button>
           <button class="small secondary" onclick="startTournFeeClubDebtFlow(['${p.id}'], openEndTournamentModal)">CHUYỂN CÔNG NỢ CLUB</button></span></div>`).join('')
@@ -37783,6 +37791,26 @@ function openEndTournamentModal(){
     <button class="secondary" onclick="closeModal()">Đóng</button>
   `;
   document.getElementById('matchModal').classList.add('show');
+}
+/* Nhan vien quen bam THU tung nguoi du khach da tra tien — ghi nhan da thu cho TAT CA VDV con chua dong/dang
+   no trong giai (moi nguoi 1 payment rieng qua collectTournamentEntryFee, giong bam THU tung nguoi). */
+function collectAllTournamentEntryFees(){
+  const catKey = state.currentCat;
+  const t = state.tournaments[catKey];
+  if(!t || !t.entryFeeConfig) return;
+  const list = getTournamentUnsettledParticipants(catKey);
+  if(!list.length) return;
+  const pmEl = document.getElementById('tournBulkPm');
+  const pm = pmEl && pmEl.value === 'CASH' ? 'CASH' : 'BANK_TRANSFER';
+  const total = list.reduce((s,p)=>s+(p.entryFeeAmount||0),0);
+  if(!confirm('Ghi nhận ĐÃ THU phí giải cho ' + list.length + ' VĐV, tổng ' + fmtVnd(total) + ' (' + (pm==='CASH'?'tiền mặt':'chuyển khoản') + ')?\n\nChỉ làm khi tất cả thật sự đã trả tiền.')) return;
+  const failed = [];
+  list.forEach(p=>{ if(!collectTournamentEntryFee(p.id, pm, [])) failed.push(p.name); });
+  logOverride('tournament_entry_bulk_collect', 'Thu phí giải hàng loạt ' + t.label + ': ' + (list.length - failed.length) + '/' + list.length + ' VĐV (' + pm + ')', 'tournament', catKey);
+  saveState();
+  renderTournamentTab();
+  openEndTournamentModal();
+  showToast(failed.length ? '⚠️ Đã thu ' + (list.length - failed.length) + ' người — chưa thu được: ' + failed.join(', ') : '✓ Đã ghi nhận thu phí ' + list.length + ' VĐV');
 }
 function confirmEndTournament(){
   const catKey = state.currentCat;
