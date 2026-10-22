@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.43 (2026-10-22) — §CREDIT-TOURN-DEFAULTS-2026. Admin: "không thấy các mức 300k, 200k, 100k ở đâu". Cai dat >
+  Picpoc Credits > Thuong giai dau co lai 3 o "Mặc định Hạng nhất/nhì/ba (/VĐV)" (doc/luu settings.picpocCredits.
+  tournamentReward.first/second/third) — chi la muc dien san khi KICH HOAT thuong cho 1 giai moi; giai da kich hoat
+  khong doi theo. Ghi chu nhac phai tich ca "Bật hệ thống Picpoc Credits".
+
   v1.44.42 (2026-10-22) — §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026. Admin: "nên có nút kết thúc giải đấu"; "công
   nợ người chơi trong giải: đã có trên hệ thống thì link qua và lưu công nợ bên club, chưa có thì tạo người chơi mới"
   — chot: xu ly TUNG NGUOI, tao moi BAT BUOC SDT.
@@ -8066,10 +8071,15 @@
              renderTournamentCreditPrizeSection()/t.creditPrizeConfig, KHONG doi). Cai dat CHI con giu
              "Han dung (ngay)" — gia tri mac dinh dung chung (60 ngay) cho MOI giai khi kich hoat, Admin
              van co the sua rieng han dung tung giai sau khi kich hoat neu can. -->
+        <!-- §CREDIT-TOURN-DEFAULTS-2026 — Admin: "không thấy các mức 300k, 200k, 100k ở đâu" — dua lai 3 o MUC MAC DINH
+             (chi la goi y dien san khi KICH HOAT 1 giai moi; tung giai van sua rieng sau khi kich hoat). -->
         <div class="grid-2col">
+          <div><label>Mặc định Hạng nhất (/VĐV)</label><input type="number" id="creditsTournFirstInput" min="0" step="10000"></div>
+          <div><label>Mặc định Hạng nhì (/VĐV)</label><input type="number" id="creditsTournSecondInput" min="0" step="10000"></div>
+          <div><label>Mặc định Hạng ba (/VĐV)</label><input type="number" id="creditsTournThirdInput" min="0" step="10000"></div>
           <div><label>Hạn dùng (ngày)</label><input type="number" id="creditsTournExpiryInput" min="1" step="1"></div>
         </div>
-        <div class="small-note">Số tiền thưởng Hạng nhất/nhì/ba được cấu hình RIÊNG cho từng giải tại <b>Thiết lập giải đấu → Giải thưởng Picpoc Credits</b> (mỗi giải một mức thưởng khác nhau).</div>
+        <div class="small-note">Đây là mức <b>điền sẵn khi kích hoạt</b> thưởng cho 1 giải mới. Mỗi giải vẫn sửa riêng được tại <b>Giải đấu → Giải thưởng Picpoc Credits</b> sau khi kích hoạt (giải đã kích hoạt không bị đổi theo). Cần tích cả <b>"Bật hệ thống Picpoc Credits"</b> ở trên.</div>
         <h3 style="margin-top:14px;">🔁 Thưởng quay lại nhanh (Return Soon)</h3>
         <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="creditsRSEnabledInput" style="width:auto;"> Bật</label>
         <div class="grid-2col">
@@ -9307,7 +9317,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.42'; // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
+const PICPOC_APP_VERSION = 'Picpoc v1.44.43'; // §CREDIT-TOURN-DEFAULTS-2026 — o muc thuong mac dinh Nhat/Nhi/Ba trong Cai dat
+// (ban truoc: 'Picpoc v1.44.42') // §TOURN-END-2026 + §TOURN-DEBT-TO-CLUB-2026 — nut Ket thuc giai, chuyen no phi giai sang Cong no Club
 // (ban truoc: 'Picpoc v1.44.41') // §PRINT-RECEIPT-2026 — in bill dua khach (80mm/58mm/A5, QR VietQR)
 // (ban truoc: 'Picpoc v1.44.40') // §FIX-EMPTYBILL-ITEMS-2026 — bill 0d trong tu server khong them khoan duoc
 // (ban truoc: 'Picpoc v1.44.39') // §AUTO-END-OF-DAY-V2-2026 — dong han phien ngay truoc (con no -> ghi cong no)
@@ -14242,6 +14253,9 @@ function populatePicpocCreditsSettingsForm(){
   setChecked('creditsEnabledInput', cfg.enabled);
   setChecked('creditsTournEnabledInput', cfg.tournamentReward.enabled);
   setVal('creditsTournExpiryInput', cfg.tournamentReward.expiryDays);
+  setVal('creditsTournFirstInput', cfg.tournamentReward.first); // §CREDIT-TOURN-DEFAULTS-2026
+  setVal('creditsTournSecondInput', cfg.tournamentReward.second);
+  setVal('creditsTournThirdInput', cfg.tournamentReward.third);
   setChecked('creditsRSEnabledInput', cfg.returnSoonReward.enabled);
   setVal('creditsRSAmountInput', cfg.returnSoonReward.amount);
   setVal('creditsRSExpiryInput', cfg.returnSoonReward.expiryDays);
@@ -14253,7 +14267,7 @@ function populatePicpocCreditsSettingsForm(){
   setVal('creditsMSTier2VisitsInput', t2.visits); setVal('creditsMSTier2AmountInput', t2.amount);
   setVal('creditsMSTier3VisitsInput', t3.visits); setVal('creditsMSTier3AmountInput', t3.amount);
   setVal('creditsMSExpiryInput', cfg.milestoneReward.expiryDays);
-  ['creditsEnabledInput','creditsTournEnabledInput','creditsTournExpiryInput',
+  ['creditsEnabledInput','creditsTournEnabledInput','creditsTournExpiryInput','creditsTournFirstInput','creditsTournSecondInput','creditsTournThirdInput',
    'creditsRSEnabledInput','creditsRSAmountInput','creditsRSExpiryInput','creditsRSCooldownInput',
    'creditsMSEnabledInput','creditsMSTier1VisitsInput','creditsMSTier1AmountInput','creditsMSTier2VisitsInput','creditsMSTier2AmountInput','creditsMSTier3VisitsInput','creditsMSTier3AmountInput','creditsMSExpiryInput'
   ].forEach(setDisabled);
@@ -14269,7 +14283,7 @@ function savePicpocCreditsSettings(){
   const existingTournReward = getCreditSettings().tournamentReward;
   state.settings.picpocCredits = {
     enabled: chk('creditsEnabledInput'),
-    tournamentReward: { enabled: chk('creditsTournEnabledInput'), first: existingTournReward.first, second: existingTournReward.second, third: existingTournReward.third, expiryDays: num('creditsTournExpiryInput',60)||60 },
+    tournamentReward: { enabled: chk('creditsTournEnabledInput'), first: num('creditsTournFirstInput', existingTournReward.first), second: num('creditsTournSecondInput', existingTournReward.second), third: num('creditsTournThirdInput', existingTournReward.third), expiryDays: num('creditsTournExpiryInput',60)||60 }, // §CREDIT-TOURN-DEFAULTS-2026
     returnSoonReward: { enabled: chk('creditsRSEnabledInput'), amount: num('creditsRSAmountInput',20000), expiryDays: num('creditsRSExpiryInput',7)||7, cooldownDays: num('creditsRSCooldownInput',7)||7 },
     milestoneReward: { enabled: chk('creditsMSEnabledInput'), expiryDays: num('creditsMSExpiryInput',20)||20, tiers: [
       { visits: num('creditsMSTier1VisitsInput',5)||5, amount: num('creditsMSTier1AmountInput',30000) },
