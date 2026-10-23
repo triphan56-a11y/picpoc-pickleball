@@ -2,6 +2,12 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.48 (2026-10-23) — §STALE-FINALIZE-2026. Admin: "đã xong vòng bảng sao ko hiện vòng tiếp theo" — box ghi
+  "Đã chốt vòng bảng … 16/10/2026" là của GIẢI TRƯỚC: clearPairs()/Tạo giải mới không reset groupStageFinalizedAt/
+  qualifierSnapshot -> autoFinalize bỏ qua (tưởng đã chốt), autoGenerate không có snapshot hợp lệ -> kẹt ở "đang tự
+  động chốt…". FIX: healStaleGroupFinalization() (chưa có cây + snapshot rỗng/lệch cặp hiện tại -> bỏ chốt cũ, chốt lại
+  theo BXH hiện tại); clearPairs + resetEndedTournamentCycle reset luôn trạng thái chốt/cây.
+
   v1.44.47 (2026-10-23) — §PAIRLINK-SEARCH-2026. Admin: modal "Liên kết người chơi" không có ô tìm tên. Thêm ô tìm
   (không dấu, theo tên hoặc ≥3 số SĐT) trên mỗi dropdown VĐV 1/2: lọc danh sách, mở rộng kết quả, ra đúng 1 người thì
   chọn sẵn. Người đang chọn luôn giữ trong danh sách.
@@ -9336,7 +9342,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.47'; // §PAIRLINK-SEARCH-2026 — o tim ten/SDT trong modal Lien ket nguoi choi
+const PICPOC_APP_VERSION = 'Picpoc v1.44.48'; // §STALE-FINALIZE-2026 — trang thai chot vong bang cu cua giai truoc chan tao cay
+// (ban truoc: 'Picpoc v1.44.47') // §PAIRLINK-SEARCH-2026 — o tim ten/SDT trong modal Lien ket nguoi choi
 // (ban truoc: 'Picpoc v1.44.46') // §TOURN-NEW-CYCLE-2026 — nut TAO GIAI MOI sau khi ket thuc giai
 // (ban truoc: 'Picpoc v1.44.45') // §TOURN-FEE-CHANGE-2026 — nut DOI GIA ve cho giai dang chay
 // (ban truoc: 'Picpoc v1.44.44') // §TOURN-BULK-COLLECT-2026 — nut THU TAT CA phi giai trong man Ket thuc giai
@@ -36633,6 +36640,7 @@ function clearPairs(){
   (t.pairs||[]).forEach(pair=> cancelParticipantsForPair(pair.id, 'TOURNAMENT_CLEARED')); // §TOURN-ENTRY-8/37 — huy (khong xoa) participant cu, giu audit
   t.pairs = []; t.groups = []; t.schedule = [];
   t.entryFeeConfig = null; // §TOURN-ENTRY-8 — reset ve tinh nang CHUA kich hoat cho chu ky giai moi (cung catKey) — lan kich hoat tiep theo se snapshot Settings hien hanh, KHONG dung config cu
+  clearGroupStageFinalization(t); t.knockout = []; // §STALE-FINALIZE-2026 — khong cap thi khong con vong bang/cay nao hop le
   if(t.endedAt) resetEndedTournamentCycle(t); // §TOURN-END-2026 — giai da ket thuc + luu archives -> bat dau chu ky giai moi sach se (archives giu nguyen)
   saveState(); renderTournamentTab();
 }
@@ -36641,6 +36649,8 @@ function clearPairs(){
 function resetEndedTournamentCycle(t){
   t.endedAt = null; t.endedBy = null; t.manualPodium = null; t.knockout = []; t.status = 'DRAFT'; t.tournamentCompletedWitnessedAt = null;
   t.creditPrizeConfig = null;
+  clearGroupStageFinalization(t); // §STALE-FINALIZE-2026
+  t.bracketVersion = null; t.bracketGeneratedAt = null; t.bracketGeneratedBy = null;
   t.cycleId = uid('tcy');
 }
 function startNewTournament(){
@@ -38727,8 +38737,26 @@ function isGroupStageComplete(catKey){
    hoan tat (updateScore) VA moi lan render Tournament tab (an toan cho multi-device/remote-sync
    bat kip). Ham nay TU KIEM TRA dieu kien va idempotent — khong lam gi neu da chot/da co bracket,
    nen goi lai nhieu lan (render/listener/multi-device) khong tao trung. */
+/* §STALE-FINALIZE-2026 — trang thai "da chot vong bang" con sot tu giai TRUOC (cung catKey, truoc day xoa danh sach
+   cap/tao giai moi khong reset) -> snapshot tro toi cap khong con trong giai -> khong bao gio tao cay. Chua co cay
+   ma snapshot rong/lech cap hien tai thi coi nhu chua chot. */
+function clearGroupStageFinalization(t){
+  t.groupStageFinalizedAt = null; t.groupStageFinalizedBy = null; t.qualifierSnapshot = null;
+  t.groupStagePendingRanking = false; t.groupStagePendingReasons = null;
+}
+function healStaleGroupFinalization(catKey){
+  const t = state.tournaments[catKey];
+  if(!t || !t.groupStageFinalizedAt || (t.knockout && t.knockout.length)) return false;
+  const pairIds = new Set((t.pairs||[]).map(p=>p.id));
+  const snap = t.qualifierSnapshot || [];
+  if(snap.length && snap.every(q=>q && pairIds.has(q.pairId))) return false;
+  clearGroupStageFinalization(t);
+  logOverride('group_stage_stale_finalize_cleared', 'Bỏ trạng thái "đã chốt vòng bảng" cũ không khớp danh sách cặp hiện tại', 'tournament', catKey);
+  return true;
+}
 function autoFinalizeGroupStageIfReady(catKey){
   const t = state.tournaments[catKey];
+  healStaleGroupFinalization(catKey);
   if(!t || t.groupStageFinalizedAt) return false; // §BD — da chot roi, khong lam lai
   if(!t.groups || !t.groups.length) return false;
   if(!isGroupStageComplete(catKey)) return false;
