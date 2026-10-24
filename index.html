@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.54 (2026-10-24) — §PLAYER-MERGE-2026. Admin: "2 người này là 1 mà nhân viên tạo bị trùng, giờ xử lý ntn".
+  Hồ sơ người chơi thêm nút "🔀 GỘP HỒ SƠ TRÙNG" (ADMIN): chọn hồ sơ giữ lại (tìm tên/SĐT, gợi ý tên giống) -> chuyển
+  bill (+tên), lượt ghé sân, Credits (lot+giao dịch), lịch sử trận (+tên, thay đổi PPR), lịch sử PPR, gói Social + lượt
+  dùng, độ nước, vé/cặp giải đấu, nhóm Social, 4 người xin ghép, đối tác/đối thủ gần đây sang hồ sơ giữ lại; cộng dồn số
+  lần check-in/số trận, bổ sung SĐT/giới tính/tag/ghi chú còn thiếu. Hồ sơ bị gộp -> lưu trữ (mergedInto), bỏ SĐT. Chặn
+  khi 1 trong 2 người đang ở sân. PPR giữ theo hồ sơ giữ lại.
+
   v1.44.53 (2026-10-24) — §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026. Admin: "kiểm tra kỹ lại xem khi tính tiền có
   dùng được credits ko". Kiểm tra offline: bill Club dùng Credit đúng (allow-list, FEFO, tối đa phần eligible, Credit +
   tiền mặt, trả hết bằng Credit, bill chỉ có nước bị chặn, hoàn tác 1 khoản Credit hoàn lại đúng). 2 LỖI đã sửa:
@@ -9407,7 +9414,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.53'; // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
+const PICPOC_APP_VERSION = 'Picpoc v1.44.54'; // §PLAYER-MERGE-2026 — gop 2 ho so trung
+// (ban truoc: 'Picpoc v1.44.53') // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
 // (ban truoc: 'Picpoc v1.44.52') // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
 // (ban truoc: 'Picpoc v1.44.51') // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
 // (ban truoc: 'Picpoc v1.44.50') // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
@@ -21300,6 +21308,158 @@ function restorePlayer(id){
   saveState();
   if(typeof renderPlayersTab === 'function') renderPlayersTab();
   showToast('Đã khôi phục ' + p.name);
+}
+/* ================= §PLAYER-MERGE-2026 — GOP 2 HO SO TRUNG (1 nguoi bi tao 2 lan) =================
+   Admin: "2 người này là 1 mà nhân viên tạo bị trùng". Chuyen MOI tham chieu tu ho so BO (source) sang ho so GIU LAI
+   (target): bill (+ten tren bill), luot ghe san, Credits (lot + giao dich), lich su tran (+thay doi PPR), lich su PPR,
+   goi Social + luot dung, do nuoc, ve/cap giai dau, nhom Social, 4 nguoi xin ghep, doi tac/doi thu gan day cua nguoi
+   khac. Ho so bo -> LUU TRU (archived + mergedInto), KHONG xoa (giu dau vet). PPR/trinh do GIU cua ho so giu lai. */
+function getPlayerMergeImpact(sourceId){
+  const has = (arr, f)=>(arr||[]).filter(f).length;
+  return {
+    bills: has(state.bills, b=>b.playerId===sourceId),
+    visits: has(state.playerVisits, v=>v.playerId===sourceId),
+    creditLots: has(state.creditLots, l=>l.playerId===sourceId),
+    credits: getAvailableCredits(sourceId),
+    matches: has(state.history, h=>[].concat(h.team1Players||[], h.team2Players||[]).some(x=>x && x.playerId===sourceId)),
+    socialPass: has(state.socialPassPackages, s=>s.playerId===sourceId),
+    tournament: has(state.tournamentEntryParticipants, x=>x.playerId===sourceId) + Object.values(state.tournaments||{}).reduce((s,t)=>s+(t&&t.pairs||[]).filter(pr=>pr.playerIdA===sourceId||pr.playerIdB===sourceId).length,0),
+    debt: getPlayerOutstanding(sourceId)
+  };
+}
+function mergePlayers(sourceId, targetId){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return { ok:false, reason:'Chỉ Admin được gộp hồ sơ.' };
+  const src = playerById(sourceId), dst = playerById(targetId);
+  if(!src || !dst) return { ok:false, reason:'Không tìm thấy hồ sơ.' };
+  if(src.id === dst.id) return { ok:false, reason:'Phải chọn 2 hồ sơ khác nhau.' };
+  if(src.mergedInto) return { ok:false, reason:'Hồ sơ này đã được gộp trước đó.' };
+  const busy = p => PLAYER_ACTIVE_STATUSES.includes(p.status) || !!getActiveVisitForPlayer(p.id);
+  if(busy(src) || busy(dst)) return { ok:false, reason:'Một trong 2 người đang check-in / ở sân — kết thúc lượt chơi rồi mới gộp.' };
+  const dirty = (node, id)=>markEntityDirty(node, id);
+  const moveField = (node, field)=>{ let n = 0; (state[node]||[]).forEach(e=>{ if(e && e[field]===sourceId){ e[field] = targetId; n++; dirty(node, e.id); } }); return n; };
+  const moved = {};
+  moved.bills = 0;
+  (state.bills||[]).forEach(b=>{ if(b && b.playerId===sourceId){ b.playerId = targetId; b.playerName = dst.name; moved.bills++; dirty('bills', b.id); } });
+  moved.visits = moveField('playerVisits','playerId');
+  moved.creditLots = moveField('creditLots','playerId');
+  moveField('creditTransactions','playerId');
+  moveField('pprHistory','playerId');
+  moved.socialPass = moveField('socialPassPackages','playerId');
+  moveField('socialPassUsages','playerId');
+  moveField('waterLoss','playerId');
+  moveField('tournamentEntryParticipants','playerId');
+  moved.matches = 0;
+  (state.history||[]).forEach(h=>{
+    let hit = false;
+    [h.team1Players, h.team2Players, h.pprChanges].forEach(arr=>(arr||[]).forEach(x=>{ if(x && x.playerId===sourceId){ x.playerId = targetId; if('name' in x) x.name = dst.name; hit = true; } }));
+    if(hit){
+      ['team1','team2'].forEach(k=>{ if(Array.isArray(h[k])) h[k] = h[k].map(n=>n===src.name ? dst.name : n); });
+      moved.matches++; dirty('history', h.id);
+    }
+  });
+  (state.socialGroups||[]).forEach(g=>{ if((g.memberPlayerIds||[]).includes(sourceId)){ g.memberPlayerIds = Array.from(new Set(g.memberPlayerIds.map(id=>id===sourceId?targetId:id))); dirty('socialGroups', g.id); } });
+  (state.socialRequestedFours||[]).forEach(f=>{ if((f.playerIds||[]).includes(sourceId)){ f.playerIds = f.playerIds.map(id=>id===sourceId?targetId:id); dirty('socialRequestedFours', f.id); } });
+  Object.keys(state.tournaments||{}).forEach(catKey=>{
+    const t = state.tournaments[catKey]; let ch = false;
+    (t && t.pairs || []).forEach(pr=>{
+      if(pr.playerIdA===sourceId || pr.playerIdB===sourceId){
+        const a = pr.playerIdA===sourceId ? targetId : pr.playerIdA, b = pr.playerIdB===sourceId ? targetId : pr.playerIdB;
+        setPairPlayerIds(pr, a || null, (b && b!==a) ? b : null); ch = true;
+      }
+    });
+    if(ch) dirty('tournaments', catKey);
+  });
+  (state.players||[]).forEach(p=>{
+    if(!p || p.id===sourceId) return;
+    let ch = false;
+    ['recentPartners','recentOpponents'].forEach(k=>{ if(Array.isArray(p[k]) && p[k].includes(sourceId)){ p[k] = Array.from(new Set(p[k].map(id=>id===sourceId?targetId:id))).filter(id=>id!==p.id); ch = true; } });
+    if(ch) dirty('players', p.id);
+  });
+  // Gop thong tin ho so: so lieu cong don, bo sung SDT/gioi tinh/tag neu ho so giu lai con thieu
+  dst.checkins = (dst.checkins||0) + (src.checkins||0);
+  dst.gamesPlayed = (dst.gamesPlayed||0) + (src.gamesPlayed||0);
+  if(!dst.phoneDigits && src.phoneDigits){ dst.phone = src.phone; dst.phoneDigits = src.phoneDigits; }
+  if(!dst.gender && src.gender) dst.gender = src.gender;
+  dst.tags = Array.from(new Set([].concat(dst.tags||[], src.tags||[])));
+  if(src.note) dst.note = (dst.note ? dst.note + '\n' : '') + src.note;
+  if(src.createdAt && (!dst.createdAt || src.createdAt < dst.createdAt)) dst.createdAt = src.createdAt;
+  if((src.lastCheckInAt||0) > (dst.lastCheckInAt||0)) dst.lastCheckInAt = src.lastCheckInAt;
+  ['recentPartners','recentOpponents'].forEach(k=>{ dst[k] = Array.from(new Set([].concat(dst[k]||[], src[k]||[]))).filter(id=>id!==dst.id && id!==src.id); });
+  dirty('players', dst.id);
+  // Ho so bo: luu tru, ghi ro da gop vao dau; bo SDT de khong chan trung SDT voi ho so giu lai
+  src.archived = true; src.mergedInto = dst.id; src.mergedAt = Date.now();
+  src.note = (src.note ? src.note + '\n' : '') + 'Đã gộp vào hồ sơ "' + dst.name + '"';
+  src.phone = ''; src.phoneDigits = '';
+  dirty('players', src.id);
+  logOverride('player_merged', 'Gộp hồ sơ "' + src.name + '" vào "' + dst.name + '" — ' + moved.bills + ' bill, ' + moved.visits + ' lượt chơi, ' + moved.creditLots + ' khoản Credit, ' + moved.matches + ' trận', 'player', dst.id);
+  saveState();
+  return { ok:true, moved, source: src, target: dst };
+}
+function openMergePlayerModal(sourceId){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
+  const src = playerById(sourceId); if(!src) return;
+  __mergeUi = { sourceId, targetId: '' };
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>🔀 Gộp hồ sơ trùng</h2>
+    <p class="plink-intro">Dùng khi <b>1 người bị tạo 2 hồ sơ</b>. Toàn bộ bill, công nợ, lượt chơi, Credits, lịch sử trận, gói Social, giải đấu của hồ sơ <b>bị gộp</b> sẽ chuyển sang hồ sơ <b>giữ lại</b>. Hồ sơ bị gộp được lưu trữ (không xoá). PPR/trình độ giữ theo hồ sơ giữ lại.</p>
+    <div class="plink-card">
+      <div class="plink-head"><span class="plink-badge" style="background:var(--danger);">BỊ GỘP</span><b>${escapeHtml(src.name)}</b></div>
+      <div class="small-note">${mergeImpactText(getPlayerMergeImpact(src.id))}</div>
+    </div>
+    <div class="plink-card">
+      <div class="plink-head"><span class="plink-badge">GIỮ LẠI</span><b id="mergeTargetName">— chọn hồ sơ —</b></div>
+      <div class="plink-search"><input type="search" id="mergeSearch" placeholder="Tìm hồ sơ giữ lại theo tên hoặc SĐT…" oninput="renderMergeTargetList()" autocomplete="off"></div>
+      <div class="plink-results" id="mergeTargetList"></div>
+    </div>
+    <div class="plink-actions">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button class="big" id="mergeConfirmBtn" disabled onclick="confirmMergePlayers()">GỘP HỒ SƠ</button>
+    </div>`;
+  renderMergeTargetList();
+  document.getElementById('matchModal').classList.add('show');
+}
+let __mergeUi = { sourceId:'', targetId:'' };
+function mergeImpactText(m){
+  const parts = [];
+  if(m.bills) parts.push(m.bills + ' bill');
+  if(m.debt > 0) parts.push('nợ ' + fmtVnd(m.debt));
+  if(m.visits) parts.push(m.visits + ' lượt chơi');
+  if(m.credits > 0) parts.push(fmtVnd(m.credits) + ' Credits');
+  if(m.matches) parts.push(m.matches + ' trận');
+  if(m.socialPass) parts.push(m.socialPass + ' gói Social');
+  if(m.tournament) parts.push(m.tournament + ' lần giải đấu');
+  return parts.length ? 'Sẽ chuyển: ' + parts.join(' · ') : 'Hồ sơ này chưa có dữ liệu gì.';
+}
+function renderMergeTargetList(){
+  const list = document.getElementById('mergeTargetList'); if(!list) return;
+  const src = playerById(__mergeUi.sourceId);
+  const q = (document.getElementById('mergeSearch')||{}).value || '';
+  // chua go: goi y ho so co ten giong (bo emoji/ky tu dac biet, so khong dau)
+  const base = q.trim() || String(src && src.name || '').replace(/[^\p{L}\p{N}\s]/gu,'').trim().split(/\s+/).pop() || '';
+  const m = pairLinkMatches(base, 8).filter(p=>p.id!==__mergeUi.sourceId && !p.mergedInto);
+  list.innerHTML = (m.length ? `<div class="plink-results-title">${q.trim() ? m.length + ' kết quả' : 'Gợi ý hồ sơ giống tên'}</div>` : '<div class="plink-empty">Gõ tên hoặc SĐT để tìm hồ sơ giữ lại.</div>') +
+    m.map(p=>`<button type="button" class="plink-row${p.id===__mergeUi.targetId?' on':''}" onclick="pickMergeTarget('${p.id}')">
+      <span class="plink-avatar">${escapeHtml((String(p.name||'?').trim()[0]||'?').toUpperCase())}</span>
+      <span class="plink-row-main"><b>${escapeHtml(p.name)}</b><span>${p.phone ? escapeHtml(p.phone) : 'Chưa có SĐT'} · ${mergeImpactText(getPlayerMergeImpact(p.id)).replace('Sẽ chuyển: ','')}</span></span>
+      ${p.id===__mergeUi.targetId ? '<span class="plink-check">✓</span>' : ''}</button>`).join('');
+}
+function pickMergeTarget(id){
+  __mergeUi.targetId = id;
+  const p = playerById(id);
+  const n = document.getElementById('mergeTargetName'); if(n) n.textContent = p ? p.name : '—';
+  const btn = document.getElementById('mergeConfirmBtn'); if(btn) btn.disabled = !p;
+  renderMergeTargetList();
+}
+function confirmMergePlayers(){
+  const src = playerById(__mergeUi.sourceId), dst = playerById(__mergeUi.targetId);
+  if(!src || !dst) return;
+  if(!confirm('Gộp "' + src.name + '" vào "' + dst.name + '"?\n\n' + mergeImpactText(getPlayerMergeImpact(src.id)) + '\n\nHồ sơ "' + src.name + '" sẽ được lưu trữ. Không hoàn tác tự động được.')) return;
+  const r = mergePlayers(src.id, dst.id);
+  if(!r.ok){ showToast('⚠ ' + r.reason); return; }
+  closeModal();
+  if(typeof renderPlayersTab === 'function') renderPlayersTab();
+  showToast('✓ Đã gộp "' + src.name + '" vào "' + dst.name + '"');
 }
 /* §PLAYER-27 — khoi phuc + check-in trong 1 thao tac tu ket qua tim kiem CHECK-IN, dung lai
    dung service reopenPlayerSession() (khong duplicate logic check-in). */
@@ -40654,7 +40814,8 @@ function renderPlayerDetail(){
   }
   // §PLAYER-22 (V1.2) — chi cho luu tru khi KHONG dang active tren san
   const archiveBtnHtml = p.archived ? '' :
-    `<button class="small secondary" ${canArchivePlayer(p) ? '' : 'disabled title="Đang hoạt động trên sân — kết thúc session trước khi lưu trữ"'} onclick="archivePlayer('${p.id}')">📦 LƯU TRỮ</button>`;
+    `<button class="small secondary" ${canArchivePlayer(p) ? '' : 'disabled title="Đang hoạt động trên sân — kết thúc session trước khi lưu trữ"'} onclick="archivePlayer('${p.id}')">📦 LƯU TRỮ</button>` +
+    `<button class="small secondary" data-require-permission="PAYMENT_VOID" onclick="openMergePlayerModal('${p.id}')">🔀 GỘP HỒ SƠ TRÙNG</button>`; // §PLAYER-MERGE-2026
 
   // §PROFILE2026/§1-§4 — cac so lieu Staff can thay NGAY trong 2-3 giay, tinh 1 lan duy nhat o day
   // roi render vao header/khoi TONG QUAN (khong de rai rac o nhieu subtab nhu ban cu).
