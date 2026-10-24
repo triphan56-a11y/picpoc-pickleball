@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.56 (2026-10-24) — §PLAYER-MERGE-VERIFY-2026. Admin: "vẫn còn" (Thi Tèo vẫn hiện "Check-in lại" ở ô tìm CHECK-IN).
+  Sau khi bấm GỘP: chờ server xác nhận ghi 2 hồ sơ — báo "đã lưu lên server" hoặc cảnh báo rõ để gộp lại. Ô tìm CHECK-IN
+  không hiện hồ sơ đã gộp (mergedInto).
+
   v1.44.55 (2026-10-24) — §PLAYER-MERGE-FIX-2026. Admin: gộp "Thi Tèo" vào "Tèo" xong "hồ sơ vẫn hiện và không thấy
   ghi chú đã gộp" — lượt chơi đã chuyển (Thi Tèo 0 lần, Tèo 3 lần) nhưng bản ghi 2 hồ sơ người chơi không lên server
   (CAS theo snapshot cũ bị huỷ -> kéo bản server cũ về). Giờ 2 hồ sơ ghi bằng transaction CHẮM PATCH (chỉ các field của
@@ -9419,7 +9423,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.55'; // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
+const PICPOC_APP_VERSION = 'Picpoc v1.44.56'; // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
+// (ban truoc: 'Picpoc v1.44.55') // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
 // (ban truoc: 'Picpoc v1.44.54') // §PLAYER-MERGE-2026 — gop 2 ho so trung
 // (ban truoc: 'Picpoc v1.44.53') // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
 // (ban truoc: 'Picpoc v1.44.52') // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
@@ -21257,7 +21262,7 @@ function renderPlayerSearch(){
   const qPhoneDigits = normalizeSearchPhoneQuery(qRaw); // §PHONE2026/§13 — cho phep tim theo SDT (khop 1 phan)
   const results = document.getElementById('playerSearchResults');
   if(!q){ results.innerHTML = ''; return; }
-  const matches = state.players.filter(p=> vnFold(p.name).includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits)) ).slice(0,10);
+  const matches = state.players.filter(p=> !p.mergedInto && (vnFold(p.name).includes(q) || (qPhoneDigits.length >= 3 && (p.phoneDigits||'').includes(qPhoneDigits))) ).slice(0,10); // §PLAYER-MERGE-2026 — ho so da gop khong hien de check-in
   if(!matches.length){ results.innerHTML = '<p class="muted">Không tìm thấy, check-in như khách mới bên dưới.</p>'; return; }
   results.innerHTML = matches.map(p=>{
     const meta = statusMetaFor(p);
@@ -21399,11 +21404,13 @@ function mergePlayers(sourceId, targetId){
   // Admin bao lan gop dau "ho so van hien, khong thay ghi chu" — luot choi da chuyen nhung ban ghi ho so bi CAS huy
   // va keo ban server cu ve. Patch chi gom cac field cua thao tac gop, ap len du lieu MOI NHAT tren server.
   const pick = (p, keys)=>{ const o = {}; keys.forEach(k=>{ o[k] = p[k] === undefined ? null : p[k]; }); return o; };
-  patchPlayerAtomic(dst.id, pick(dst, ['checkins','gamesPlayed','phone','phoneDigits','gender','tags','note','createdAt','lastCheckInAt','recentPartners','recentOpponents']));
-  patchPlayerAtomic(src.id, pick(src, ['archived','mergedInto','mergedAt','note','phone','phoneDigits','checkins','gamesPlayed']));
+  const saved = Promise.all([
+    patchPlayerAtomic(dst.id, pick(dst, ['checkins','gamesPlayed','phone','phoneDigits','gender','tags','note','createdAt','lastCheckInAt','recentPartners','recentOpponents'])),
+    patchPlayerAtomic(src.id, pick(src, ['archived','mergedInto','mergedAt','note','phone','phoneDigits','checkins','gamesPlayed']))
+  ]);
   logOverride('player_merged', 'Gộp hồ sơ "' + src.name + '" vào "' + dst.name + '" — ' + moved.bills + ' bill, ' + moved.visits + ' lượt chơi, ' + moved.creditLots + ' khoản Credit, ' + moved.matches + ' trận', 'player', dst.id);
   saveState();
-  return { ok:true, moved, source: src, target: dst };
+  return { ok:true, moved, source: src, target: dst, saved };
 }
 function patchPlayerAtomic(playerId, patch){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve(true);
@@ -21487,7 +21494,14 @@ function confirmMergePlayers(){
   if(!r.ok){ showToast('⚠ ' + r.reason); return; }
   closeModal();
   if(typeof renderPlayersTab === 'function') renderPlayersTab();
-  showToast('✓ Đã gộp "' + src.name + '" vào "' + dst.name + '"');
+  showToast('Đang lưu gộp hồ sơ…');
+  // Xac nhan voi server: ho so bi gop phai THAT SU da luu tru tren server, khong chi tren may nay
+  Promise.resolve(r.saved).then(results=>{
+    const ok = !results || results.every(Boolean);
+    const s2 = playerById(src.id);
+    if(ok && s2 && s2.archived && s2.mergedInto === dst.id){ if(typeof renderPlayersTab === 'function') renderPlayersTab(); showToast('✓ Đã gộp "' + src.name + '" vào "' + dst.name + '" — đã lưu lên server'); }
+    else showToast('⚠ Dữ liệu đã chuyển nhưng CHƯA lưu được hồ sơ lên server — kiểm tra kết nối rồi bấm GỘP lại lần nữa (không bị trùng).');
+  });
 }
 /* §PLAYER-27 — khoi phuc + check-in trong 1 thao tac tu ket qua tim kiem CHECK-IN, dung lai
    dung service reopenPlayerSession() (khong duplicate logic check-in). */
