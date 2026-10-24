@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.51 (2026-10-24) — §PAIRLINK-NOPHONE-2026. Admin: "số điện thoại để tạo hồ sơ người chơi nên là không bắt buộc".
+  Tạo hồ sơ trong modal Liên kết: SĐT không bắt buộc (có nhập thì vẫn kiểm tra 10 số + chặn trùng SĐT); hỏi lại nếu đã
+  có hồ sơ cùng tên (tránh tạo trùng người). Luồng chuyển công nợ Club khi kết thúc giải VẪN bắt buộc SĐT.
+
   v1.44.50 (2026-10-24) — §PAIRLINK-UI-2026. Admin: "thiết kế cái ô này lại cho dễ nhìn". Modal Liên kết người chơi làm
   lại: mỗi VĐV 1 thẻ (badge VĐV 1/2 + tên), dòng trạng thái "✓ Đã chọn: … / Chưa liên kết" + Bỏ chọn, ô tìm có icon,
   kết quả dạng danh sách bấm chọn (avatar chữ cái, SĐT, PPR, ✓) thay dropdown, gợi ý sẵn theo tên trong cặp, form tạo
@@ -9387,7 +9391,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.50'; // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
+const PICPOC_APP_VERSION = 'Picpoc v1.44.51'; // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
+// (ban truoc: 'Picpoc v1.44.50') // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
 // (ban truoc: 'Picpoc v1.44.49') // §PAIRLINK-CREATE-2026 — tao ho so Club ngay trong modal Lien ket + chan luu khi go tim chua chon
 // (ban truoc: 'Picpoc v1.44.48') // §STALE-FINALIZE-2026 — trang thai chot vong bang cu cua giai truoc chan tao cay
 // (ban truoc: 'Picpoc v1.44.47') // §PAIRLINK-SEARCH-2026 — o tim ten/SDT trong modal Lien ket nguoi choi
@@ -36989,7 +36994,7 @@ function pairLinkCreateFormHtml(slot, name){
     <div id="pairLinkNew${slot}" class="plink-create" style="display:none;">
       <div class="plink-create-grid">
         <input id="pairLinkNewName${slot}" value="${escapeHtml(name||'')}" placeholder="Tên người chơi">
-        <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (10 số)">
+        <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (không bắt buộc)">
       </div>
       <input type="hidden" id="pairLinkNewGender${slot}" value="">
       <div class="plink-gender">
@@ -37005,7 +37010,12 @@ function setPairLinkGender(slot, g){
 }
 function createPlayerFromPairLink(slot){
   const v = id=>(document.getElementById(id)||{}).value || '';
-  const r = createPlayerFromTournament(v('pairLinkNewName'+slot), v('pairLinkNewPhone'+slot), v('pairLinkNewGender'+slot), 'Tạo từ Giải đấu (liên kết cặp đấu)');
+  const newName = v('pairLinkNewName'+slot).trim();
+  // Khong bat buoc SDT -> de tao trung nguoi: hoi lai neu da co ho so cung ten (khong phan biet dau/hoa thuong)
+  const key = vnFold(newName).toLowerCase().replace(/\s+/g,' ');
+  const same = key ? (state.players||[]).filter(p=>!p.archived && vnFold(String(p.name||'')).toLowerCase().replace(/\s+/g,' ') === key) : [];
+  if(same.length && !confirm('Đã có ' + same.length + ' hồ sơ tên "' + same[0].name + '"' + (same[0].phone ? ' (' + same[0].phone + ')' : '') + '.\n\nNếu là cùng người thì bấm Hủy rồi chọn hồ sơ đó ở danh sách. Vẫn tạo hồ sơ MỚI?')) return;
+  const r = createPlayerFromTournament(newName, v('pairLinkNewPhone'+slot), v('pairLinkNewGender'+slot), 'Tạo từ Giải đấu (liên kết cặp đấu)', true);
   if(!r.ok){ showToast('⚠ ' + r.reason); return; }
   saveState();
   const f = document.getElementById('pairLinkNew'+slot); if(f) f.style.display = 'none';
@@ -37838,12 +37848,14 @@ function moveTournamentFeeToClubDebt(participantId, playerId){
 }
 /* Tao ho so Player moi TU GIAI (SDT bat buoc) — cung cac field nhu checkInPlayer(), nhung status 'paid_and_left'
    (khong hien o Dang o san) va khong mo phien/bill. */
-function createPlayerFromTournament(name, phoneRaw, gender, note){
+function createPlayerFromTournament(name, phoneRaw, gender, note, phoneOptional){
   name = String(name||'').trim();
   if(!name) return { ok:false, reason:'Nhập tên người chơi.' };
   const ph = normalizePhone(phoneRaw);
-  if(!ph.phoneDigits || !ph.valid) return { ok:false, reason:'Số điện thoại bắt buộc — đúng 10 số, bắt đầu bằng 0.' };
-  const dup = findPlayerByPhoneDigits(ph.phoneDigits, null);
+  // Chuyen cong no Club bat buoc SDT (de doi no); Lien ket cap dau thi SDT khong bat buoc (§PAIRLINK-NOPHONE-2026)
+  if(!ph.phoneDigits && !phoneOptional) return { ok:false, reason:'Số điện thoại bắt buộc — đúng 10 số, bắt đầu bằng 0.' };
+  if(ph.phoneDigits && !ph.valid) return { ok:false, reason:'SĐT không hợp lệ — đúng 10 số, bắt đầu bằng 0' + (phoneOptional ? ' (hoặc để trống).' : '.') };
+  const dup = ph.phoneDigits ? findPlayerByPhoneDigits(ph.phoneDigits, null) : null;
   if(dup) return { ok:false, reason:'SĐT này đã thuộc hồ sơ "' + dup.name + '" — hãy chọn hồ sơ đó ở danh sách phía trên.', dupId: dup.id };
   if(gender !== 'MALE' && gender !== 'FEMALE') return { ok:false, reason:'Chọn giới tính.' };
   const pprSet = getPprSettings();
@@ -37852,13 +37864,13 @@ function createPlayerFromTournament(name, phoneRaw, gender, note){
   const player = { id: uid('p'), name, level: 2.5, gamesPlayed:0, status:'paid_and_left', waitSince: null, paidAndLeftAt: now,
     restOneRound:false, notReadyStrikes:0, consecutivePlayed:0, lastSelectedRound:0, recentPartners:[], recentOpponents:[],
     checkins:0, createdAt: now, lastCheckInAt: null, archived:false, tags:['GIẢI ĐẤU'], note: note || 'Tạo từ Giải đấu (công nợ phí giải)',
-    phone: ph.phone, phoneDigits: ph.phoneDigits, socialParticipation:false,
+    phone: ph.phoneDigits ? ph.phone : '', phoneDigits: ph.phoneDigits || '', socialParticipation:false,
     gender, ppr: seedPpr, pprInitial: seedPpr, pprInitialSource:'SEED_LEVEL_PICK', pprInitialAt: now,
     pprUncertainty: pprSet.initialUncertainty, pprConfidence: 0, pprRatedMatches: 0, pprStatus:'PROVISIONAL', pprLastRatedMatchAt: null,
     pprAlgorithmVersion: PPR_ALGORITHM_VERSION, pprManualOverrideAt: null, pprManualOverrideBy: null, initialAssessment: null };
   state.players.push(player);
   markEntityDirty('players', player.id);
-  logOverride('player_created_from_tournament', 'Tạo hồ sơ người chơi "' + name + '" (' + ph.phone + ') từ Giải đấu', 'player', player.id);
+  logOverride('player_created_from_tournament', 'Tạo hồ sơ người chơi "' + name + '" (' + (ph.phoneDigits ? ph.phone : 'chưa có SĐT') + ') từ Giải đấu', 'player', player.id);
   return { ok:true, player };
 }
 /* Hang doi xu ly TUNG NGUOI: moi lan 1 modal cho 1 VDV — chon ho so co san (goi y theo ten/SDT) hoac tao moi (SDT). */
