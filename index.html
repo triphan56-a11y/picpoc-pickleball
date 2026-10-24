@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.50 (2026-10-24) — §PAIRLINK-UI-2026. Admin: "thiết kế cái ô này lại cho dễ nhìn". Modal Liên kết người chơi làm
+  lại: mỗi VĐV 1 thẻ (badge VĐV 1/2 + tên), dòng trạng thái "✓ Đã chọn: … / Chưa liên kết" + Bỏ chọn, ô tìm có icon,
+  kết quả dạng danh sách bấm chọn (avatar chữ cái, SĐT, PPR, ✓) thay dropdown, gợi ý sẵn theo tên trong cặp, form tạo
+  hồ sơ gọn (Tên|SĐT, nút Nam/Nữ). Nút Hủy/LƯU cùng hàng.
+
   v1.44.49 (2026-10-24) — §PAIRLINK-CREATE-2026. Admin: "Dũng Thuận tôi bấm lưu liên kết rồi mà sao ko thấy hồ sơ bên
   club". Modal Liên kết: (1) nút "+ Chưa có hồ sơ? Tạo mới" mỗi VĐV (tên/SĐT/giới tính, dùng createPlayerFromTournament,
   chặn trùng SĐT) rồi chọn sẵn; (2) đã gõ ô tìm mà chưa chọn hồ sơ -> hỏi lại trước khi lưu thành khách vãng lai;
@@ -6859,6 +6864,41 @@
   @media (prefers-reduced-motion: reduce){
     *, *::before, *::after{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; scroll-behavior:auto !important; }
   }
+  /* §PAIRLINK-UI-2026 — modal Lien ket nguoi choi: moi VDV 1 the, ket qua tim dang danh sach bam chon */
+  .plink-intro{ font-size:.82rem; color:var(--muted); margin:0 0 12px; line-height:1.45; }
+  .plink-card{ border:1px solid var(--border); border-radius:14px; padding:12px; margin-bottom:12px; background:var(--card); }
+  .plink-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .plink-badge{ font-size:.68rem; font-weight:800; letter-spacing:.04em; padding:3px 8px; border-radius:999px; background:var(--primary); color:#fff; }
+  .plink-head b{ font-size:1rem; }
+  .plink-current{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:10px; font-size:.86rem; margin-bottom:8px; }
+  .plink-current.on{ background:color-mix(in srgb, var(--success) 12%, transparent); color:var(--text); border:1px solid color-mix(in srgb, var(--success) 40%, transparent); }
+  .plink-current.off{ background:color-mix(in srgb, var(--muted) 10%, transparent); color:var(--muted); border:1px dashed var(--border); }
+  .plink-current button{ background:none; border:none; color:var(--danger); font-size:.78rem; font-weight:700; padding:2px 4px; margin:0; width:auto; min-height:0; cursor:pointer; box-shadow:none; }
+  .plink-search{ position:relative; }
+  .plink-search input{ width:100%; margin:0; padding:10px 12px 10px 36px; border-radius:10px; font-size:.95rem; box-sizing:border-box; }
+  .plink-search::before{ content:'🔍'; position:absolute; left:11px; top:50%; transform:translateY(-50%); font-size:.85rem; opacity:.6; pointer-events:none; }
+  .plink-results{ margin-top:6px; max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+  .plink-results-title{ font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:4px 2px 2px; }
+  .plink-empty{ font-size:.82rem; color:var(--muted); padding:6px 2px; }
+  .plink-row{ display:flex; align-items:center; gap:10px; width:100%; margin:0; padding:7px 10px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); text-align:left; cursor:pointer; font-weight:500; min-height:0; box-shadow:none; }
+  .plink-row:hover{ border-color:var(--primary); }
+  .plink-row.on{ border-color:var(--primary); background:color-mix(in srgb, var(--primary) 10%, transparent); }
+  .plink-avatar{ flex:0 0 30px; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:.85rem; background:color-mix(in srgb, var(--primary) 16%, transparent); color:var(--primary); }
+  .plink-row-main{ flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.25; }
+  .plink-row-main span{ font-size:.76rem; color:var(--muted); }
+  .plink-check{ color:var(--primary); font-weight:900; }
+  .plink-create-toggle{ background:none !important; border:none !important; color:var(--primary) !important; font-weight:700; font-size:.84rem; padding:8px 2px 0 !important; margin:0 !important; width:auto !important; min-height:0 !important; box-shadow:none !important; cursor:pointer; }
+  .plink-create{ margin-top:8px; padding:10px; border-radius:10px; background:color-mix(in srgb, var(--primary) 6%, transparent); border:1px dashed color-mix(in srgb, var(--primary) 40%, transparent); }
+  .plink-create-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .plink-create input{ width:100%; margin:0; box-sizing:border-box; padding:9px 10px; border-radius:9px; }
+  .plink-gender{ display:flex; gap:6px; margin:8px 0; }
+  .plink-gender button{ flex:1; margin:0; padding:8px; border-radius:9px; border:1px solid var(--border); background:var(--card); color:var(--text); font-weight:700; min-height:0; box-shadow:none; }
+  .plink-gender button.on{ border-color:var(--primary); background:var(--primary); color:#fff; }
+  .plink-create .plink-create-btn{ width:100%; margin:0; }
+  .plink-actions{ display:flex; gap:8px; margin-top:4px; }
+  .plink-actions button{ margin:0; }
+  .plink-actions .big{ flex:1; }
+  @media (max-width:480px){ .plink-create-grid{ grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -9347,7 +9387,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.49'; // §PAIRLINK-CREATE-2026 — tao ho so Club ngay trong modal Lien ket + chan luu khi go tim chua chon
+const PICPOC_APP_VERSION = 'Picpoc v1.44.50'; // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
+// (ban truoc: 'Picpoc v1.44.49') // §PAIRLINK-CREATE-2026 — tao ho so Club ngay trong modal Lien ket + chan luu khi go tim chua chon
 // (ban truoc: 'Picpoc v1.44.48') // §STALE-FINALIZE-2026 — trang thai chot vong bang cu cua giai truoc chan tao cay
 // (ban truoc: 'Picpoc v1.44.47') // §PAIRLINK-SEARCH-2026 — o tim ten/SDT trong modal Lien ket nguoi choi
 // (ban truoc: 'Picpoc v1.44.46') // §TOURN-NEW-CYCLE-2026 — nut TAO GIAI MOI sau khi ket thuc giai
@@ -36853,69 +36894,122 @@ function linkPairPlayers(pairId, idA, idB){
   });
   return true;
 }
-/* Danh sach chon nguoi choi cho modal Lien ket, loc theo tu khoa (khong dau, ten hoac SDT). Nguoi dang chon luon
-   giu trong danh sach de khong bi mat lua chon khi go tim. */
-function pairLinkOptionsHtml(sel, query){
+/* §PAIRLINK-UI-2026 — modal Lien ket: moi VDV 1 the (dang chon ai / tim / danh sach bam chon / tao ho so moi).
+   Gia tri chon luu o input an #pairLinkA/#pairLinkB de submitPairLink() doc nhu cu. */
+let __pairLinkUi = { names: { A:'', B:'' } };
+function pairLinkMatches(query, limit){
   const q = vnFold(String(query||'').trim()).toLowerCase();
   const qDigits = String(query||'').replace(/\D/g,'');
-  const list = (state.players||[]).filter(p=>!p.archived && (p.id===sel || !q ||
-      vnFold(String(p.name||'')).toLowerCase().includes(q) || (qDigits.length >= 3 && String(p.phoneDigits||p.phone||'').replace(/\D/g,'').includes(qDigits))))
-    .slice().sort((x,y)=>String(x.name).localeCompare(String(y.name),'vi'));
-  return '<option value="">— Khách vãng lai / chưa có hồ sơ —</option>' +
-    list.map(p=>`<option value="${p.id}" ${p.id===sel?'selected':''}>${escapeHtml(p.name)}${p.phone?' · '+escapeHtml(p.phone):''}</option>`).join('') +
-    (q && !list.some(p=>p.id!==sel) ? '<option value="" disabled>(không tìm thấy)</option>' : '');
+  if(!q) return [];
+  return (state.players||[]).filter(p=>!p.archived && (vnFold(String(p.name||'')).toLowerCase().includes(q) ||
+      (qDigits.length >= 3 && String(p.phoneDigits||p.phone||'').replace(/\D/g,'').includes(qDigits))))
+    .sort((x,y)=>{ // ten bat dau bang tu khoa len truoc
+      const sx = vnFold(String(x.name||'')).toLowerCase().startsWith(q) ? 0 : 1, sy = vnFold(String(y.name||'')).toLowerCase().startsWith(q) ? 0 : 1;
+      return sx - sy || String(x.name).localeCompare(String(y.name),'vi');
+    }).slice(0, limit || 8);
+}
+function pairLinkRowHtml(slot, p, selId){
+  const initial = escapeHtml((String(p.name||'?').trim()[0] || '?').toUpperCase());
+  return `<button type="button" class="plink-row${p.id===selId?' on':''}" onclick="pickPairLink('${slot}','${p.id}')">
+    <span class="plink-avatar">${initial}</span>
+    <span class="plink-row-main"><b>${escapeHtml(p.name)}</b><span>${p.phone ? escapeHtml(p.phone) : 'Chưa có SĐT'}${p.ppr ? ' · ' + Number(p.ppr).toFixed(2) + ' PPR' : ''}</span></span>
+    ${p.id===selId ? '<span class="plink-check">✓</span>' : ''}</button>`;
+}
+function renderPairLinkSlot(slot){
+  const hid = document.getElementById('pairLink' + slot), inp = document.getElementById('pairLinkSearch' + slot);
+  const cur = document.getElementById('pairLinkCur' + slot), list = document.getElementById('pairLinkList' + slot);
+  if(!hid || !cur || !list) return;
+  const selId = hid.value || null, sel = selId ? playerById(selId) : null;
+  cur.className = 'plink-current ' + (sel ? 'on' : 'off');
+  cur.innerHTML = sel
+    ? `<span>✓ Đã chọn: <b>${escapeHtml(sel.name)}</b>${sel.phone ? ' · ' + escapeHtml(sel.phone) : ''}</span><button type="button" onclick="pickPairLink('${slot}','')">Bỏ chọn</button>`
+    : '<span>Chưa liên kết — đang tính là khách vãng lai</span>';
+  const q = inp ? inp.value.trim() : '';
+  let html = '';
+  if(q){
+    const m = pairLinkMatches(q, 8);
+    html = m.length ? `<div class="plink-results-title">${m.length} kết quả</div>` + m.map(p=>pairLinkRowHtml(slot, p, selId)).join('')
+      : '<div class="plink-empty">Không tìm thấy ai — kiểm tra lại tên/SĐT, hoặc tạo hồ sơ mới bên dưới.</div>';
+  } else {
+    // Chua go gi: goi y theo ten trong cap (bo chu "A "/"C " xung ho o dau)
+    const guess = String(__pairLinkUi.names[slot]||'').replace(/^(a|anh|c|chị|chi|e|em)\s+/i,'').trim();
+    const m = guess ? pairLinkMatches(guess, 5).filter(p=>p.id!==selId) : [];
+    html = m.length ? '<div class="plink-results-title">Gợi ý theo tên</div>' + m.map(p=>pairLinkRowHtml(slot, p, selId)).join('')
+      : (sel ? '' : '<div class="plink-empty">Gõ tên hoặc SĐT để tìm hồ sơ.</div>');
+  }
+  list.innerHTML = html;
+}
+function pickPairLink(slot, playerId){
+  const hid = document.getElementById('pairLink' + slot);
+  if(!hid) return;
+  hid.value = playerId || '';
+  const inp = document.getElementById('pairLinkSearch' + slot); if(inp && playerId) inp.value = '';
+  renderPairLinkSlot(slot);
 }
 function filterPairLinkOptions(slot){
-  const selEl = document.getElementById('pairLink' + slot), inp = document.getElementById('pairLinkSearch' + slot);
-  if(!selEl || !inp) return;
-  const cur = selEl.value || null;
-  selEl.innerHTML = pairLinkOptionsHtml(cur, inp.value);
-  // Dang go tim -> mo rong danh sach cho de thay ket qua; tim ra dung 1 nguoi -> chon san luon
-  const real = [...selEl.options].filter(o=>o.value && !o.disabled && o.value !== cur);
-  selEl.size = inp.value.trim() ? Math.min(6, Math.max(2, selEl.options.length)) : 1;
-  if(inp.value.trim() && real.length === 1) selEl.value = real[0].value;
+  const inp = document.getElementById('pairLinkSearch' + slot);
+  const q = inp ? inp.value.trim() : '';
+  const m = q ? pairLinkMatches(q, 2) : [];
+  // Go ra dung 1 nguoi -> chon san (van hien danh sach de thay)
+  if(q && m.length === 1){ const hid = document.getElementById('pairLink' + slot); if(hid) hid.value = m[0].id; }
+  renderPairLinkSlot(slot);
+}
+function pairLinkSlotHtml(slot, idx, name, selId){
+  return `<div class="plink-card">
+    <div class="plink-head"><span class="plink-badge">VĐV ${idx}</span><b>${escapeHtml(name||'—')}</b></div>
+    <input type="hidden" id="pairLink${slot}" value="${selId||''}">
+    <div id="pairLinkCur${slot}" class="plink-current off"></div>
+    <div class="plink-search"><input type="search" id="pairLinkSearch${slot}" placeholder="Tìm theo tên hoặc SĐT…" oninput="filterPairLinkOptions('${slot}')" autocomplete="off"></div>
+    <div class="plink-results" id="pairLinkList${slot}"></div>
+    ${pairLinkCreateFormHtml(slot, name)}
+  </div>`;
 }
 function openPairLinkModal(pairId){
   const f = findPairById(pairId);
   if(!f) return;
   const [a, b] = getPairPlayerIds(f.pair);
   const [nameA, nameB] = splitPairLabel(f.pair.label);
+  __pairLinkUi = { names: { A: nameA, B: nameB } };
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2>🔗 Liên kết người chơi — ${escapeHtml(f.pair.label)}</h2>
-    <p class="muted small-note">Chọn đúng hồ sơ Club cho từng VĐV để: trao Credits/Top-2 Series chính xác, phí giải &amp; nước hiện trong hồ sơ người chơi. Tên cặp hiển thị giữ nguyên.</p>
-    <label>VĐV 1 (${escapeHtml(nameA)})</label>
-    <input type="search" id="pairLinkSearchA" placeholder="🔍 Tìm tên hoặc SĐT…" oninput="filterPairLinkOptions('A')" autocomplete="off">
-    <select id="pairLinkA">${pairLinkOptionsHtml(a, '')}</select>
-    ${pairLinkCreateFormHtml('A', nameA)}
-    <label>VĐV 2 (${escapeHtml(nameB)})</label>
-    <input type="search" id="pairLinkSearchB" placeholder="🔍 Tìm tên hoặc SĐT…" oninput="filterPairLinkOptions('B')" autocomplete="off">
-    <select id="pairLinkB">${pairLinkOptionsHtml(b, '')}</select>
-    ${pairLinkCreateFormHtml('B', nameB)}
-    <button class="big" onclick="submitPairLink('${f.pair.id}')">LƯU LIÊN KẾT</button>
-    <button class="secondary" onclick="closeModal()">Hủy</button>`;
+    <h2>🔗 Liên kết người chơi</h2>
+    <p class="plink-intro"><b>${escapeHtml(f.pair.label)}</b> — chọn đúng hồ sơ Club của từng VĐV để trao Credits, ghi phí giải &amp; công nợ vào đúng người. Tên cặp hiển thị giữ nguyên.</p>
+    ${pairLinkSlotHtml('A', 1, nameA, a)}
+    ${pairLinkSlotHtml('B', 2, nameB, b)}
+    <div class="plink-actions">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button class="big" onclick="submitPairLink('${f.pair.id}')">LƯU LIÊN KẾT</button>
+    </div>`;
+  renderPairLinkSlot('A'); renderPairLinkSlot('B');
   document.getElementById('matchModal').classList.add('show');
 }
 /* Chua co ho so Club -> tao ngay trong modal Lien ket (SDT + gioi tinh bat buoc, giong luong chuyen cong no Club). */
 function pairLinkCreateFormHtml(slot, name){
-  return `<div style="margin:2px 0 8px;">
-    <button type="button" class="small secondary" onclick="var f=document.getElementById('pairLinkNew${slot}'); f.style.display = f.style.display==='none' ? 'block' : 'none';">+ Chưa có hồ sơ? Tạo mới</button>
-    <div id="pairLinkNew${slot}" style="display:none; margin-top:6px; padding:8px; border:1px dashed var(--border,#ccc); border-radius:8px;">
-      <input id="pairLinkNewName${slot}" value="${escapeHtml(name||'')}" placeholder="Tên">
-      <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (bắt buộc, 10 số)">
-      <select id="pairLinkNewGender${slot}"><option value="">— Giới tính —</option><option value="MALE">Nam</option><option value="FEMALE">Nữ</option></select>
-      <button type="button" class="small" onclick="createPlayerFromPairLink('${slot}')">TẠO HỒ SƠ &amp; CHỌN</button>
-    </div></div>`;
+  return `<button type="button" class="plink-create-toggle" onclick="var f=document.getElementById('pairLinkNew${slot}'); f.style.display = f.style.display==='none' ? 'block' : 'none';">＋ Chưa có hồ sơ? Tạo mới cho “${escapeHtml(name||'VĐV')}”</button>
+    <div id="pairLinkNew${slot}" class="plink-create" style="display:none;">
+      <div class="plink-create-grid">
+        <input id="pairLinkNewName${slot}" value="${escapeHtml(name||'')}" placeholder="Tên người chơi">
+        <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (10 số)">
+      </div>
+      <input type="hidden" id="pairLinkNewGender${slot}" value="">
+      <div class="plink-gender">
+        <button type="button" data-g="MALE" onclick="setPairLinkGender('${slot}','MALE')">♂ Nam</button>
+        <button type="button" data-g="FEMALE" onclick="setPairLinkGender('${slot}','FEMALE')">♀ Nữ</button>
+      </div>
+      <button type="button" class="plink-create-btn" onclick="createPlayerFromPairLink('${slot}')">TẠO HỒ SƠ &amp; CHỌN</button>
+    </div>`;
+}
+function setPairLinkGender(slot, g){
+  const hid = document.getElementById('pairLinkNewGender' + slot); if(hid) hid.value = g;
+  document.querySelectorAll('#pairLinkNew' + slot + ' .plink-gender button').forEach(b=>b.classList.toggle('on', b.dataset.g === g));
 }
 function createPlayerFromPairLink(slot){
   const v = id=>(document.getElementById(id)||{}).value || '';
   const r = createPlayerFromTournament(v('pairLinkNewName'+slot), v('pairLinkNewPhone'+slot), v('pairLinkNewGender'+slot), 'Tạo từ Giải đấu (liên kết cặp đấu)');
   if(!r.ok){ showToast('⚠ ' + r.reason); return; }
   saveState();
-  const selEl = document.getElementById('pairLink'+slot), inp = document.getElementById('pairLinkSearch'+slot);
-  if(inp) inp.value = '';
-  if(selEl){ selEl.innerHTML = pairLinkOptionsHtml(r.player.id, ''); selEl.size = 1; selEl.value = r.player.id; }
   const f = document.getElementById('pairLinkNew'+slot); if(f) f.style.display = 'none';
+  pickPairLink(slot, r.player.id);
   showToast('✓ Đã tạo hồ sơ "' + r.player.name + '" — bấm LƯU LIÊN KẾT để hoàn tất');
 }
 function submitPairLink(pairId){
