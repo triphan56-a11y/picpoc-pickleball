@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.55 (2026-10-24) — §PLAYER-MERGE-FIX-2026. Admin: gộp "Thi Tèo" vào "Tèo" xong "hồ sơ vẫn hiện và không thấy
+  ghi chú đã gộp" — lượt chơi đã chuyển (Thi Tèo 0 lần, Tèo 3 lần) nhưng bản ghi 2 hồ sơ người chơi không lên server
+  (CAS theo snapshot cũ bị huỷ -> kéo bản server cũ về). Giờ 2 hồ sơ ghi bằng transaction CHẮM PATCH (chỉ các field của
+  thao tác gộp) lên bản mới nhất trên server; hồ sơ bị gộp về 0 lần check-in/số trận để gộp lại lần 2 không cộng trùng.
+
   v1.44.54 (2026-10-24) — §PLAYER-MERGE-2026. Admin: "2 người này là 1 mà nhân viên tạo bị trùng, giờ xử lý ntn".
   Hồ sơ người chơi thêm nút "🔀 GỘP HỒ SƠ TRÙNG" (ADMIN): chọn hồ sơ giữ lại (tìm tên/SĐT, gợi ý tên giống) -> chuyển
   bill (+tên), lượt ghé sân, Credits (lot+giao dịch), lịch sử trận (+tên, thay đổi PPR), lịch sử PPR, gói Social + lượt
@@ -9414,7 +9419,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.54'; // §PLAYER-MERGE-2026 — gop 2 ho so trung
+const PICPOC_APP_VERSION = 'Picpoc v1.44.55'; // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
+// (ban truoc: 'Picpoc v1.44.54') // §PLAYER-MERGE-2026 — gop 2 ho so trung
 // (ban truoc: 'Picpoc v1.44.53') // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
 // (ban truoc: 'Picpoc v1.44.52') // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
 // (ban truoc: 'Picpoc v1.44.51') // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
@@ -21385,15 +21391,37 @@ function mergePlayers(sourceId, targetId){
   if(src.createdAt && (!dst.createdAt || src.createdAt < dst.createdAt)) dst.createdAt = src.createdAt;
   if((src.lastCheckInAt||0) > (dst.lastCheckInAt||0)) dst.lastCheckInAt = src.lastCheckInAt;
   ['recentPartners','recentOpponents'].forEach(k=>{ dst[k] = Array.from(new Set([].concat(dst[k]||[], src[k]||[]))).filter(id=>id!==dst.id && id!==src.id); });
-  dirty('players', dst.id);
   // Ho so bo: luu tru, ghi ro da gop vao dau; bo SDT de khong chan trung SDT voi ho so giu lai
   src.archived = true; src.mergedInto = dst.id; src.mergedAt = Date.now();
   src.note = (src.note ? src.note + '\n' : '') + 'Đã gộp vào hồ sơ "' + dst.name + '"';
-  src.phone = ''; src.phoneDigits = '';
-  dirty('players', src.id);
+  src.phone = ''; src.phoneDigits = ''; src.checkins = 0; src.gamesPlayed = 0; // so lieu da cong sang ho so giu lai (gop lai lan 2 khong cong trung)
+  // §PLAYER-MERGE-FIX-2026 — ghi 2 ho so bang transaction VA CHAM PATCH len ban server (khong CAS theo snapshot cu):
+  // Admin bao lan gop dau "ho so van hien, khong thay ghi chu" — luot choi da chuyen nhung ban ghi ho so bi CAS huy
+  // va keo ban server cu ve. Patch chi gom cac field cua thao tac gop, ap len du lieu MOI NHAT tren server.
+  const pick = (p, keys)=>{ const o = {}; keys.forEach(k=>{ o[k] = p[k] === undefined ? null : p[k]; }); return o; };
+  patchPlayerAtomic(dst.id, pick(dst, ['checkins','gamesPlayed','phone','phoneDigits','gender','tags','note','createdAt','lastCheckInAt','recentPartners','recentOpponents']));
+  patchPlayerAtomic(src.id, pick(src, ['archived','mergedInto','mergedAt','note','phone','phoneDigits','checkins','gamesPlayed']));
   logOverride('player_merged', 'Gộp hồ sơ "' + src.name + '" vào "' + dst.name + '" — ' + moved.bills + ' bill, ' + moved.visits + ' lượt chơi, ' + moved.creditLots + ' khoản Credit, ' + moved.matches + ' trận', 'player', dst.id);
   saveState();
   return { ok:true, moved, source: src, target: dst };
+}
+function patchPlayerAtomic(playerId, patch){
+  if(!SYNC_ENABLED || !dbRoot) return Promise.resolve(true);
+  markEntityPendingWrite('players', playerId);
+  return DataService.players.transaction(playerId, remote=>{
+    const base = remote || sanitizeForFirebase(playerById(playerId)) || {};
+    const next = Object.assign({}, base);
+    Object.keys(patch).forEach(k=>{ if(patch[k] === null) delete next[k]; else next[k] = patch[k]; });
+    return sanitizeForFirebase(next);
+  }).then(result=>{
+    clearEntityPendingWrite('players', playerId);
+    if(result && result.committed && result.snapshot){
+      applyRemoteEntityLocally('players', playerId, result.snapshot); // local = dung ban server vua ghi
+      return true;
+    }
+    if(typeof logSystemError === 'function') logSystemError('player-merge', 'Không ghi được hồ sơ ' + playerId + ' khi gộp', null);
+    return false;
+  }).catch(err=>{ clearEntityPendingWrite('players', playerId); handleWriteError('players','transaction',err); return false; });
 }
 function openMergePlayerModal(sourceId){
   if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
