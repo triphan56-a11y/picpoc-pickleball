@@ -2,6 +2,16 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.53 (2026-10-24) — §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026. Admin: "kiểm tra kỹ lại xem khi tính tiền có
+  dùng được credits ko". Kiểm tra offline: bill Club dùng Credit đúng (allow-list, FEFO, tối đa phần eligible, Credit +
+  tiền mặt, trả hết bằng Credit, bill chỉ có nước bị chặn, hoàn tác 1 khoản Credit hoàn lại đúng). 2 LỖI đã sửa:
+  (1) voidBillPayment() ("Hoàn tác thanh toán" cả bill) chỉ void 1 payment và KHÔNG hoàn Credit -> khách mất Credit, các
+  khoản khác của bill vẫn hiệu lực trong khi bill 'open'. Giờ void TẤT CẢ khoản của bill, khoản 'CREDIT' hoàn đúng lot.
+  (2) Phí tham gia giải (tournament_entry, nằm trong allow-list) KHÔNG trừ được Credit vì bill giải playerId=null. Modal
+  thu phí giải thêm mục PICPOC CREDITS: VĐV đã liên kết hồ sơ + còn Credit -> tick "Dùng Credit của …" (tối đa = phí của
+  chính người đó), hiện "Còn phải thu"; mỗi người 1 payment 'CREDIT' (redeem FEFO), phần còn lại theo phương thức đã chọn.
+  Xung đột đa thiết bị khi thu phí -> hoàn luôn Credit.
+
   v1.44.52 (2026-10-24) — §PAIRLINK-LIST-FIX-2026. Admin khoanh danh sách kết quả tìm trong modal Liên kết: các dòng bị
   flex co lại chồng lên nhau (khung max-height + nút toàn cục có chiều cao cố định). FIX: dòng không co (flex 0 0 auto,
   min-height 48px), khung cao hơn + cuộn; xếp hạng kết quả: đúng cả dấu ("phú" -> Phú) > trùng nguyên từ > đầu từ > còn lại.
@@ -9397,7 +9407,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.52'; // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
+const PICPOC_APP_VERSION = 'Picpoc v1.44.53'; // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
+// (ban truoc: 'Picpoc v1.44.52') // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
 // (ban truoc: 'Picpoc v1.44.51') // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
 // (ban truoc: 'Picpoc v1.44.50') // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
 // (ban truoc: 'Picpoc v1.44.49') // §PAIRLINK-CREATE-2026 — tao ho so Club ngay trong modal Lien ket + chan luu khi go tim chua chon
@@ -16159,6 +16170,18 @@ function voidBillPayment(billId){
       return (p.allocations||[]).some(a=>a.billId===billId && !a.voided);
     });
   }
+  // §CREDIT-VOID-FIX-2026 — bill tra bang NHIEU khoan (vd Credit + tien mat): truoc day chi void 1 payment, cac khoan
+  // con lai van hieu luc trong khi bill bi dat 'open', va payment 'CREDIT' KHONG duoc hoan Credit -> khach mat Credit.
+  // Void TAT CA khoan con hieu luc cua bill nay; khoan Credit -> hoan dung lot da tieu.
+  const otherPays = state.payments.filter(p=>p!==payment && !p.voided && (normalizePaymentAllocations(p), (p.allocations||[]).some(a=>a.billId===billId && !a.voided)));
+  const currentUserV = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  otherPays.forEach(op=>{
+    op.allocations.forEach(a=>{ if(a.billId===billId) a.voided = true; });
+    op.voided = !op.allocations.some(a=>!a.voided);
+    if(op.voided) reverseFinanceTransactionByPaymentId(op.id);
+    if(op.voided && op.paymentMethod === 'CREDIT') reverseCreditsForPayment(op.id, currentUserV ? currentUserV.name : 'staff');
+    markEntityDirty('payments', op.id);
+  });
   if(payment){
     normalizePaymentAllocations(payment);
     const isGroupPayment = (payment.billIds||[]).length > 1; // §25 — phan biet payment_void vs group_payment_void
@@ -16171,12 +16194,12 @@ function voidBillPayment(billId){
     // dong = 1 payment" cua financeTransactions — group-payment moi voided 1 phan van giu ACTIVE,
     // han che biet truoc cho V1, khong overengineer tach nho theo tung allocation).
     if(payment.voided) reverseFinanceTransactionByPaymentId(payment.id);
+    if(payment.voided && payment.paymentMethod === 'CREDIT') reverseCreditsForPayment(payment.id, currentUserV ? currentUserV.name : 'staff'); // §CREDIT-VOID-FIX-2026
     logOverride(isGroupPayment ? 'group_payment_void' : 'void_payment', bill.playerName + ' — hoàn tác thanh toán ' + fmtVnd(billTotal(bill)) + (stillActive ? ' (payment nhóm vẫn còn hiệu lực cho các bill khác)' : ''), 'payment', payment.id);
   } else {
     logOverride('void_payment', bill.playerName + ' — hoàn tác thanh toán ' + fmtVnd(billTotal(bill)) + ' (không tìm thấy payment gốc)', 'bill', bill.id);
   }
-  const sale = state.sales.find(s=>s.billId===billId && !s.voided);
-  if(sale) sale.voided = true;
+  state.sales.filter(s=>s.billId===billId && !s.voided).forEach(s=>{ s.voided = true; }); // §CREDIT-VOID-FIX-2026 — moi khoan thu deu da hoan
   bill.status = 'open';
   bill.paidAt = null;
   bill.paymentMethod = null;
@@ -37214,7 +37237,46 @@ function applyTournamentExtraStockUpdates(stockUpdates, playerLabel){
     });
   }
 }
-function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
+/* §TOURN-CREDIT-2026 — Phi tham gia giai la khoan DUOC dung Credit (tournament_entry) nhung bill giai khong gan Player
+   (playerId=null) nen truoc day khong tru Credit duoc. VDV da LIEN KET ho so Club -> tru Credit cua CHINH nguoi do, toi
+   da = phi cua nguoi do (khong an vao nuoc/san pham them). Moi nguoi 1 payment 'CREDIT' rieng (redeem FEFO), phan con
+   lai thu bang phuong thuc da chon. */
+function getTournCreditUsable(participant){
+  if(!participant || !participant.playerId || !isCreditSystemEnabled() || !playerById(participant.playerId)) return 0;
+  return Math.max(0, Math.min(getAvailableCredits(participant.playerId), participant.entryFeeAmount || 0));
+}
+function payTournamentBillWithCredits(bill, parts, creditMap, paymentMethod){
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  const creditPays = [];
+  for(const p of parts){
+    const want = Math.round(Number((creditMap||{})[p.id])||0);
+    const amt = Math.min(want, getTournCreditUsable(p), getBillEligibleOutstanding(bill));
+    if(!(amt > 0)) continue;
+    const r = createBillPayment(bill, amt, 'CREDIT', { operationId: uid('op') });
+    if(!r.ok){ creditPays.forEach(cp=>rollbackBillPayment(bill, cp, r.reason)); return { ok:false, reason: r.reason }; }
+    const rr = redeemCreditsFEFO({ playerId: p.playerId, amount: amt, billId: bill.id, paymentId: r.payment.id, createdBy: u ? u.name : 'staff' });
+    if(!rr.ok){ rollbackBillPayment(bill, r.payment, rr.reason); creditPays.forEach(cp=>rollbackBillPayment(bill, cp, rr.reason)); return { ok:false, reason: rr.reason }; }
+    p.creditPaymentId = r.payment.id; p.creditUsed = amt;
+    creditPays.push(r.payment);
+  }
+  let payment = creditPays[creditPays.length-1] || null;
+  const rest = getBillOutstanding(bill);
+  if(rest > 0){
+    const r2 = createBillPayment(bill, rest, paymentMethod, { operationId: uid('op') });
+    if(!r2.ok){ creditPays.forEach(cp=>rollbackBillPayment(bill, cp, r2.reason)); return { ok:false, reason: r2.reason }; }
+    payment = r2.payment;
+  }
+  // giong markBillPaid(): bill giai khong co Player nen createBillPayment() khong tu ghi snapshot ban hang/phuong thuc
+  bill.paymentMethod = rest > 0 ? (paymentMethod === 'CASH' ? 'CASH' : 'BANK_TRANSFER') : 'CREDIT';
+  bill.paymentId = payment.id;
+  if(!state.sales.some(s=>s.billId===bill.id && !s.voided)){
+    state.sales.unshift({ id: uid('sale'), kind:'BILL_PAYMENT_SNAPSHOT', items: bill.items.map(it=>({ productId: it.meta && it.meta.productId, name: it.label, price: it.unitPrice||it.amount, qty: it.qty||1 })),
+      total: billTotal(bill), timestamp: Date.now(), billId: bill.id, buyerId: null, buyerName: bill.playerName, paymentMethod: bill.paymentMethod, paymentId: payment.id, voided:false });
+  }
+  markEntityDirty('bills', bill.id);
+  return { ok:true, payment, creditTotal: creditPays.reduce((s,p)=>s+p.amount,0) };
+}
+function collectTournamentEntryFee(participantId, paymentMethod, extraItems, creditMap){
   const participant = state.tournamentEntryParticipants.find(p=>p.id===participantId);
   if(!participant || participant.canceled) return null;
   if(participant.entryFeeStatus === 'CLUB_DEBT'){ showToast('VĐV này đã chuyển sang công nợ Club — thu ở Tài chính > Công nợ.'); return null; } // §TOURN-DEBT-TO-CLUB-2026
@@ -37231,8 +37293,17 @@ function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
   if(extra.items.length) bill.items = bill.items.concat(extra.items);
   if(!existingBill) state.bills.push(bill);
   else markEntityDirty('bills', bill.id); // §DATA-ARCH — bill da co san, items vua noi them can day ngay truoc khi payBill() doc lai
+  const useCredit = creditMap && Math.round(Number(creditMap[participant.id])||0) > 0 && getTournCreditUsable(participant) > 0;
+  if(useCredit && (blockIfOffline('thanh toán') || blockIfMaintenance('thanh toán'))){ if(!existingBill) state.bills.splice(state.bills.indexOf(bill),1); return null; }
   applyTournamentExtraStockUpdates(extra.stockUpdates, participant.name);
-  const payment = payBill(bill.id, paymentMethod);
+  let payment;
+  if(useCredit){ // §TOURN-CREDIT-2026
+    const cr = payTournamentBillWithCredits(bill, [participant], creditMap, paymentMethod);
+    if(!cr.ok){ showToast('⚠️ ' + cr.reason); return null; }
+    payment = cr.payment;
+  } else {
+    payment = payBill(bill.id, paymentMethod);
+  }
   if(!payment){ return null; } // payBill tu chan (vd offline/maintenance) — bill van con 'open', khong danh dau PAID
   participant.entryFeeStatus = 'PAID';
   participant.billId = bill.id;
@@ -37248,7 +37319,7 @@ function collectTournamentEntryFee(participantId, paymentMethod, extraItems){
    từng dòng) nhưng vẫn TẠO/ĐÁNH DẤU 2 participant ĐỘC LẬP (§13 — không dùng 1 entitlement chung
    2 chai). Chỉ thu các participant còn UNPAID trong cặp (nếu 1 người đã đóng riêng trước đó thì
    không thu lại — §double-payment). */
-function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems){
+function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems, creditMap){
   const participants = getTournamentEntryParticipantsForPair(pairId).filter(p=>!isTournFeeSettled(p));
   if(!participants.length) return null; // §idempotent — cả đôi đã thu đủ rồi
   const extra = buildTournamentExtraBillItems(extraItems);
@@ -37263,8 +37334,17 @@ function collectTournamentEntryFeeForPair(pairId, paymentMethod, extraItems){
   if(extra.items.length) bill.items = bill.items.concat(extra.items);
   if(!existingBill) state.bills.push(bill);
   else markEntityDirty('bills', bill.id);
+  const useCredit = creditMap && participants.some(p=>Math.round(Number(creditMap[p.id])||0) > 0 && getTournCreditUsable(p) > 0);
+  if(useCredit && (blockIfOffline('thanh toán') || blockIfMaintenance('thanh toán'))){ if(!existingBill) state.bills.splice(state.bills.indexOf(bill),1); return null; }
   applyTournamentExtraStockUpdates(extra.stockUpdates, bill.playerName);
-  const payment = payBill(bill.id, paymentMethod);
+  let payment;
+  if(useCredit){ // §TOURN-CREDIT-2026
+    const cr = payTournamentBillWithCredits(bill, participants, creditMap, paymentMethod);
+    if(!cr.ok){ showToast('⚠️ ' + cr.reason); return null; }
+    payment = cr.payment;
+  } else {
+    payment = payBill(bill.id, paymentMethod);
+  }
   if(!payment){ return null; }
   participants.forEach(p=>{ p.entryFeeStatus='PAID'; p.billId=bill.id; p.paymentId=payment.id; p.paidAt=Date.now(); markEntityDirty('tournamentEntryParticipants', p.id); });
   saveState();
@@ -37322,6 +37402,11 @@ function confirmTournamentEntryFeeAtomic(participant, bill, payment){
       bill.status = 'open'; bill.paidAt = null; bill.paymentMethod = null; bill.paymentId = null;
       const pay = state.payments.find(x=>x.id===payment.id);
       if(pay){ pay.voided = true; normalizePaymentAllocations(pay); pay.allocations.forEach(a=>{ if(a.billId===bill.id) a.voided = true; }); }
+      // §TOURN-CREDIT-2026 — phan da tru Credit cua VDV nay cung phai hoan (khong de khach mat Credit)
+      const cp = participant.creditPaymentId && participant.creditPaymentId !== payment.id ? state.payments.find(x=>x.id===participant.creditPaymentId) : (pay && pay.paymentMethod==='CREDIT' ? pay : null);
+      if(cp){ if(cp !== pay){ cp.voided = true; normalizePaymentAllocations(cp); cp.allocations.forEach(a=>{ if(a.billId===bill.id) a.voided = true; }); reverseFinanceTransactionByPaymentId(cp.id); markEntityDirty('payments', cp.id); }
+        reverseCreditsForPayment(cp.id, 'system_rollback'); }
+      participant.creditPaymentId = null; participant.creditUsed = null;
       const sIdx = state.sales.findIndex(s=>s.paymentId===payment.id && s.billId===bill.id);
       if(sIdx>=0) state.sales.splice(sIdx,1);
       reverseFinanceTransactionByPaymentId(payment.id); // §FINANCE1/§29
@@ -37681,6 +37766,21 @@ let tournEntryModalPaymentMethod = 'BANK_TRANSFER';
 // {productId, name, price, qty}. Reset moi lan mo modal (showTournEntryFeeConfirm/-ForPairConfirm).
 let tournEntryModalExtraItems = [];
 let tournEntryModalTitle = '', tournEntryModalBaseAmount = 0, tournEntryModalMode = 'single', tournEntryModalTargetId = '';
+let tournEntryModalCredit = {}; // §TOURN-CREDIT-2026 — { participantId: true } = tru Credit cua VDV do
+function tournEntryModalParticipants(){
+  return tournEntryModalMode === 'single'
+    ? [state.tournamentEntryParticipants.find(p=>p.id===tournEntryModalTargetId)].filter(Boolean)
+    : getTournamentEntryParticipantsForPair(tournEntryModalTargetId).filter(p=>!isTournFeeSettled(p));
+}
+function tournEntryModalCreditMap(){
+  const m = {};
+  tournEntryModalParticipants().forEach(p=>{ if(tournEntryModalCredit[p.id]) m[p.id] = getTournCreditUsable(p); });
+  return m;
+}
+function toggleTournEntryCredit(participantId, on){
+  tournEntryModalCredit[participantId] = !!on;
+  renderTournEntryFeeConfirmModal(tournEntryModalTitle, tournEntryModalBaseAmount, tournEntryModalMode, tournEntryModalTargetId);
+}
 function setTournEntryModalMethod(method){
   tournEntryModalPaymentMethod = method;
   const bankBtn = document.getElementById('tefMethodBankBtn');
@@ -37732,6 +37832,15 @@ function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
   tournEntryModalTitle = title; tournEntryModalBaseAmount = amount; tournEntryModalMode = mode; tournEntryModalTargetId = targetId;
   const extraTotal = tournEntryModalExtraTotal();
   const grandTotal = amount + extraTotal;
+  // §TOURN-CREDIT-2026 — VDV da lien ket ho so + con Credit -> cho tick tru Credit (chi tru vao phi giai cua chinh ho)
+  const creditRows = tournEntryModalParticipants().map(p=>({ p, usable: getTournCreditUsable(p) })).filter(x=>x.usable > 0);
+  const creditUsed = creditRows.reduce((s,x)=>s + (tournEntryModalCredit[x.p.id] ? x.usable : 0), 0);
+  const creditHtml = creditRows.length ? `<div class="bill-section-label">🎫 PICPOC CREDITS</div>` + creditRows.map(x=>`
+    <label class="bill-line" style="align-items:center; cursor:pointer; gap:8px;">
+      <span style="display:flex; align-items:center; gap:8px;"><input type="checkbox" style="width:auto; margin:0;" ${tournEntryModalCredit[x.p.id]?'checked':''} onchange="toggleTournEntryCredit('${x.p.id}', this.checked)">
+        Dùng Credit của <b>${escapeHtml(playerName(x.p.playerId))}</b> <span class="muted">(có ${fmtVnd(getAvailableCredits(x.p.playerId))})</span></span>
+      <b>−${fmtVnd(x.usable)}</b>
+    </label>`).join('') : '';
   const extraListHtml = tournEntryModalExtraItems.length ? tournEntryModalExtraItems.map(it=>`
     <div class="bill-line" style="align-items:center;">
       <span>${escapeHtml(it.name)} ×${it.qty}</span>
@@ -37746,7 +37855,10 @@ function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
     ${extraListHtml ? `<div class="bill-section-label">Sản phẩm thêm</div>${extraListHtml}` : ''}
     <button type="button" class="secondary" style="width:100%; margin:6px 0;" onclick="toggleTournEntryExtraPicker()">🥤 + Thêm nước uống / sản phẩm</button>
     <div id="tefExtraPickerGrid" style="display:none; flex-direction:column; gap:6px; max-height:220px; overflow:auto; margin-bottom:8px;"></div>
-    <p>Tổng cộng: <b style="font-size:1.3rem;">${fmtVnd(grandTotal)}</b></p>
+    ${creditHtml}
+    ${creditUsed > 0
+      ? `<p>Tổng cộng: ${fmtVnd(grandTotal)} · Trừ Credit: −${fmtVnd(creditUsed)}<br>Còn phải thu: <b style="font-size:1.3rem;">${fmtVnd(Math.max(0, grandTotal - creditUsed))}</b></p>`
+      : `<p>Tổng cộng: <b style="font-size:1.3rem;">${fmtVnd(grandTotal)}</b></p>`}
     <div class="bill-section-label">Phương thức</div>
     <div class="method-toggle">
       <button id="tefMethodBankBtn" class="method-btn ${tournEntryModalPaymentMethod==='BANK_TRANSFER'?'active':''}" aria-pressed="${tournEntryModalPaymentMethod==='BANK_TRANSFER'}" onclick="setTournEntryModalMethod('BANK_TRANSFER')">${tournEntryModalPaymentMethod==='BANK_TRANSFER'?'✓ ':''}CHUYỂN KHOẢN</button>
@@ -37764,6 +37876,7 @@ function showTournEntryFeeConfirm(participantId){
   if(participant.entryFeeStatus==='CLUB_DEBT'){ showToast('VĐV này đã chuyển sang công nợ Club — thu ở Tài chính > Công nợ.'); return; } // §TOURN-DEBT-TO-CLUB-2026
   tournEntryModalPaymentMethod = 'BANK_TRANSFER'; // moi lan mo phai mac dinh chuyen khoan, giong showPayConfirm()
   tournEntryModalExtraItems = []; // §FEATURE-TOURNFEE-DEBT-WATER — reset gio hang tam moi lan mo modal
+  tournEntryModalCredit = {}; // §TOURN-CREDIT-2026
   renderTournEntryFeeConfirmModal(participant.name, participant.entryFeeAmount, 'single', participantId);
 }
 function showTournEntryFeeForPairConfirm(pairId){
@@ -37774,15 +37887,19 @@ function showTournEntryFeeForPairConfirm(pairId){
   const amount = parts.reduce((sum,p)=>sum+p.entryFeeAmount,0);
   tournEntryModalPaymentMethod = 'BANK_TRANSFER';
   tournEntryModalExtraItems = []; // §FEATURE-TOURNFEE-DEBT-WATER
+  tournEntryModalCredit = {}; // §TOURN-CREDIT-2026
   renderTournEntryFeeConfirmModal(pair ? pair.label : 'Thu cả đôi', amount, 'pair', pairId);
 }
 function confirmTournEntryFeeModal(mode, targetId){
   const extraItems = tournEntryModalExtraItems.map(it=>({ productId: it.productId, qty: it.qty }));
+  const creditMap = tournEntryModalCreditMap(); // §TOURN-CREDIT-2026
   const payment = mode === 'single'
-    ? collectTournamentEntryFee(targetId, tournEntryModalPaymentMethod, extraItems)
-    : collectTournamentEntryFeeForPair(targetId, tournEntryModalPaymentMethod, extraItems);
+    ? collectTournamentEntryFee(targetId, tournEntryModalPaymentMethod, extraItems, creditMap)
+    : collectTournamentEntryFeeForPair(targetId, tournEntryModalPaymentMethod, extraItems, creditMap);
   if(!payment) return; // §FEATURE-TOURNFEE-DEBT-WATER — that bai (vd het ton kho san pham them) -> GIU modal mo, khong dong nham de Staff sua lai gio hang
-  tournEntryModalExtraItems = [];
+  const creditTotal = Object.values(creditMap).reduce((s,v)=>s+v,0);
+  if(creditTotal > 0) showToast('✓ Đã thu phí giải — trừ ' + fmtVnd(creditTotal) + ' Picpoc Credits');
+  tournEntryModalExtraItems = []; tournEntryModalCredit = {};
   closeModal();
   // §TOURNGRID — collectTournamentEntryFee()/collectTournamentEntryFeeForPair() (ham goc, khong doi)
   // KHONG tu goi renderTournamentTab() ben trong (khac voi issueTournamentIncludedWater()/
