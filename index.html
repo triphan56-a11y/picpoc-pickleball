@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.52 (2026-10-24) — §PAIRLINK-LIST-FIX-2026. Admin khoanh danh sách kết quả tìm trong modal Liên kết: các dòng bị
+  flex co lại chồng lên nhau (khung max-height + nút toàn cục có chiều cao cố định). FIX: dòng không co (flex 0 0 auto,
+  min-height 48px), khung cao hơn + cuộn; xếp hạng kết quả: đúng cả dấu ("phú" -> Phú) > trùng nguyên từ > đầu từ > còn lại.
+
   v1.44.51 (2026-10-24) — §PAIRLINK-NOPHONE-2026. Admin: "số điện thoại để tạo hồ sơ người chơi nên là không bắt buộc".
   Tạo hồ sơ trong modal Liên kết: SĐT không bắt buộc (có nhập thì vẫn kiểm tra 10 số + chặn trùng SĐT); hỏi lại nếu đã
   có hồ sơ cùng tên (tránh tạo trùng người). Luồng chuyển công nợ Club khi kết thúc giải VẪN bắt buộc SĐT.
@@ -6881,14 +6885,16 @@
   .plink-search{ position:relative; }
   .plink-search input{ width:100%; margin:0; padding:10px 12px 10px 36px; border-radius:10px; font-size:.95rem; box-sizing:border-box; }
   .plink-search::before{ content:'🔍'; position:absolute; left:11px; top:50%; transform:translateY(-50%); font-size:.85rem; opacity:.6; pointer-events:none; }
-  .plink-results{ margin-top:6px; max-height:200px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+  .plink-results{ margin-top:6px; max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:2px; }
+  .plink-results > *{ flex:0 0 auto; }
   .plink-results-title{ font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:4px 2px 2px; }
   .plink-empty{ font-size:.82rem; color:var(--muted); padding:6px 2px; }
-  .plink-row{ display:flex; align-items:center; gap:10px; width:100%; margin:0; padding:7px 10px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); text-align:left; cursor:pointer; font-weight:500; min-height:0; box-shadow:none; }
+  .plink-row{ display:flex; align-items:center; gap:10px; width:100%; height:auto !important; min-height:48px !important; flex-shrink:0; box-sizing:border-box; white-space:normal; margin:0; padding:8px 10px; border-radius:10px; border:1px solid var(--border); background:var(--card); color:var(--text); text-align:left; cursor:pointer; font-weight:500; min-height:0; box-shadow:none; }
   .plink-row:hover{ border-color:var(--primary); }
   .plink-row.on{ border-color:var(--primary); background:color-mix(in srgb, var(--primary) 10%, transparent); }
   .plink-avatar{ flex:0 0 30px; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:.85rem; background:color-mix(in srgb, var(--primary) 16%, transparent); color:var(--primary); }
-  .plink-row-main{ flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.25; }
+  .plink-row-main{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; line-height:1.3; }
+  .plink-row-main b{ font-size:.92rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .plink-row-main span{ font-size:.76rem; color:var(--muted); }
   .plink-check{ color:var(--primary); font-weight:900; }
   .plink-create-toggle{ background:none !important; border:none !important; color:var(--primary) !important; font-weight:700; font-size:.84rem; padding:8px 2px 0 !important; margin:0 !important; width:auto !important; min-height:0 !important; box-shadow:none !important; cursor:pointer; }
@@ -9391,7 +9397,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.51'; // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
+const PICPOC_APP_VERSION = 'Picpoc v1.44.52'; // §PAIRLINK-LIST-FIX-2026 — danh sach ket qua Lien ket bi don ep chong dong + xep hang dung dau
+// (ban truoc: 'Picpoc v1.44.51') // §PAIRLINK-NOPHONE-2026 — SDT khong bat buoc khi tao ho so tu Lien ket
 // (ban truoc: 'Picpoc v1.44.50') // §PAIRLINK-UI-2026 — thiet ke lai modal Lien ket nguoi choi
 // (ban truoc: 'Picpoc v1.44.49') // §PAIRLINK-CREATE-2026 — tao ho so Club ngay trong modal Lien ket + chan luu khi go tim chua chon
 // (ban truoc: 'Picpoc v1.44.48') // §STALE-FINALIZE-2026 — trang thai chot vong bang cu cua giai truoc chan tao cay
@@ -36908,10 +36915,19 @@ function pairLinkMatches(query, limit){
   if(!q) return [];
   return (state.players||[]).filter(p=>!p.archived && (vnFold(String(p.name||'')).toLowerCase().includes(q) ||
       (qDigits.length >= 3 && String(p.phoneDigits||p.phone||'').replace(/\D/g,'').includes(qDigits))))
-    .sort((x,y)=>{ // ten bat dau bang tu khoa len truoc
-      const sx = vnFold(String(x.name||'')).toLowerCase().startsWith(q) ? 0 : 1, sy = vnFold(String(y.name||'')).toLowerCase().startsWith(q) ? 0 : 1;
-      return sx - sy || String(x.name).localeCompare(String(y.name),'vi');
-    }).slice(0, limit || 8);
+    .sort((x,y)=> pairLinkMatchScore(x, query) - pairLinkMatchScore(y, query) || String(x.name).localeCompare(String(y.name),'vi'))
+    .slice(0, limit || 8);
+}
+/* Xep hang ket qua: dung ca dau ("phú" -> Phú truoc Phúc) > trung nguyen 1 tu > tu bat dau bang tu khoa > con lai. */
+function pairLinkMatchScore(p, query){
+  const raw = String(query||'').trim().toLowerCase(), q = vnFold(raw);
+  const name = String(p.name||'').toLowerCase(), words = name.split(/[\s()\-]+/).filter(Boolean);
+  const fw = words.map(w=>vnFold(w));
+  if(words.includes(raw)) return 0;
+  if(fw.includes(q)) return 1;
+  if(words.some(w=>w.startsWith(raw))) return 2;
+  if(fw.some(w=>w.startsWith(q))) return 3;
+  return 4;
 }
 function pairLinkRowHtml(slot, p, selId){
   const initial = escapeHtml((String(p.name||'?').trim()[0] || '?').toUpperCase());
@@ -36994,7 +37010,7 @@ function pairLinkCreateFormHtml(slot, name){
     <div id="pairLinkNew${slot}" class="plink-create" style="display:none;">
       <div class="plink-create-grid">
         <input id="pairLinkNewName${slot}" value="${escapeHtml(name||'')}" placeholder="Tên người chơi">
-        <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (không bắt buộc)">
+        <input id="pairLinkNewPhone${slot}" type="tel" inputmode="numeric" placeholder="SĐT (tuỳ chọn)">
       </div>
       <input type="hidden" id="pairLinkNewGender${slot}" value="">
       <div class="plink-gender">
