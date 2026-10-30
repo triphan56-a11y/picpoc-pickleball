@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.63 (2026-10-30) — §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026. (1) Admin bấm "Hoàn tác" ở Tài chính cho khoản
+  phí giải của Xanh nhưng Giải đấu vẫn "Đã đóng": nút đó trước đây CHỈ đánh dấu dòng sổ Thu&Chi, bill/payment/VĐV giữ
+  nguyên. Nay giao dịch tự động của 1 khoản thu bill -> hoàn tác khoản thu thật (voidBillPaymentCore: void mọi payment
+  của bill, hoàn Credit, bill về OPEN) + revertTournParticipantsForBill (VĐV PAID -> DEBT nếu bill từng cho nợ, ngược lại
+  UNPAID + huỷ bill tạo lúc thu). "Hoàn tác thanh toán" ở bill cũng trả VĐV giải về đúng trạng thái. (2) Dòng giao dịch
+  phí giải hiện tên VĐV + tên giải (financeTxDisplayDesc) thay cho "Đôi Nam 5.4 — cặp", áp cả cho giao dịch cũ.
+
   v1.44.62 (2026-10-30) — §TOURN-DISPLAY-LABEL-2026. Admin đặt Tên giải "Đôi nam" + Nội dung "5.2 (dung sai 0.05)" nhưng
   bảng đấu/bản in/bill phí giải/tài chính vẫn ghi "Đôi Nam 5.4" vì mọi chỗ dùng t.label (tên hạng mục cố định của slot giải).
   Thêm tournLabel(t) = Tên giải + Nội dung (fallback t.label khi chưa nhập), thay toàn bộ t.label hiển thị/bill/log; lưu
@@ -9456,7 +9463,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.62'; // §TOURN-DISPLAY-LABEL-2026 — ten giai hien thi theo Ten giai + Noi dung
+const PICPOC_APP_VERSION = 'Picpoc v1.44.63'; // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026 — Hoan tac o Tai chinh huy khoan thu that; giao dich phi giai ghi ten VDV
+// (ban truoc: 'Picpoc v1.44.62') // §TOURN-DISPLAY-LABEL-2026
 // (ban truoc: 'Picpoc v1.44.61') // §TOURN-CREDIT-HINT-2026
 // (ban truoc: 'Picpoc v1.44.60') // §DRAW-MP4-2026
 // (ban truoc: 'Picpoc v1.44.59') // §FIX-ANONDEBT-STALE-2026
@@ -16250,6 +16258,13 @@ function voidBillPayment(billId){
   const bill = state.bills.find(b=>b.id===billId);
   if(!bill || bill.status !== 'paid') return;
   if(!confirm('Hoàn tác thanh toán cho ' + bill.playerName + '? Bill sẽ quay lại trạng thái OPEN.')) return;
+  voidBillPaymentCore(bill);
+  renderTournamentTabIfVisible();
+}
+/* §FIN-UNDO-REAL-2026 — phan loi cua "Hoàn tác thanh toán" (khong hoi/khong check quyen), dung chung cho nut
+   Hoàn tác o Tai chinh: void moi khoan thu cua bill + hoan Credit + bill ve OPEN + VDV giai ve Chưa đóng/Đang nợ. */
+function voidBillPaymentCore(bill){
+  const billId = bill.id;
   // §FIX-VOID-PAYMENTID-FALLBACK — Admin phat hien 1 bill 'paid' qua reconcileOrphanedPlayerSession()
   // (nut "ĐÓNG PHIÊN hết nợ" — bill.paymentMethod='RECONCILE_ZERO') MA truoc do da co 1 payment that su
   // (allocations[].billId tro dung ve bill nay) — nhung reconcileOrphanedPlayerSession() KHONG set
@@ -16303,9 +16318,32 @@ function voidBillPayment(billId){
   bill.paidAt = null;
   bill.paymentMethod = null;
   bill.paymentId = null;
+  revertTournParticipantsForBill(bill); // §FIN-UNDO-REAL-2026
   saveState();
   markEntityDirty('bills', bill.id); // §DATA-ARCH-61 — ghi ngay entity thay vi doi debounce 400ms cho hanh dong tai chinh
   if(payment) markEntityDirty('payments', payment.id);
+}
+/* §FIN-UNDO-REAL-2026 — bill phi giai vua bi hoan tac: VDV 'PAID' cua bill -> 'DEBT' (neu bill tung CHO NỢ, giu
+   bill open de thu lai dung bill do) hoac 'UNPAID' (bill chi tao luc thu -> huy bill, lan thu sau tao bill moi). */
+function revertTournParticipantsForBill(bill){
+  const parts = (state.tournamentEntryParticipants||[]).filter(p=>p.billId===bill.id && p.entryFeeStatus==='PAID');
+  if(!parts.length) return 0;
+  const keepDebt = !!bill.debtCreatedAt;
+  parts.forEach(p=>{
+    p.entryFeeStatus = keepDebt ? 'DEBT' : 'UNPAID';
+    if(!keepDebt) p.billId = null;
+    p.paymentId = null; p.paidAt = null; p.creditPaymentId = null; p.creditUsed = null;
+    markEntityDirty('tournamentEntryParticipants', p.id);
+  });
+  if(!keepDebt && bill.status === 'open' && !(state.tournamentEntryParticipants||[]).some(p=>p.billId===bill.id && !p.canceled)){
+    const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+    bill.status = 'cancelled'; bill.cancelledAt = Date.now(); bill.cancelledBy = cu ? cu.name : 'staff';
+    markEntityDirty('bills', bill.id);
+  }
+  return parts.length;
+}
+function renderTournamentTabIfVisible(){
+  try{ const el = document.getElementById('tab-tournament'); if(el && el.classList.contains('active') && typeof renderTournamentTab === 'function') renderTournamentTab(); }catch(e){}
 }
 
 /* ============================================================================
@@ -29926,7 +29964,33 @@ function reverseFinanceTransactionByPaymentId(paymentId){
 function reverseFinanceTransaction(txId){
   if(!requirePermission(PERMISSION.FINANCE_REVERSE)) return null;
   const tx = (state.financeTransactions||[]).find(t=>t.id===txId);
-  if(!tx || tx.status === 'REVERSED') return null;
+  if(!tx || (tx.status === 'REVERSED' && !financeTxHalfReversed(tx))) return null;
+  // §FIN-UNDO-REAL-2026 — giao dich tu dong cua 1 khoan thu bill: truoc day chi danh dau so Thu&Chi, bill van 'paid',
+  // VDV giai van "Đã đóng" -> lech. Nay hoan tac luon khoan thu that (bill ve chua thu, VDV giai ve Chưa đóng/Đang nợ).
+  const srcPay = tx.sourceId ? (state.payments||[]).find(p=>p.id===tx.sourceId && !p.voided) : null;
+  const srcBills = srcPay ? (normalizePaymentAllocations(srcPay), srcPay.allocations.filter(a=>!a.voided).map(a=>state.bills.find(b=>b.id===a.billId)).filter(Boolean)) : [];
+  if(srcPay && srcBills.length){
+    const isTourn = srcBills.some(b=>(b.items||[]).some(it=>it.type==='tournament_entry'));
+    if(!confirm('Hoàn tác khoản thu "' + financeTxDisplayDesc(tx) + '" (' + fmtVnd(tx.amount) + ')?\n\nBill sẽ quay lại CHƯA THU' + (isTourn ? ', VĐV ở Giải đấu quay về CHƯA ĐÓNG (hoặc ĐANG NỢ nếu trước đó đã cho nợ)' : '') + '. Giao dịch được đánh dấu ĐÃ HOÀN TÁC, không xoá khỏi lịch sử.')) return null;
+    srcBills.forEach(b=>{
+      if(b.status === 'paid'){ voidBillPaymentCore(b); return; }
+      const a = srcPay.allocations.find(x=>x.billId===b.id && !x.voided); if(a) a.voided = true;
+      revertTournParticipantsForBill(b); markEntityDirty('bills', b.id);
+    });
+    if(!srcPay.voided){
+      srcPay.voided = !srcPay.allocations.some(a=>!a.voided);
+      if(srcPay.voided && srcPay.paymentMethod === 'CREDIT') reverseCreditsForPayment(srcPay.id, getCurrentUser() ? getCurrentUser().name : 'admin');
+      state.sales.filter(x=>x.paymentId===srcPay.id && !x.voided).forEach(x=>{ x.voided = true; });
+      markEntityDirty('payments', srcPay.id);
+    }
+    if(tx.status !== 'REVERSED'){ tx.status = 'REVERSED'; tx.reversedAt = Date.now(); }
+    const cu0 = getCurrentUser(); tx.reversedBy = cu0 ? cu0.name : 'admin';
+    logOverride('finance_tx_reverse', 'Hoàn tác khoản thu: ' + financeTxDisplayDesc(tx) + ' — ' + fmtVnd(tx.amount) + ' (bill quay lại chưa thu)', 'financeTransaction', tx.id);
+    saveState();
+    markEntityDirty('financeTransactions', tx.id);
+    renderFinanceTab(); renderTournamentTabIfVisible();
+    return tx;
+  }
   if(!confirm('Hoàn tác giao dịch "' + tx.description + '" (' + fmtVnd(tx.amount) + ')? Giao dịch sẽ được đánh dấu ĐÃ HOÀN TÁC, không xoá khỏi lịch sử.')) return null;
   tx.status = 'REVERSED'; tx.reversedAt = Date.now();
   const cu = getCurrentUser(); tx.reversedBy = cu ? cu.name : 'admin';
@@ -30178,6 +30242,27 @@ function financeRenderRecentRows(){
   if(!rows.length) return '<div class="muted">Chưa có giao dịch nào hôm nay.</div>';
   return rows.map(t=>financeRenderRow(t)).join('');
 }
+/* §FIN-TOURN-NAMES-2026 — giao dich phi giai: hien ten VDV (VD "Linh - Xanh · Đôi nam 5.2") thay vi "Đôi Nam 5.4 — cặp". */
+// §FIN-UNDO-REAL-2026 — dong so da 'REVERSED' (bam Hoan tac o ban cu) nhung khoan thu that van con hieu luc
+function financeTxHalfReversed(t){
+  return !!(t && t.status === 'REVERSED' && t.sourceId && (state.payments||[]).some(p=>p.id===t.sourceId && !p.voided && (p.allocations||[]).some(a=>!a.voided)));
+}
+function financeTxDisplayDesc(t){
+  if(!t || t.sourceType !== 'TOURNAMENT_PAYMENT' || !t.sourceId) return (t && t.description) || '';
+  const pay = (state.payments||[]).find(p=>p.id===t.sourceId);
+  const billIds = pay ? (pay.allocations||[]).map(a=>a.billId).concat(pay.billIds||[]) : [];
+  const parts = (state.tournamentEntryParticipants||[]).filter(p=>p.paymentId===t.sourceId || p.creditPaymentId===t.sourceId || (p.billId && billIds.indexOf(p.billId)>=0));
+  if(!parts.length){
+    const items = [].concat(...billIds.map(id=>state.bills.find(b=>b.id===id)).filter(Boolean).map(b=>b.items||[]));
+    const ids = items.map(it=>it.meta && it.meta.participantId).filter(Boolean);
+    (state.tournamentEntryParticipants||[]).forEach(p=>{ if(ids.indexOf(p.id)>=0) parts.push(p); });
+  }
+  if(!parts.length) return t.description || '';
+  const names = [];
+  parts.slice().sort((a,b)=>String(a.slot||'').localeCompare(String(b.slot||''))).forEach(p=>{ if(p.name && names.indexOf(p.name)<0) names.push(p.name); });
+  const tt = state.tournaments && state.tournaments[parts[0].catKey];
+  return names.join(' - ') + (tt ? ' · ' + tournLabel(tt) : '');
+}
 function financeRenderRow(t){
   const time = new Date(t.createdAt);
   const hh = String(time.getHours()).padStart(2,'0'), mm = String(time.getMinutes()).padStart(2,'0');
@@ -30191,15 +30276,16 @@ function financeRenderRow(t){
   const sign = isIncome ? '+' : '-';
   const catLabel = t.sourceType === 'MANUAL_EXPENSE' ? (FINANCE_EXPENSE_CATEGORY_LABELS[t.category]||'Khác') : (FINANCE_SOURCE_TYPE_LABELS[t.sourceType] || t.sourceType);
   const reversed = t.status === 'REVERSED';
-  const canReverse = !reversed && can(PERMISSION.FINANCE_REVERSE);
+  const halfReversed = financeTxHalfReversed(t); // §FIN-UNDO-REAL-2026
+  const canReverse = (!reversed || halfReversed) && can(PERMISSION.FINANCE_REVERSE);
   return `<div class="fin-row${reversed?' fin-row-reversed':''}">
       <div class="fin-row-time"><div class="fin-row-date">${dd}/${mo}</div>${hh}:${mm}</div>
       <div class="fin-row-main">
-        <div class="fin-row-desc" title="${escapeHtml(t.description)}">${escapeHtml(t.description)}</div>
-        <div class="fin-row-meta"><span class="fin-badge">${escapeHtml(catLabel)}</span><span class="fin-badge">${financeMethodLabel(t.paymentMethod)}</span>${reversed?'<span class="fin-badge fin-badge-reversed">ĐÃ HOÀN TÁC</span>':''}</div>
+        <div class="fin-row-desc" title="${escapeHtml(financeTxDisplayDesc(t))}">${escapeHtml(financeTxDisplayDesc(t))}</div>
+        <div class="fin-row-meta"><span class="fin-badge">${escapeHtml(catLabel)}</span><span class="fin-badge">${financeMethodLabel(t.paymentMethod)}</span>${reversed?'<span class="fin-badge fin-badge-reversed">ĐÃ HOÀN TÁC</span>':''}${halfReversed?'<span class="fin-badge fin-badge-reversed" title="Bản cũ chỉ hoàn tác dòng sổ — bill vẫn đang ghi đã thu">BILL CHƯA HOÀN TÁC</span>':''}</div>
       </div>
       <div class="fin-row-amount ${isIncome?'fin-income':'fin-expense'}">${sign}${fmtVnd(t.amount)}</div>
-      ${canReverse ? `<button class="fin-row-reverse-btn" title="Hoàn tác" onclick="reverseFinanceTransaction('${t.id}')">Hoàn tác</button>` : ''}
+      ${canReverse ? `<button class="fin-row-reverse-btn" title="Hoàn tác" onclick="reverseFinanceTransaction('${t.id}')">${halfReversed ? 'Hoàn tất hoàn tác' : 'Hoàn tác'}</button>` : ''}
     </div>`;
 }
 
