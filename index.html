@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.60 (2026-10-30) — §DRAW-MP4-2026. Admin yêu cầu video bốc thăm xuất ra MP4 thay vì WebM. startDrawRecording
+  ưu tiên MediaRecorder 'video/mp4;codecs=avc1…' (Chrome/Edge mới, Safari), chỉ fallback WebM khi trình duyệt không
+  hỗ trợ; drawUI.videoExt quyết định đuôi file tải về (.mp4/.webm), fallback WebM có toast nhắc dùng trình duyệt mới.
+
   v1.44.59 (2026-10-30) — §FIX-ANONDEBT-STALE-2026. Admin gửi 10 cảnh báo ANONYMOUS_DEBT (bill "Đôi Nam 5.4 — cặp", "Tú
   Anh"…). Check cũ xét MỌI bill từng có debtCreatedAt — cả bill nợ giải đã thu (THU TẤT CẢ) hay đã chuyển công nợ Club
   (cancelled). Giờ chỉ xét bill còn nợ thật; nợ phí giải hiện rõ tên VĐV + giải, có nút "CHUYỂN CÔNG NỢ CLUB" mở luồng
@@ -9443,7 +9447,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.59'; // §FIX-ANONDEBT-STALE-2026 — canh bao no khach vang lai: chi bill con no + nut chuyen cong no Club cho no phi giai
+const PICPOC_APP_VERSION = 'Picpoc v1.44.60'; // §DRAW-MP4-2026 — video boc tham ghi/xuat MP4 (fallback WebM)
+// (ban truoc: 'Picpoc v1.44.59') // §FIX-ANONDEBT-STALE-2026
 // (ban truoc: 'Picpoc v1.44.58') // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026
 // (ban truoc: 'Picpoc v1.44.57') // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
 // (ban truoc: 'Picpoc v1.44.56') // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
@@ -36753,7 +36758,8 @@ function startDrawRecording(canvas){
   try{
     const stream = canvas.captureStream(30);
     let mimeType = '';
-    ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].some(mt=>{
+    // §DRAW-MP4-2026: uu tien MP4 (H.264) de mo duoc tren dien thoai/Zalo/Facebook; trinh duyet cu chi co WebM.
+    ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].some(mt=>{
       if(typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mt)){ mimeType = mt; return true; }
       return false;
     });
@@ -36761,7 +36767,9 @@ function startDrawRecording(canvas){
     recorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) drawUI.chunks.push(e.data); };
     recorder.onstop = ()=>{
       if(drawUI.chunks.length){
-        drawUI.videoBlob = new Blob(drawUI.chunks, { type: 'video/webm' });
+        const recType = recorder.mimeType || mimeType || 'video/webm';
+        drawUI.videoExt = /mp4/i.test(recType) ? 'mp4' : 'webm';
+        drawUI.videoBlob = new Blob(drawUI.chunks, { type: drawUI.videoExt === 'mp4' ? 'video/mp4' : 'video/webm' });
         drawUI.videoUrl = URL.createObjectURL(drawUI.videoBlob);
         if(drawUI.session){ drawUI.session.videoCreated = true; saveState(); renderDrawHistory(); }
       }
@@ -36795,10 +36803,11 @@ function downloadDrawVideo(){
   if(!drawUI.videoUrl || !drawUI.session){ toast('Video chưa sẵn sàng hoặc trình duyệt không hỗ trợ ghi hình.'); return; }
   const a = document.createElement('a');
   a.href = drawUI.videoUrl;
-  a.download = drawUI.session.sessionCode + '.webm';
+  a.download = drawUI.session.sessionCode + '.' + (drawUI.videoExt || 'webm');
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  if(drawUI.videoExt !== 'mp4') toast('Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
 }
 
 function confirmRedraw(){
