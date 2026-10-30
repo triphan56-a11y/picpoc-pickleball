@@ -2,6 +2,12 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.69 (2026-10-30) — §FIX-GROUPEDIT-AUTOFINAL-2026. Admin: điểm vòng bảng nhập sai (3-11) mà không sửa được. Vòng
+  bảng đủ điểm -> tự chốt + tạo cây; SỬA KẾT QUẢ chỉ báo "MỞ LẠI VÒNG BẢNG", mà mở lại xong maybeAutoProgressTournament
+  tự chốt lại ngay -> kẹt. Nay SỬA KẾT QUẢ làm 1 bước: cảnh báo cây sẽ tạo lại (đếm trận vòng trong có kết quả sẽ mất),
+  reopenGroupStageCore + mở khoá trận (xoá winnerId cũ). MỞ LẠI VÒNG BẢNG giữ groupStageEditHold cho tới khi sửa 1 trận
+  hoặc bấm CHỐT LẠI VÒNG BẢNG.
+
   v1.44.68 (2026-10-30) — §BRACKET-POSTER-2026. Admin hỏi cách thông báo trước cây thi đấu cho VĐV. Nút "🏆 Sơ đồ cây thi
   đấu" (tab Bảng đấu) vẽ ảnh PNG: trước khi đánh = ô "Nhất bảng A/Nhì bảng B…" theo getBracketSeedMapping + "Thắng Tứ kết
   1"… cho vòng sau; vòng bảng chốt -> tên cặp thật; có t.knockout -> cây thật + tỉ số + vô địch. Kèm danh sách cặp từng
@@ -9521,7 +9527,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.68'; // §BRACKET-POSTER-2026 — so do cay thi dau dang anh (luu/chia se/in) de thong bao truoc cho VDV
+const PICPOC_APP_VERSION = 'Picpoc v1.44.69'; // §FIX-GROUPEDIT-AUTOFINAL-2026 — sua ket qua vong bang sau khi da tu chot
+// (ban truoc: 'Picpoc v1.44.68') // §BRACKET-POSTER-2026
 // (ban truoc: 'Picpoc v1.44.67') // §MOBILE-HEADER-COMPACT-2026 + §MOBILE-PLAYERFILTER-2026
 // (ban truoc: 'Picpoc v1.44.66') // §AUDIT-2026-10-30
 // (ban truoc: 'Picpoc v1.44.65') // §CREDIT-REVOKE-MONTH-2026
@@ -39378,12 +39385,23 @@ function unlockMatchResult(catKey, groupIdx, matchIdx){
   // §AUTO-BA/BC — vong bang DA CHOT (co the da tu dong tao cay) thi KHONG cho sua diem truc tiep tai
   // day nua (tranh am tham lam lech qualifierSnapshot/bracket da tao) — phai dung "MO LAI VONG BANG"
   // (Admin, advanced maintenance) truoc, thao tac do se tu huy/canh bao bracket dung dan.
-  if(t.groupStageFinalizedAt){ showToast('Vòng bảng đã chốt (và có thể đã tạo cây). Dùng "MỞ LẠI VÒNG BẢNG" (Admin) trước khi sửa kết quả vòng bảng.'); return; }
   const m = t.schedule[groupIdx][matchIdx];
+  // §FIX-GROUPEDIT-AUTOFINAL-2026 — truoc day vong bang da chot thi chi bao "MO LAI VONG BANG", nhung mo lai xong
+  // maybeAutoProgressTournament() thay du diem lai TU CHOT NGAY -> khong bao gio sua duoc. Nay lam trong 1 buoc: mo lai
+  // vong bang (huy cay neu co) + mo khoa dung tran nay (tran thanh chua xong -> khong tu chot lai cho toi khi nhap xong).
+  const finalized = !!t.groupStageFinalizedAt;
+  const hasBracket = !!(t.knockout && t.knockout.length);
+  const koPlayed = hasBracket ? t.knockout.reduce((n, r)=>n + r.filter(x=>x && x.status==='COMPLETED' && !x.byeAdvance).length, 0) : 0;
+  let msg = 'Sửa kết quả trận ' + pairLabel(m.a) + ' vs ' + pairLabel(m.b) + '? Kết quả sẽ tạm không tính vào bảng xếp hạng cho đến khi nhập lại.';
+  if(finalized) msg += hasBracket
+    ? ('\n\nVòng bảng đã chốt và đã tạo cây thi đấu: cây sẽ được TẠO LẠI sau khi anh nhập lại điểm' + (koPlayed ? (' — ' + koPlayed + ' trận vòng trong đã có kết quả sẽ bị XOÁ.') : ' (vòng trong chưa đánh trận nào, không mất gì).'))
+    : '\n\nVòng bảng đã chốt: sẽ chốt lại sau khi anh nhập lại điểm.';
+  if(!confirm(msg)) return;
   const reason = prompt('Lý do sửa kết quả đã xác nhận (bắt buộc):');
   if(!reason || !reason.trim()) { showToast('Cần nhập lý do để sửa kết quả đã xác nhận'); return; } // §36 — audit reason bat buoc
-  if(!confirm('Sửa kết quả trận ' + pairLabel(m.a) + ' vs ' + pairLabel(m.b) + '? Kết quả sẽ tạm không tính vào bảng xếp hạng cho đến khi xác nhận lại.')) return;
-  m.status = null;
+  if(finalized) reopenGroupStageCore(t, catKey);
+  t.groupStageEditHold = false;
+  m.status = null; m.completed = false; m.winnerId = null; // winnerId cu phai bo, neu khong nhap lai diem nguoc ket qua van giu doi thang cu
   logOverride('match_result_unlocked', pairLabel(m.a) + ' vs ' + pairLabel(m.b) + ' — mở khoá để sửa kết quả (lý do: ' + reason.trim() + ')', 'match', catKey+'_'+groupIdx+'_'+matchIdx);
   logOverride('tournament_result_edit', pairLabel(m.a) + ' vs ' + pairLabel(m.b) + ' — sửa kết quả đã xác nhận (lý do: ' + reason.trim() + ')', 'match', catKey+'_'+groupIdx+'_'+matchIdx);
   saveState();
@@ -39668,6 +39686,7 @@ function autoFinalizeGroupStageIfReady(catKey){
   const t = state.tournaments[catKey];
   healStaleGroupFinalization(catKey);
   if(!t || t.groupStageFinalizedAt) return false; // §BD — da chot roi, khong lam lai
+  if(t.groupStageEditHold) return false; // §FIX-GROUPEDIT-AUTOFINAL-2026 — Admin vua mo lai de sua
   if(!t.groups || !t.groups.length) return false;
   if(!isGroupStageComplete(catKey)) return false;
   const v = validateTournamentGroupFinalization(catKey);
@@ -39852,6 +39871,17 @@ function commitGroupStageFinalization(catKey){
 
 /* §26 — MO LAI VONG BANG: chi Admin (TOURNAMENT_RESULT_EDIT), canh bao huy bracket neu da co,
    KHONG giu bracket stale (§26), audit log bat buoc. */
+function reopenGroupStageCore(t, catKey){
+  const hasBracket = t.knockout && t.knockout.length;
+  if(hasBracket){
+    t.knockout = [];
+    t.bracketVersion = null; t.bracketGeneratedAt = null; t.bracketGeneratedBy = null;
+    logOverride('tournament_bracket_reset', 'Hủy cây thi đấu do mở lại vòng bảng', 'tournament', catKey);
+  }
+  t.groupStageFinalizedAt = null; t.groupStageFinalizedBy = null; t.qualifierSnapshot = null;
+  if(t.status === 'KNOCKOUT' || t.status === 'COMPLETED') t.status = 'GROUP_STAGE';
+  logOverride('tournament_group_stage_unlocked', 'Mở lại vòng bảng' + (hasBracket ? ' (đã hủy cây thi đấu)' : ''), 'tournament', catKey);
+}
 function unlockGroupStage(catKey){
   if(!requirePermission(PERMISSION.TOURNAMENT_RESULT_EDIT)) return;
   const t = state.tournaments[catKey];
@@ -39861,17 +39891,20 @@ function unlockGroupStage(catKey){
     ? 'Cây thi đấu hiện tại sẽ bị hủy/reset khi mở lại vòng bảng. Kết quả Tứ kết/Bán kết/Chung kết sẽ mất. Tiếp tục?'
     : 'Mở lại vòng bảng để sửa kết quả?';
   if(!confirm(msg)) return;
-  if(hasBracket){
-    t.knockout = [];
-    t.bracketVersion = null; t.bracketGeneratedAt = null; t.bracketGeneratedBy = null;
-    logOverride('tournament_bracket_reset', 'Hủy cây thi đấu do mở lại vòng bảng', 'tournament', catKey);
-  }
-  t.groupStageFinalizedAt = null; t.groupStageFinalizedBy = null; t.qualifierSnapshot = null;
-  if(t.status === 'KNOCKOUT' || t.status === 'COMPLETED') t.status = 'GROUP_STAGE';
-  logOverride('tournament_group_stage_unlocked', 'Mở lại vòng bảng' + (hasBracket ? ' (đã hủy cây thi đấu)' : ''), 'tournament', catKey);
+  reopenGroupStageCore(t, catKey);
+  // §FIX-GROUPEDIT-AUTOFINAL-2026 — giu "mo" cho toi khi Admin sua 1 tran (hoac bam CHỐT LẠI), khong tu chot lai ngay
+  t.groupStageEditHold = true;
   saveState();
   renderTournamentTab();
-  showToast('✓ Đã mở lại vòng bảng');
+  showToast('✓ Đã mở lại vòng bảng — bấm SỬA KẾT QUẢ ở trận cần sửa');
+}
+function rechotGroupStage(catKey){
+  const t = state.tournaments[catKey];
+  if(!t) return;
+  t.groupStageEditHold = false;
+  maybeAutoProgressTournament(catKey);
+  saveState();
+  renderTournamentTab();
 }
 
 /* §57 — Render nut CHOT/MO LAI vao #groupStageFinalizeBox, goi tu renderTournamentTab(). */
@@ -39888,6 +39921,11 @@ function renderGroupStageFinalizeBox(catKey){
           <button class="small secondary" data-require-permission="TOURNAMENT_RESULT_EDIT" onclick="unlockGroupStage('${catKey}')">↺ MỞ LẠI VÒNG BẢNG</button>
         </div>
       </div>`;
+    return;
+  }
+  if(t.groupStageEditHold){
+    box.innerHTML = `<div class="card"><div class="flex-between" style="gap:8px; flex-wrap:wrap;"><div>✏️ <b>Vòng bảng đang mở để sửa</b> — bấm <b>SỬA KẾT QUẢ</b> ở trận cần sửa rồi nhập lại điểm. Không sửa gì thì bấm chốt lại.</div>
+      <button class="small" onclick="rechotGroupStage('${catKey}')">✅ CHỐT LẠI VÒNG BẢNG</button></div></div>`;
     return;
   }
   // §AUTO-BO/S — nut CHOT VONG BANG da bi xoa khoi luong binh thuong: he thong tu dong CHOT ngay khi
