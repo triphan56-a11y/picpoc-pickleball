@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.67 (2026-10-30) — §MOBILE-HEADER-COMPACT-2026: đầu trang ≤991px còn 2 hàng (tiêu đề + ADMIN/Đăng xuất chung 1
+  hàng), --topbar-h 132→96. §MOBILE-PLAYERFILTER-2026: Người chơi ≤767px — 5 ô thống kê 1 hàng gọn, 4 ô lọc/sắp xếp
+  gom vào nút "⚙ Bộ lọc & sắp xếp (n)".
+
   v1.44.66 (2026-10-30) — §AUDIT-2026-10-30 (rà soát toàn app theo yêu cầu Admin). (1) voidBillPaymentRecord (Hoàn tác 1
   khoản trong bill): bill phí giải thu kiểu tất-cả-hoặc-không -> hoàn tác luôn các khoản còn lại (hoàn Credit, sổ Thu&Chi,
   sales) + VĐV về Chưa đóng/Đang nợ; revertTournParticipantsForBill không huỷ bill còn tiền thu. (2) Danh sách phí giải:
@@ -6990,6 +6994,27 @@
   .plink-actions button{ margin:0; }
   .plink-actions .big{ flex:1; }
   @media (max-width:480px){ .plink-create-grid{ grid-template-columns:1fr; } }
+  /* §MOBILE-HEADER-COMPACT-2026 — Admin duyet: dau trang dien thoai/tablet tu 3 hang (switcher / tieu de / user) con 2 hang:
+     hang 2 = tieu de trang (trai) + ADMIN + Đăng xuất (phai). --topbar-h 132 -> 96 (main/sidebar tu khop theo bien). */
+  @media (max-width:991px){
+    :root{ --topbar-h:96px; }
+    header h1{ order:2; flex:1 1 0; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:.9rem; margin:0; }
+    header h1 #topbarPageTitle{ overflow:hidden; text-overflow:ellipsis; }
+    .current-user-bar{ order:3; flex:0 0 auto; width:auto; flex-wrap:nowrap; padding:0; gap:6px; }
+    .current-user-bar button{ padding:0 10px !important; min-height:0 !important; height:30px; line-height:28px; }
+  }
+  /* §MOBILE-PLAYERFILTER-2026 — man Người chơi tren dien thoai: 5 o thong ke 1 hang gon; 4 o loc gom vao nut. */
+  .player-adv-toggle{ display:none; }
+  @media (max-width:767px){
+    #playerMainWrap .stats-strip{ grid-template-columns:repeat(5,minmax(0,1fr)) !important; gap:4px; margin-bottom:6px; }
+    #playerMainWrap .stats-strip .stat-box{ padding:6px 2px; min-height:0; }
+    #playerMainWrap .stats-strip .stat-box .num{ font-size:1.05rem; }
+    #playerMainWrap .stats-strip .stat-box .lbl{ font-size:.58rem; line-height:1.2; letter-spacing:0; }
+    .player-adv-toggle{ display:inline-flex; align-items:center; gap:4px; margin-top:8px; }
+    .player-adv-filters{ display:none !important; }
+    .player-adv-filters.open{ display:flex !important; }
+    .player-adv-filters select{ max-width:none !important; flex:1 1 45%; }
+  }
   /* §AUDIT-UI-2026-10-30 — dien thoai: thanh CLUB/GIẢI ĐẤU/ACADEMY bi cat chu "ACADEMY"; banner canh bao dau ngay dung
      class chip (bo tron 999px) nen nhieu dong bi le chu o 2 dau. */
   #startOfDayBanner{ border-radius:12px !important; padding:10px 12px !important; }
@@ -8010,7 +8035,8 @@
           <button id="playerClearFilterBtn" class="small secondary" style="display:none;" onclick="clearPlayerFilters()">✕ XÓA BỘ LỌC</button>
           <button class="small secondary" onclick="exportPlayerListCsv()" style="display:inline-flex; align-items:center; gap:5px;"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 19h16"/></svg>XUẤT DANH SÁCH</button>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button type="button" class="small secondary player-adv-toggle" id="playerAdvToggle" aria-expanded="false" onclick="togglePlayerAdvFilters()">⚙ Bộ lọc &amp; sắp xếp <span id="playerAdvCount"></span> ▾</button>
+        <div class="player-adv-filters" id="playerAdvFilters" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
           <select id="playerActivityFilterSelect" onchange="onPlayerActivityFilterChange()" style="max-width:180px;">
             <option value="all">Hoạt động: Tất cả</option>
             <option value="REGULAR">Thường xuyên</option>
@@ -9489,7 +9515,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.66'; // §AUDIT-2026-10-30 — ra soat toan app: hoan tac khoan le bill phi giai, nhan phuong thuc Credit, mobile overflow, escape
+const PICPOC_APP_VERSION = 'Picpoc v1.44.67'; // §MOBILE-HEADER-COMPACT-2026 + §MOBILE-PLAYERFILTER-2026
+// (ban truoc: 'Picpoc v1.44.66') // §AUDIT-2026-10-30
 // (ban truoc: 'Picpoc v1.44.65') // §CREDIT-REVOKE-MONTH-2026
 // (ban truoc: 'Picpoc v1.44.64') // §CREDIT-SOURCE-DETAIL-2026
 // (ban truoc: 'Picpoc v1.44.63') // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026
@@ -41053,6 +41080,20 @@ function clearPlayerFilters(){
   saveLocalUiState();
   renderPlayersTab();
 }
+/* §MOBILE-PLAYERFILTER-2026 — dien thoai: 4 o loc/sap xep gom vao 1 nut "Bộ lọc & sắp xếp (n)" (CSS an/hien). */
+function togglePlayerAdvFilters(){
+  const box = document.getElementById('playerAdvFilters'), btn = document.getElementById('playerAdvToggle');
+  if(!box) return;
+  const open = !box.classList.contains('open');
+  box.classList.toggle('open', open);
+  if(btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+function updatePlayerAdvCount(){
+  const el = document.getElementById('playerAdvCount');
+  if(!el) return;
+  const n = ['playerLevelFilter','playerActivityFilter','playerTagFilter'].filter(k=>localUi[k] && localUi[k] !== 'all').length + (localUi.playerSort && localUi.playerSort !== 'recent' ? 1 : 0);
+  el.textContent = n ? '(' + n + ')' : '';
+}
 function isAnyPlayerFilterActive(){
   return localUi.playerFilter !== 'all' || localUi.playerLevelFilter !== 'all' ||
     localUi.playerActivityFilter !== 'all' || localUi.playerTagFilter !== 'all';
@@ -41150,6 +41191,7 @@ function renderPlayersTab(){
   });
   const clearBtn = document.getElementById('playerClearFilterBtn');
   if(clearBtn) clearBtn.style.display = isAnyPlayerFilterActive() ? 'inline-block' : 'none';
+  updatePlayerAdvCount(); // §MOBILE-PLAYERFILTER-2026
 
   renderPlayerList();
   renderPlayerDetail();
