@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.68 (2026-10-30) — §BRACKET-POSTER-2026. Admin hỏi cách thông báo trước cây thi đấu cho VĐV. Nút "🏆 Sơ đồ cây thi
+  đấu" (tab Bảng đấu) vẽ ảnh PNG: trước khi đánh = ô "Nhất bảng A/Nhì bảng B…" theo getBracketSeedMapping + "Thắng Tứ kết
+  1"… cho vòng sau; vòng bảng chốt -> tên cặp thật; có t.knockout -> cây thật + tỉ số + vô địch. Kèm danh sách cặp từng
+  bảng. LƯU ẢNH / CHIA SẺ (navigator.share, điện thoại) / IN (khổ ngang). Chỉ đọc dữ liệu.
+
   v1.44.67 (2026-10-30) — §MOBILE-HEADER-COMPACT-2026: đầu trang ≤991px còn 2 hàng (tiêu đề + ADMIN/Đăng xuất chung 1
   hàng), --topbar-h 132→96. §MOBILE-PLAYERFILTER-2026: Người chơi ≤767px — 5 ô thống kê 1 hàng gọn, 4 ô lọc/sắp xếp
   gom vào nút "⚙ Bộ lọc & sắp xếp (n)".
@@ -7758,7 +7763,8 @@
     <div class="tourn-view-panel" data-tviewpanel="bracket">
       <div class="tourn-panel-header no-print">
         <h2 style="margin:0;"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2"/></svg>Bảng đấu</h2>
-        <button onclick="printSchedule()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 17v4h12v-4"/></svg>In lịch thi đấu</button>
+        <span style="display:inline-flex; gap:8px; flex-wrap:wrap;"><button class="secondary" onclick="openBracketPoster()" style="display:inline-flex; align-items:center; gap:6px;">🏆 Sơ đồ cây thi đấu</button>
+        <button onclick="printSchedule()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 17v4h12v-4"/></svg>In lịch thi đấu</button></span>
       </div>
       <div id="groupsContainer"></div>
     </div>
@@ -9515,7 +9521,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.67'; // §MOBILE-HEADER-COMPACT-2026 + §MOBILE-PLAYERFILTER-2026
+const PICPOC_APP_VERSION = 'Picpoc v1.44.68'; // §BRACKET-POSTER-2026 — so do cay thi dau dang anh (luu/chia se/in) de thong bao truoc cho VDV
+// (ban truoc: 'Picpoc v1.44.67') // §MOBILE-HEADER-COMPACT-2026 + §MOBILE-PLAYERFILTER-2026
 // (ban truoc: 'Picpoc v1.44.66') // §AUDIT-2026-10-30
 // (ban truoc: 'Picpoc v1.44.65') // §CREDIT-REVOKE-MONTH-2026
 // (ban truoc: 'Picpoc v1.44.64') // §CREDIT-SOURCE-DETAIL-2026
@@ -40049,6 +40056,200 @@ function makeKnockoutMatch(seedA, seedB){
 /* §BRACKET-SUA-LAN-2 — flow "xáo random" (generateBracketPreview/confirmBracketPreview cũ) đã bị
    THAY THẾ HOÀN TOÀN bằng generateTournamentBracketPreview()/commitTournamentBracket() deterministic
    (seeding matrix cố định theo §32-41, không random, đọc từ t.qualifierSnapshot đã chốt). */
+/* §BRACKET-POSTER-2026 — Admin: "cây thi đấu của mỗi giải làm sao thông báo trước cho VĐV". Vẽ SƠ ĐỒ CÂY thành ẢNH
+   (canvas -> PNG) để Lưu ảnh / Chia sẻ Zalo / In: TRƯỚC khi đánh (ngay sau khi chia bảng) các ô là "Nhất bảng A",
+   "Nhì bảng B"... theo đúng luật ghép getBracketSeedMapping(); khi vòng bảng chốt thì tự điền tên cặp; khi đã có cây
+   thật (t.knockout) thì vẽ theo cây thật kèm tỉ số/đội thắng. Kèm danh sách cặp từng bảng bên dưới. Chỉ ĐỌC dữ liệu. */
+function buildBracketPosterPlan(t){
+  const groups = (t.groups||[]).filter(g=>Array.isArray(g));
+  const groupCount = groups.length, topN = t.knockoutTopN || 2;
+  const rankWord = r=>r===1 ? 'Nhất' : r===2 ? 'Nhì' : ('Hạng ' + r);
+  const seedText = code=>groupCount === 1 ? ('Hạng ' + parseInt(code.slice(1),10) + ' bảng A') : (rankWord(parseInt(code.slice(1),10)) + ' bảng ' + code.charAt(0));
+  const bySeed = {}; (t.qualifierSnapshot||[]).forEach(q=>{ if(q && q.seedLabel) bySeed[q.seedLabel] = q.pairId; });
+  const name = id=>id ? (pairLabel(id) || '') : '';
+  let rounds = null, note = '';
+  if(t.knockout && t.knockout.length){
+    rounds = t.knockout.map((round, r)=>round.map((m, i)=>{
+      const fake = []; for(let k=0;k<t.knockout.length;k++) fake.push([]);
+      const prevLabel = r > 0 ? knockoutRoundLabel(fake, r-1) : '';
+      const slot = side=>{
+        const id = m[side];
+        if(id) return { tag: r===0 ? (qualifierRankLabelFor(t, id) || '') : '', name: name(id), win: m.winnerId && m.winnerId===id, score: m.status==='COMPLETED' && !m.byeAdvance ? (side==='a' ? m.scoreA : m.scoreB) : null };
+        if(r===0) return { tag:'', name:'BYE', bye:true };
+        return { tag:'', name:'Thắng ' + prevLabel + ' ' + (i*2 + (side==='a'?1:2)), pending:true };
+      };
+      return { a: slot('a'), b: slot('b') };
+    }));
+  } else {
+    const mapping = groupCount ? getBracketSeedMapping(groupCount, topN) : null;
+    if(!groupCount) note = 'Chưa chia bảng — chia bảng xong sơ đồ sẽ hiện đủ nhánh đấu.';
+    else if(!mapping) note = 'Cấu hình ' + groupCount + ' bảng, lấy ' + topN + ' cặp/bảng chưa có sơ đồ ghép cố định — cây sẽ được tạo khi vòng bảng xong.';
+    else {
+      const r1 = mapping.round1.map(([sa, sb])=>({
+        a: { tag: seedText(sa), name: name(bySeed[sa]), pending: !bySeed[sa] },
+        b: { tag: seedText(sb), name: name(bySeed[sb]), pending: !bySeed[sb] } }));
+      rounds = [r1];
+      let n = r1.length;
+      while(n > 1){ const next = []; for(let i=0;i<n/2;i++) next.push(null); rounds.push(next); n = n/2; }
+      const fake = rounds.map(()=>[]);
+      rounds = rounds.map((round, r)=>r===0 ? round : round.map((x, i)=>({
+        a: { tag:'', name:'Thắng ' + knockoutRoundLabel(fake, r-1) + ' ' + (i*2+1), pending:true },
+        b: { tag:'', name:'Thắng ' + knockoutRoundLabel(fake, r-1) + ' ' + (i*2+2), pending:true } })));
+    }
+  }
+  let champion = '';
+  if(t.knockout && t.knockout.length){ const fm = t.knockout[t.knockout.length-1][0]; if(fm && fm.winnerId) champion = name(fm.winnerId); }
+  return { rounds, note, champion, groups: groups.map(g=>g.map(id=>name(id) || id)), groupCount, topN };
+}
+function drawBracketPoster(t){
+  const plan = buildBracketPosterPlan(t);
+  const W = 1600, M = 48;
+  const font = (getComputedStyle(document.body).fontFamily || 'Arial, sans-serif');
+  const rounds = plan.rounds;
+  const n1 = rounds ? rounds[0].length : 0;
+  const slotH = 46, boxH = slotH*2, unit = 130;
+  const bracketH = rounds ? Math.max(1, n1) * unit + 60 : 90;
+  const perRow = Math.min(4, Math.max(1, plan.groups.length));
+  const maxPairs = plan.groups.reduce((m,g)=>Math.max(m, g.length), 0);
+  const groupRows = Math.ceil(plan.groups.length / perRow);
+  const groupsH = plan.groups.length ? 70 + groupRows * (60 + maxPairs * 38) : 0;
+  const H = 190 + bracketH + groupsH + 60;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const C = { bg:'#F4F7F5', dark:'#0F3D33', teal:'#0F766E', accent:'#C8F169', text:'#111827', muted:'#6B7280', line:'#9CA3AF', box:'#FFFFFF', win:'#DCFCE7' };
+  const fit = (txt, maxW, size, weight)=>{ let s2 = size; ctx.font = weight + ' ' + s2 + 'px ' + font; while(ctx.measureText(txt).width > maxW && s2 > 13){ s2 -= 1; ctx.font = weight + ' ' + s2 + 'px ' + font; }
+    if(ctx.measureText(txt).width > maxW){ while(txt.length > 1 && ctx.measureText(txt + '…').width > maxW) txt = txt.slice(0, -1); txt += '…'; } return txt; };
+  const rr = (x,y,w,h,r)=>{ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); };
+  ctx.fillStyle = C.bg; ctx.fillRect(0,0,W,H);
+  // header
+  ctx.fillStyle = C.dark; rr(M, 28, W-2*M, 130, 22); ctx.fill();
+  ctx.fillStyle = C.accent; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.font = '800 26px ' + font; ctx.fillText('PICPOC PICKLEBALL CLUB', M+36, 66);
+  ctx.fillStyle = '#FFFFFF'; ctx.fillText(fit('CÂY THI ĐẤU — ' + String(tournLabel(t)||'').toUpperCase(), W-2*M-72, 40, '800'), M+36, 108);
+  const st = t.setup || {};
+  const when = [st.matchDate ? st.matchDate.split('-').reverse().join('/') : '', st.startTime || ''].filter(Boolean).join(' · ');
+  const meta = [when, plan.groupCount ? (plan.groupCount + ' bảng · lấy ' + plan.topN + ' cặp/bảng vào vòng trong') : ''].filter(Boolean).join('   |   ');
+  ctx.fillStyle = '#D1FAE5'; ctx.font = '600 20px ' + font; ctx.fillText(fit(meta, W-2*M-72, 20, '600'), M+36, 142);
+  let y0 = 190;
+  if(!rounds){
+    ctx.fillStyle = C.muted; ctx.font = '600 24px ' + font; ctx.textAlign = 'center'; ctx.fillText(plan.note || 'Chưa có dữ liệu cây thi đấu.', W/2, y0 + 40); ctx.textAlign = 'left';
+  } else {
+    const cols = rounds.length + (plan.champion ? 1 : 0);
+    const colW = (W - 2*M) / Math.max(cols, 1);
+    const boxW = Math.min(360, colW - 56);
+    const fake = rounds.map(()=>[]);
+    const centers = [];
+    rounds.forEach((round, r)=>{
+      const x = M + r*colW;
+      ctx.fillStyle = C.teal; ctx.font = '800 22px ' + font; ctx.textAlign = 'left';
+      ctx.fillText(knockoutRoundLabel(fake, r).toUpperCase(), x, y0 + 14);
+      centers[r] = round.map((m, i)=>r===0 ? (y0 + 50 + i*unit + boxH/2) : (centers[r-1][i*2] + centers[r-1][i*2+1]) / 2);
+      round.forEach((m, i)=>{
+        const cy = centers[r][i], top = cy - boxH/2;
+        ctx.fillStyle = C.box; ctx.strokeStyle = '#D1D5DB'; ctx.lineWidth = 2; rr(x, top, boxW, boxH, 12); ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x+10, cy); ctx.lineTo(x+boxW-10, cy); ctx.stroke();
+        ctx.fillStyle = C.muted; ctx.font = '700 13px ' + font; ctx.fillText(knockoutRoundLabel(fake, r) + ' ' + (i+1), x + 12, top - 10);
+        [m.a, m.b].forEach((sl, k)=>{
+          const sy = top + k*slotH;
+          if(sl.win){ ctx.fillStyle = C.win; rr(x+3, sy+3, boxW-6, slotH-6, 9); ctx.fill(); }
+          const scoreW = sl.score !== null && sl.score !== undefined && sl.score !== '' ? 44 : 0;
+          if(sl.tag && !sl.name){
+            ctx.fillStyle = C.teal; ctx.fillText(fit(sl.tag, boxW-24-scoreW, 19, '800'), x+12, sy + slotH/2);
+          } else if(sl.tag){
+            ctx.fillStyle = C.teal; ctx.font = '700 13px ' + font; ctx.fillText(fit(sl.tag, boxW-24-scoreW, 13, '700'), x+12, sy + 13);
+            ctx.fillStyle = sl.pending ? C.muted : C.text; ctx.fillText(fit(sl.name || '…', boxW-24-scoreW, 19, sl.pending ? '500' : '700'), x+12, sy + 32);
+          } else {
+            ctx.fillStyle = sl.pending || sl.bye ? C.muted : C.text; ctx.fillText(fit(sl.name, boxW-24-scoreW, 19, sl.pending ? '500' : '700'), x+12, sy + slotH/2);
+          }
+          if(scoreW){ ctx.textAlign = 'right'; ctx.fillStyle = C.text; ctx.font = '800 20px ' + font; ctx.fillText(String(sl.score), x+boxW-12, sy + slotH/2); ctx.textAlign = 'left'; }
+        });
+        // duong noi sang vong sau
+        if(r < rounds.length - 1){
+          const nx = M + (r+1)*colW, ny = (i%2===0) ? null : null;
+          const midX = x + boxW + (nx - x - boxW)/2;
+          ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x+boxW, cy); ctx.lineTo(midX, cy); ctx.stroke();
+          if(i % 2 === 1){ const cyPrev = centers[r][i-1]; ctx.beginPath(); ctx.moveTo(midX, cyPrev); ctx.lineTo(midX, cy); ctx.moveTo(midX, (cyPrev+cy)/2); ctx.lineTo(nx, (cyPrev+cy)/2); ctx.stroke(); }
+        }
+      });
+    });
+    if(plan.champion){
+      const x = M + rounds.length*colW, cy = centers[rounds.length-1][0];
+      ctx.fillStyle = C.dark; rr(x, cy-50, boxW, 100, 16); ctx.fill();
+      ctx.fillStyle = C.accent; ctx.font = '800 18px ' + font; ctx.fillText('🏆 VÔ ĐỊCH', x+16, cy-20);
+      ctx.fillStyle = '#FFFFFF'; ctx.fillText(fit(plan.champion, boxW-32, 24, '800'), x+16, cy+18);
+      ctx.strokeStyle = C.line; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(M + (rounds.length-1)*colW + boxW, cy); ctx.lineTo(x, cy); ctx.stroke();
+    }
+  }
+  // danh sach bang
+  if(plan.groups.length){
+    let gy = 190 + bracketH + 10;
+    ctx.fillStyle = C.dark; ctx.font = '800 24px ' + font; ctx.fillText('DANH SÁCH CẶP TỪNG BẢNG', M, gy); gy += 30;
+    const gw = (W - 2*M - (perRow-1)*20) / perRow;
+    plan.groups.forEach((g, gi)=>{
+      const col = gi % perRow, row = Math.floor(gi / perRow);
+      const gx = M + col*(gw+20), top = gy + row*(60 + maxPairs*38);
+      ctx.fillStyle = C.box; ctx.strokeStyle = '#D1D5DB'; ctx.lineWidth = 2; rr(gx, top, gw, 40 + g.length*38, 14); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = C.teal; ctx.font = '800 20px ' + font; ctx.fillText('BẢNG ' + String.fromCharCode(65+gi), gx+16, top+24);
+      g.forEach((nm, k)=>{ ctx.fillStyle = C.text; ctx.fillText(fit(/^\s*\d+\s*[.)]/.test(nm) ? nm : ((k+1) + '. ' + nm), gw-32, 18, '600'), gx+16, top + 60 + k*38); });
+    });
+  }
+  ctx.fillStyle = C.muted; ctx.font = '500 15px ' + font; ctx.textAlign = 'right';
+  ctx.fillText('Cập nhật ' + new Date().toLocaleString('vi-VN') + ' · Picpoc', W-M, H-24); ctx.textAlign = 'left';
+  return cv;
+}
+let __bracketPosterBlob = null;
+function openBracketPoster(){
+  const t = currentTournament();
+  if(!t){ showToast('Chưa chọn giải.'); return; }
+  let cv;
+  try{ cv = drawBracketPoster(t); }catch(e){ console.error('[bracketPoster]', e); showToast('⚠️ Không vẽ được sơ đồ: ' + e.message); return; }
+  const url = cv.toDataURL('image/png');
+  __bracketPosterBlob = null;
+  try{ cv.toBlob(b=>{ __bracketPosterBlob = b; }, 'image/png'); }catch(e){}
+  const canShare = !!(navigator.share && navigator.canShare);
+  document.getElementById('matchModalContent').innerHTML = `
+    <h2>🏆 Sơ đồ cây thi đấu — ${escapeHtml(tournLabel(t))}</h2>
+    <p class="muted" style="font-size:.85rem;">${t.knockout && t.knockout.length ? 'Cây thi đấu thật (có tỉ số khi đã nhập).' : 'Sơ đồ ghép cặp vòng trong theo thứ hạng bảng — gửi trước cho VĐV. Vòng bảng xong, mở lại để có tên cặp thật.'}</p>
+    <img id="bracketPosterImg" src="${url}" alt="Sơ đồ cây thi đấu" style="width:100%; border-radius:10px; border:1px solid #E5E7EB; display:block;">
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+      <button class="big" style="flex:1;" onclick="downloadBracketPoster()">⬇ LƯU ẢNH</button>
+      ${canShare ? '<button class="big secondary" style="flex:1;" onclick="shareBracketPoster()">📤 CHIA SẺ (Zalo…)</button>' : ''}
+      <button class="secondary" style="flex:1;" onclick="printBracketPoster()">🖨 IN</button>
+    </div>
+    <button class="secondary" style="width:100%; margin-top:6px;" onclick="closeModal()">Đóng</button>`;
+  document.getElementById('matchModal').classList.add('show');
+}
+function bracketPosterFileName(){
+  const t = currentTournament();
+  const base = String(tournLabel(t) || 'giai').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/đ/g,'d').replace(/Đ/g,'D').replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  return 'cay-thi-dau-' + (base || 'giai') + '.png';
+}
+function downloadBracketPoster(){
+  const img = document.getElementById('bracketPosterImg'); if(!img) return;
+  const a = document.createElement('a'); a.href = img.src; a.download = bracketPosterFileName();
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function shareBracketPoster(){
+  const done = blob=>{
+    try{
+      const file = new File([blob], bracketPosterFileName(), { type:'image/png' });
+      if(navigator.canShare && navigator.canShare({ files:[file] })){ navigator.share({ files:[file], title:'Cây thi đấu' }).catch(()=>{}); return; }
+    }catch(e){}
+    showToast('Máy này không chia sẻ trực tiếp được — dùng LƯU ẢNH rồi gửi ảnh.');
+  };
+  if(__bracketPosterBlob){ done(__bracketPosterBlob); return; }
+  const img = document.getElementById('bracketPosterImg'); if(!img) return;
+  fetch(img.src).then(r=>r.blob()).then(done).catch(()=>showToast('Không tạo được ảnh để chia sẻ.'));
+}
+function printBracketPoster(){
+  const img = document.getElementById('bracketPosterImg'); if(!img) return;
+  const fr = document.createElement('iframe'); fr.style.cssText = 'position:fixed; right:0; bottom:0; width:0; height:0; border:0;';
+  document.body.appendChild(fr);
+  const d = fr.contentWindow.document;
+  d.open(); d.write('<!doctype html><html><head><title>Cây thi đấu</title><style>@page{size:landscape; margin:8mm} body{margin:0} img{width:100%}</style></head><body><img src="' + img.src + '"></body></html>'); d.close();
+  const go = ()=>{ try{ fr.contentWindow.focus(); fr.contentWindow.print(); }catch(e){} setTimeout(()=>fr.remove(), 1500); };
+  const im = d.querySelector('img'); if(im && !im.complete) im.onload = go; else setTimeout(go, 50);
+}
 function knockoutRoundLabel(rounds, idx){
   const fromEnd = rounds.length - 1 - idx;
   if(fromEnd === 0) return 'Chung kết';
