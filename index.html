@@ -2,6 +2,12 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.65 (2026-10-30) — §CREDIT-REDEEM-DETAIL-2026: bấm ô "Đã sử dụng tháng này" xem từng lần thanh toán bằng Credit
+  (khách, giờ, khoản, trừ từ nguồn nào, đã hoàn tác chưa). §CREDIT-REVOKE-MONTH-2026. Admin: "xóa hết credits mốc buổi chơi tháng 10, chưa thông báo
+  phát hành". Màn chi tiết nguồn Credit có nút THU HỒI (ADMIN): mỗi lot của nguồn/tháng đó -> remainingAmount 0 qua
+  transaction trên server (lấy đúng số còn lại thật), status USED + revokedAt, ghi ADJUST âm (revokeOf) để lịch sử khách
+  và Kiểm tra dữ liệu khớp. Phần khách đã dùng thanh toán giữ nguyên. "Đã phát tháng này" trừ phần đã thu hồi.
+
   v1.44.64 (2026-10-30) — §CREDIT-SOURCE-DETAIL-2026. Admin hỏi "Mốc buổi chơi 220k" ở Tài chính khi mốc mới áp dụng từ
   01/11. Code từ v1.44.57 chặn phát trước ngày bắt đầu; 220k là lot đã phát trong tháng 10 theo cấu hình CŨ (milestone đã
   bật trước đó). Thêm openCreditIssuedDetail(source): bấm dòng nguồn để xem từng lần phát (VĐV, ngày giờ, mốc, còn lại).
@@ -9467,7 +9473,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.64'; // §CREDIT-SOURCE-DETAIL-2026 — xem chi tiet Credit da phat theo nguon
+const PICPOC_APP_VERSION = 'Picpoc v1.44.65'; // §CREDIT-REVOKE-MONTH-2026 — Admin thu hoi Credit phat nham theo nguon/thang
+// (ban truoc: 'Picpoc v1.44.64') // §CREDIT-SOURCE-DETAIL-2026
 // (ban truoc: 'Picpoc v1.44.63') // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026
 // (ban truoc: 'Picpoc v1.44.62') // §TOURN-DISPLAY-LABEL-2026
 // (ban truoc: 'Picpoc v1.44.61') // §TOURN-CREDIT-HINT-2026
@@ -30079,18 +30086,26 @@ function financeCreditSummaryHtml(){
     if(t.type==='ISSUE' && issuedThisMonth.hasOwnProperty(t.sourceType)) issuedThisMonth[t.sourceType] += t.amount;
     if(t.type==='REDEEM') redeemedThisMonth += t.amount;
   });
+  // §CREDIT-REVOKE-MONTH-2026 — phan Admin da thu hoi (Credit phat nham) khong tinh la "da phat"
+  const revokedThisMonth = { TOURNAMENT_REWARD:0, RETURN_SOON_REWARD:0, VISIT_MILESTONE_REWARD:0 };
+  (state.creditTransactions||[]).forEach(t=>{
+    if(t.type!=='ADJUST' || !t.revokeOf || !revokedThisMonth.hasOwnProperty(t.revokeOf)) return;
+    const lot = (state.creditLots||[]).find(l=>l.id===t.lotId);
+    if(lot && lot.issuedAt>=monthStart && lot.issuedAt<monthEnd) revokedThisMonth[t.revokeOf] += Math.abs(t.amount||0);
+  });
+  sources.forEach(k=>{ issuedThisMonth[k] = Math.max(0, issuedThisMonth[k] - revokedThisMonth[k]); });
   const issuedTotal = sources.reduce((s,k)=>s+issuedThisMonth[k], 0);
   const expiredTotal = (state.creditLots||[]).filter(l=>
     l.status==='ACTIVE' && l.expiresAt && l.expiresAt>=monthStart && l.expiresAt<monthEnd && l.expiresAt<=now && (l.remainingAmount||0)>0
   ).reduce((s,l)=>s+l.remainingAmount, 0);
   // §CREDIT-SOURCE-DETAIL-2026 — bam 1 nguon de xem tung lan phat (ai, khi nao, bao nhieu, con lai)
-  const rowsHtml = sources.map(s=>`<div class="bill-line" ${issuedThisMonth[s] > 0 ? `style="cursor:pointer;" title="Xem chi tiết" onclick="openCreditIssuedDetail('${s}')"` : ''}><span>${sourceLabel[s]}${issuedThisMonth[s] > 0 ? ' <span class="muted" style="font-size:.78rem;">· xem chi tiết ›</span>' : ''}</span><span>${fmtVnd(issuedThisMonth[s])}</span></div>`).join('');
+  const rowsHtml = sources.map(s=>`<div class="bill-line" ${issuedThisMonth[s] > 0 || revokedThisMonth[s] > 0 ? `style="cursor:pointer;" title="Xem chi tiết" onclick="openCreditIssuedDetail('${s}')"` : ''}><span>${sourceLabel[s]}${issuedThisMonth[s] > 0 ? ' <span class="muted" style="font-size:.78rem;">· xem chi tiết ›</span>' : ''}${revokedThisMonth[s] > 0 ? ' <span class="muted" style="font-size:.78rem;">(đã thu hồi ' + fmtVnd(revokedThisMonth[s]) + ')</span>' : ''}</span><span>${fmtVnd(issuedThisMonth[s])}</span></div>`).join('');
   return `
     <div class="fin-section-title">🎫 PICPOC CREDITS</div>
     <div class="fin-kpi-grid">
       <div class="fin-kpi-card"><div class="fin-kpi-num">${fmtVnd(activeTotal)}</div><div class="fin-kpi-label">Đang còn hiệu lực</div></div>
       <div class="fin-kpi-card fin-kpi-positive"><div class="fin-kpi-num">${fmtVnd(issuedTotal)}</div><div class="fin-kpi-label">Đã phát tháng này</div></div>
-      <div class="fin-kpi-card fin-kpi-warn"><div class="fin-kpi-num">${fmtVnd(redeemedThisMonth)}</div><div class="fin-kpi-label">Đã sử dụng tháng này</div></div>
+      <div class="fin-kpi-card fin-kpi-warn" style="cursor:pointer;" title="Xem chi tiết" onclick="openCreditRedeemedDetail()"><div class="fin-kpi-num">${fmtVnd(redeemedThisMonth)}</div><div class="fin-kpi-label">Đã sử dụng tháng này · xem ›</div></div>
       <div class="fin-kpi-card fin-kpi-expense"><div class="fin-kpi-num">${fmtVnd(expiredTotal)}</div><div class="fin-kpi-label">Hết hạn tháng này</div></div>
     </div>
     <div class="bill-section-label">Theo nguồn (phát tháng này)</div>
@@ -30109,18 +30124,125 @@ function openCreditIssuedDetail(sourceType){
     const lot = (state.creditLots||[]).find(l=>l.id===t.lotId) || (state.creditLots||[]).find(l=>l.operationId && l.operationId===t.operationId);
     const pl = t.playerId && playerById(t.playerId);
     const tier = sourceType==='VISIT_MILESTONE_REWARD' && lot && lot.sourceId ? ' · mốc ' + String(lot.sourceId).split('_').pop() + ' buổi' : '';
-    const left = lot ? (lot.status==='EXPIRED' || (lot.expiresAt && lot.expiresAt<=Date.now()) ? 'hết hạn' : 'còn ' + fmtVnd(lot.remainingAmount||0)) : '';
+    const used = lot ? (state.creditTransactions||[]).filter(x=>x.lotId===lot.id && x.type==='REDEEM').reduce((a,x)=>a+x.amount,0) - (state.creditTransactions||[]).filter(x=>x.lotId===lot.id && x.type==='REVERSE').reduce((a,x)=>a+x.amount,0) : 0;
+    const left = !lot ? '' : lot.revokedAt ? 'đã thu hồi' + (used > 0 ? ' · khách đã dùng ' + fmtVnd(used) : '')
+      : (lot.status==='EXPIRED' || (lot.expiresAt && lot.expiresAt<=Date.now()) ? 'hết hạn' : 'còn ' + fmtVnd(lot.remainingAmount||0) + (used > 0 ? ' · đã dùng ' + fmtVnd(used) : ''));
     return `<div class="bill-line" style="align-items:center;"><span><b>${escapeHtml(pl ? pl.name : 'Hồ sơ đã xoá')}</b> <span class="muted" style="font-size:.8rem;">${fmtD(t.createdAt)}${tier}${t.createdBy ? ' · ' + escapeHtml(t.createdBy) : ''}</span></span><span style="text-align:right;">${fmtVnd(t.amount)}<div class="muted" style="font-size:.75rem;">${left}</div></span></div>`;
   }).join('');
   const total = list.reduce((s,t)=>s+(t.amount||0),0);
+  const revocable = creditLotsIssuedInMonth(sourceType, monthStart, monthEnd).filter(l=>!l.revokedAt && (l.remainingAmount||0) > 0).reduce((a,l)=>a+l.remainingAmount,0);
   const cfg = getCreditSettings(); const ms = cfg.milestoneReward || {};
   const note = sourceType==='VISIT_MILESTONE_REWARD' ? `<p class="muted" style="font-size:.85rem;">Cấu hình hiện tại: ${ms.enabled ? 'đang bật' : 'đang tắt'}${ms.startDate ? ' · áp dụng từ ' + ms.startDate.split('-').reverse().join('/') : ''}. Các khoản dưới đây là Credit đã phát thật trong tháng (theo cấu hình lúc phát).</p>` : '';
   document.getElementById('matchModalContent').innerHTML = `
     <h2>🎫 ${escapeHtml(label)} — phát tháng ${d.getMonth()+1}</h2>${note}
     ${rows || '<div class="muted">Không có.</div>'}
     <p>Tổng: <b>${fmtVnd(total)}</b> · ${list.length} lần phát</p>
+    ${revocable > 0 && can(PERMISSION.PAYMENT_VOID) ? `<button class="danger" style="width:100%; margin-bottom:6px;" onclick="confirmRevokeIssuedCredits('${sourceType}')">🗑 THU HỒI ${fmtVnd(revocable)} CREDIT CHƯA DÙNG (${escapeHtml(label)} tháng ${d.getMonth()+1})</button>` : ''}
     <button class="secondary" onclick="closeModal()">Đóng</button>`;
   document.getElementById('matchModal').classList.add('show');
+}
+/* §CREDIT-REDEEM-DETAIL-2026 — chi tiet Credit da su dung trong thang: moi lan thanh toan bang Credit (khach, ngay gio,
+   bill/khoan nao, tru tu nguon nao, da hoan tac hay chua). Gom REDEEM theo paymentId (1 lan thanh toan co the tru nhieu lot). */
+function openCreditRedeemedDetail(){
+  const d = new Date();
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 1).getTime();
+  const srcLabel = { TOURNAMENT_REWARD:'Giải đấu', RETURN_SOON_REWARD:'Quay lại nhanh', VISIT_MILESTONE_REWARD:'Mốc buổi chơi', ADMIN_ADJUST:'Admin cộng tay' };
+  const txs = state.creditTransactions || [];
+  const groups = {};
+  txs.filter(t=>t.type==='REDEEM' && t.createdAt>=monthStart && t.createdAt<monthEnd).forEach(t=>{
+    const k = t.paymentId || t.operationId || t.id;
+    const g = groups[k] = groups[k] || { playerId: t.playerId, createdAt: t.createdAt, amount: 0, billId: t.billId, paymentId: t.paymentId, sources: {} };
+    g.amount += t.amount || 0;
+    const lot = (state.creditLots||[]).find(l=>l.id===t.lotId);
+    const sl = srcLabel[lot && lot.sourceType] || 'Khác';
+    g.sources[sl] = (g.sources[sl] || 0) + (t.amount || 0);
+  });
+  const list = Object.values(groups).sort((a,b)=>b.createdAt-a.createdAt);
+  const fmtD = ts=>{ const x = new Date(ts); return String(x.getDate()).padStart(2,'0') + '/' + String(x.getMonth()+1).padStart(2,'0') + ' ' + String(x.getHours()).padStart(2,'0') + ':' + String(x.getMinutes()).padStart(2,'0'); };
+  let netTotal = 0;
+  const rows = list.map(g=>{
+    const reversed = g.paymentId && txs.some(t=>t.type==='REVERSE' && t.paymentId===g.paymentId);
+    if(!reversed) netTotal += g.amount;
+    const pl = g.playerId && playerById(g.playerId);
+    const bill = g.billId && state.bills.find(b=>b.id===g.billId);
+    const what = bill ? (bill.items||[]).map(it=>it.label).filter(Boolean).slice(0,2).join(', ') : '';
+    const src = Object.keys(g.sources).map(k=>k + ' ' + fmtVnd(g.sources[k])).join(' + ');
+    return `<div class="bill-line" style="align-items:center;${reversed ? ' opacity:.55;' : ''}"><span><b>${escapeHtml(pl ? pl.name : 'Hồ sơ đã xoá')}</b> <span class="muted" style="font-size:.8rem;">${fmtD(g.createdAt)}</span>
+      <div class="muted" style="font-size:.78rem;">${escapeHtml(what || 'Thanh toán')} · trừ từ: ${escapeHtml(src)}</div></span>
+      <span style="text-align:right;">${reversed ? '<s>' + fmtVnd(g.amount) + '</s><div class="muted" style="font-size:.75rem;">đã hoàn tác</div>' : fmtVnd(g.amount)}</span></div>`;
+  }).join('');
+  document.getElementById('matchModalContent').innerHTML = `
+    <h2>🎫 Credit đã sử dụng — tháng ${d.getMonth()+1}</h2>
+    <p class="muted" style="font-size:.85rem;">Mỗi dòng là 1 lần khách thanh toán bằng Credit. Dòng mờ = thanh toán đó đã được hoàn tác (Credit đã trả lại cho khách).</p>
+    ${rows || '<div class="muted">Chưa có.</div>'}
+    <p>Thực dùng (trừ phần đã hoàn tác): <b>${fmtVnd(netTotal)}</b> · ${list.length} lần thanh toán</p>
+    <button class="secondary" onclick="closeModal()">Đóng</button>`;
+  document.getElementById('matchModal').classList.add('show');
+}
+/* §CREDIT-REVOKE-MONTH-2026 — Admin thu hoi Credit phat nham (vd Moc buoi choi thang 10 khi chua thong bao). Chi thu
+   hoi phan CON LAI chua dung cua tung lot (phan khach da dung de thanh toan giu nguyen, khong dung toi bill cu). Ghi
+   ADJUST am (co revokeOf) -> Kiem tra du lieu tinh dung so du; tru tren server bang transaction (dung so con lai that). */
+function creditLotsIssuedInMonth(sourceType, monthStart, monthEnd){
+  return (state.creditLots||[]).filter(l=>l.sourceType===sourceType && l.issuedAt>=monthStart && l.issuedAt<monthEnd);
+}
+function revokeIssuedCredits(sourceType, monthStart, monthEnd, reason){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return Promise.resolve({ ok:false, reason:'Chỉ ADMIN được thu hồi Credit.' });
+  const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  const by = cu ? cu.name : 'admin';
+  const lots = creditLotsIssuedInMonth(sourceType, monthStart, monthEnd).filter(l=>!l.revokedAt && (l.remainingAmount||0) > 0);
+  const results = lots.map(lot=>{
+    const writeTx = (take)=>{
+      const now = Date.now();
+      if(take > 0){
+        const tx = { id: uid('ctx'), playerId: lot.playerId, lotId: lot.id, type:'ADJUST', amount: -take, sourceType:'ADMIN_ADJUST', sourceId:null,
+          billId:null, paymentId:null, createdAt: now, createdBy: by, operationId: 'revoke_' + lot.id, reason, revokeOf: sourceType };
+        state.creditTransactions.push(tx); markEntityDirty('creditTransactions', tx.id);
+      }
+      return take;
+    };
+    if(!(SYNC_ENABLED && dbRoot)){
+      const take = lot.remainingAmount || 0;
+      lot.remainingAmount = 0; lot.status = 'USED'; lot.revokedAt = Date.now(); lot.revokedBy = by; lot.revokeReason = reason;
+      markEntityDirty('creditLots', lot.id);
+      return Promise.resolve(writeTx(take));
+    }
+    let take = 0;
+    markEntityPendingWrite('creditLots', lot.id);
+    return DataService.creditLots.transaction(lot.id, remote=>{
+      if(!remote) return remote;
+      if(remote.revokedAt){ take = 0; return undefined; }
+      take = Math.max(0, remote.remainingAmount || 0);
+      remote.remainingAmount = 0; remote.status = 'USED'; remote.revokedAt = Date.now(); remote.revokedBy = by; remote.revokeReason = reason;
+      return remote;
+    }).then(r=>{
+      clearEntityPendingWrite('creditLots', lot.id);
+      if(r && r.committed && r.snapshot){ applyRemoteEntityLocally('creditLots', lot.id, r.snapshot); return writeTx(take); }
+      return 0;
+    }).catch(err=>{ clearEntityPendingWrite('creditLots', lot.id); handleWriteError('creditLots','transaction',err); return 0; });
+  });
+  return Promise.all(results).then(arr=>{
+    const total = arr.reduce((a,b)=>a+b,0), count = arr.filter(x=>x>0).length;
+    logOverride('credit_revoke_month', 'Thu hồi Credit ' + sourceType + ': ' + count + ' lot, ' + fmtVnd(total) + ' — ' + reason, 'creditLot', null);
+    saveState();
+    return { ok:true, total, count };
+  });
+}
+function confirmRevokeIssuedCredits(sourceType){
+  const d = new Date();
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 1).getTime();
+  const label = { TOURNAMENT_REWARD:'Giải đấu', RETURN_SOON_REWARD:'Quay lại nhanh', VISIT_MILESTONE_REWARD:'Mốc buổi chơi' }[sourceType] || sourceType;
+  const lots = creditLotsIssuedInMonth(sourceType, monthStart, monthEnd).filter(l=>!l.revokedAt && (l.remainingAmount||0) > 0);
+  const amt = lots.reduce((a,l)=>a+l.remainingAmount,0);
+  if(!lots.length){ showToast('Không còn Credit chưa dùng để thu hồi.'); return; }
+  if(!confirm('Thu hồi ' + fmtVnd(amt) + ' Credit "' + label + '" tháng ' + (d.getMonth()+1) + ' còn chưa dùng của ' + new Set(lots.map(l=>l.playerId)).size + ' khách?\n\nPhần khách đã dùng để thanh toán sẽ giữ nguyên. Không hoàn tác được.')) return;
+  revokeIssuedCredits(sourceType, monthStart, monthEnd, label + ' tháng ' + (d.getMonth()+1) + ' phát khi chưa thông báo — thu hồi').then(r=>{
+    if(!r.ok){ showToast('⚠️ ' + r.reason); return; }
+    showToast('✓ Đã thu hồi ' + fmtVnd(r.total) + ' Credit (' + r.count + ' khoản) — đã lưu lên server');
+    openCreditIssuedDetail(sourceType);
+    if(typeof renderFinanceTab === 'function') renderFinanceTab();
+  });
 }
 function getFinanceOverviewToday(){
   const { start, end } = getTodayRangeTs();
