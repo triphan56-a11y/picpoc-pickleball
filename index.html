@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.58 (2026-10-30) — §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026. Admin hỏi 4 lỗi
+  CREDIT_LOT_BALANCE_MISMATCH (lot 20.000đ của "p_mtu6s8so4l3n9"… còn 0đ nhưng lịch sử tính ra 20.000đ). Đây là lot của
+  hồ sơ ĐÃ XOÁ, đã được chính Kiểm tra dữ liệu sửa an toàn trước đó (repairOrphanedCreditLot: về 0, EXPIRED, không ghi
+  giao dịch) -> check đối chiếu báo nhầm. Bỏ qua lot mồ côi đã EXPIRED về 0. Kèm: hoàn Credit (reverseCreditsForPayment)
+  ghi bằng transaction CỘNG lên số dư server thay vì CAS theo snapshot (lot đã bị trừ bằng transaction nên snapshot có thể
+  cũ -> CAS huỷ, kéo số dư 0 về -> khách mất Credit; tái hiện offline được khi hoàn tác/trả lại liên tiếp).
+
   v1.44.57 (2026-10-30) — §MILESTONE-4TIER-2026/§MILESTONE-STARTDATE-2026/§MILESTONE-PRESET-2026-11. Admin gửi poster
   "Chơi đều tay nhận thưởng ngay": 6 buổi 30K · 12 buổi 60K · 18 buổi 100K · 23 buổi 150K, hạn 30 ngày, bắt đầu 01/11/2026.
   Cài đặt Thưởng mốc thêm Mốc 4 (để trống = không dùng) + "Bắt đầu áp dụng từ ngày" (trước ngày đó không phát; tháng đầu chỉ
@@ -9431,7 +9438,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.57'; // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
+const PICPOC_APP_VERSION = 'Picpoc v1.44.58'; // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026
+// (ban truoc: 'Picpoc v1.44.57') // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
 // (ban truoc: 'Picpoc v1.44.56') // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
 // (ban truoc: 'Picpoc v1.44.55') // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
 // (ban truoc: 'Picpoc v1.44.54') // §PLAYER-MERGE-2026 — gop 2 ho so trung
@@ -14620,7 +14628,20 @@ function reverseCreditsForPayment(paymentId, createdBy){
     if(lot){
       lot.remainingAmount = Math.min(lot.originalAmount, (lot.remainingAmount||0) + rt.amount);
       if(lot.remainingAmount>0 && lot.status==='USED') lot.status = (lot.expiresAt && lot.expiresAt<=now) ? 'EXPIRED' : 'ACTIVE';
-      markEntityDirty('creditLots', lot.id);
+      // §FIX-CREDIT-REVERSE-TXN-2026 — lot da bi tru bang transaction() (redeemCreditsFEFO) nen snapshot local co the cu ->
+      // ghi CAS theo snapshot se bi huy va keo so du cu (0) ve = khach MAT Credit. Cong DUNG so tien hoan len so du tren server.
+      if(SYNC_ENABLED && dbRoot){
+        markEntityPendingWrite('creditLots', lot.id);
+        DataService.creditLots.transaction(lot.id, remote=>{
+          if(!remote) return sanitizeForFirebase(lot);
+          remote.remainingAmount = Math.min(remote.originalAmount||lot.originalAmount, (remote.remainingAmount||0) + rt.amount);
+          if(remote.remainingAmount>0 && remote.status==='USED') remote.status = (remote.expiresAt && remote.expiresAt<=now) ? 'EXPIRED' : 'ACTIVE';
+          return remote;
+        }).then(r=>{
+          clearEntityPendingWrite('creditLots', lot.id);
+          if(r && r.committed && r.snapshot) applyRemoteEntityLocally('creditLots', lot.id, r.snapshot);
+        }).catch(err=>{ clearEntityPendingWrite('creditLots', lot.id); handleWriteError('creditLots','transaction',err); });
+      }
     }
     const tx = { id: uid('ctx'), playerId: rt.playerId, lotId: rt.lotId, type:'REVERSE', amount: rt.amount,
       sourceType:null, sourceId:null, billId: rt.billId||null, paymentId, createdAt: now, createdBy: createdBy||'staff', operationId: null };
@@ -35312,6 +35333,9 @@ function runDataIntegrityCheck(){
       const adjustDeduct = (state.creditTransactions||[]).filter(t=>t.lotId===lot.id && t.type==='ADJUST' && t.amount<0).reduce((s,t)=>s+t.amount,0);
       const expected = Math.max(0, (lot.originalAmount||0) - redeemed + reversed + adjustDeduct);
       if((lot.remainingAmount||0) === expected) return;
+      // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 — lot cua ho so DA XOA da duoc chinh Kiem tra du lieu sua (repairOrphanedCreditLot:
+      // remainingAmount=0, EXPIRED, khong ghi giao dich) -> khong phai lech that, khong ai dung duoc lot nay nua.
+      if(!playerById(lot.playerId) && lot.status === 'EXPIRED' && !(lot.remainingAmount > 0)) return;
       const p = playerById(lot.playerId);
       addIssue('Credit','ERROR', (p ? p.name : lot.playerId) + ' — Credit lot "' + lot.id + '" có remainingAmount=' + fmtVnd(lot.remainingAmount||0) + ' nhưng tính theo lịch sử REDEEM/REVERSE/ADJUST thực tế phải là ' + fmtVnd(expected) + ' — nghi bị lệch do tải lại trang đúng lúc xác nhận đồng bộ chưa xong.', {
         code:'CREDIT_LOT_BALANCE_MISMATCH', entityType:'creditLot', entityId:lot.id, entityLabel: p ? p.name : lot.playerId,
