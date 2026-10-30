@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.66 (2026-10-30) — §AUDIT-2026-10-30 (rà soát toàn app theo yêu cầu Admin). (1) voidBillPaymentRecord (Hoàn tác 1
+  khoản trong bill): bill phí giải thu kiểu tất-cả-hoặc-không -> hoàn tác luôn các khoản còn lại (hoàn Credit, sổ Thu&Chi,
+  sales) + VĐV về Chưa đóng/Đang nợ; revertTournParticipantsForBill không huỷ bill còn tiền thu. (2) Danh sách phí giải:
+  tfeeParticipantMethodLabel — Credit không còn hiện nhầm "Chuyển khoản"/"—". (3) Mobile: .pos-layout minmax(0,1fr) (Đặt sân
+  tràn ngang 1010px), thanh CLUB/GIẢI ĐẤU/ACADEMY bị cắt chữ, banner đầu ngày bo 999px lẹm chữ. (4) escapeHtml cho tên dòng
+  bill, tiêu đề lịch Academy, tiêu đề sửa dòng.
+
   v1.44.65 (2026-10-30) — §CREDIT-REDEEM-DETAIL-2026: bấm ô "Đã sử dụng tháng này" xem từng lần thanh toán bằng Credit
   (khách, giờ, khoản, trừ từ nguồn nào, đã hoàn tác chưa). §CREDIT-REVOKE-MONTH-2026. Admin: "xóa hết credits mốc buổi chơi tháng 10, chưa thông báo
   phát hành". Màn chi tiết nguồn Credit có nút THU HỒI (ADMIN): mỗi lot của nguồn/tháng đó -> remainingAmount 0 qua
@@ -6515,9 +6522,10 @@
 
   /* ===== SALES TAB ===== */
   /* §37 — SALES: product grid trai / cart sticky phai, khong bao gio phai scroll xa khoi cart. */
-  .pos-layout{display:grid; grid-template-columns:1fr 340px; gap:var(--space-4); align-items:start;}
+  .pos-layout{display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:var(--space-4); align-items:start;}
+  .pos-layout > *{ min-width:0; } /* §AUDIT-UI-2026-10-30 — lich san rong (tl-scroll) day ca trang Dat san tran ngang tren dien thoai; nay chi cuon trong khung lich */
   @media (max-width:860px){
-    .pos-layout{grid-template-columns:1fr;}
+    .pos-layout{grid-template-columns:minmax(0,1fr);}
     /* §MOBILE-UXFIX2026 — .cart-panel dung position:sticky de "dinh" ben canh product-grid tren desktop
        (2 cot). Khi xuong 1 cot tren mobile, cart-panel nam PHIA DUOI product-grid trong dong chay — neu
        van giu sticky, no se "dinh cung" o dinh khung nhin ngay khi cuon toi, che mat noi dung ben tren
@@ -6982,6 +6990,14 @@
   .plink-actions button{ margin:0; }
   .plink-actions .big{ flex:1; }
   @media (max-width:480px){ .plink-create-grid{ grid-template-columns:1fr; } }
+  /* §AUDIT-UI-2026-10-30 — dien thoai: thanh CLUB/GIẢI ĐẤU/ACADEMY bi cat chu "ACADEMY"; banner canh bao dau ngay dung
+     class chip (bo tron 999px) nen nhieu dong bi le chu o 2 dau. */
+  #startOfDayBanner{ border-radius:12px !important; padding:10px 12px !important; }
+  @media (max-width:480px){
+    .segmented-workspace{ max-width:100%; }
+    .segmented-workspace .ws-btn{ padding:6px 9px !important; font-size:.74rem !important; gap:4px !important; }
+    .segmented-workspace .ws-btn svg{ width:13px; height:13px; }
+  }
 </style>
 </head>
 <body>
@@ -9473,7 +9489,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.65'; // §CREDIT-REVOKE-MONTH-2026 — Admin thu hoi Credit phat nham theo nguon/thang
+const PICPOC_APP_VERSION = 'Picpoc v1.44.66'; // §AUDIT-2026-10-30 — ra soat toan app: hoan tac khoan le bill phi giai, nhan phuong thuc Credit, mobile overflow, escape
+// (ban truoc: 'Picpoc v1.44.65') // §CREDIT-REVOKE-MONTH-2026
 // (ban truoc: 'Picpoc v1.44.64') // §CREDIT-SOURCE-DETAIL-2026
 // (ban truoc: 'Picpoc v1.44.63') // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026
 // (ban truoc: 'Picpoc v1.44.62') // §TOURN-DISPLAY-LABEL-2026
@@ -16347,7 +16364,7 @@ function revertTournParticipantsForBill(bill){
     p.paymentId = null; p.paidAt = null; p.creditPaymentId = null; p.creditUsed = null;
     markEntityDirty('tournamentEntryParticipants', p.id);
   });
-  if(!keepDebt && bill.status === 'open' && !(state.tournamentEntryParticipants||[]).some(p=>p.billId===bill.id && !p.canceled)){
+  if(!keepDebt && bill.status === 'open' && !(getBillCollected(bill) > 0) && !(state.tournamentEntryParticipants||[]).some(p=>p.billId===bill.id && !p.canceled)){
     const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
     bill.status = 'cancelled'; bill.cancelledAt = Date.now(); bill.cancelledBy = cu ? cu.name : 'staff';
     markEntityDirty('bills', bill.id);
@@ -22093,7 +22110,7 @@ function editBillProductItem(billId, itemId){
   if(!item || item.type !== 'product') return;
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
-    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/><path d="M12 20h9"/></svg>Sửa dòng — ${item.label}</h2>
+    <h2 style="display:flex; align-items:center; gap:8px;"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/><path d="M12 20h9"/></svg>Sửa dòng — ${escapeHtml(item.label)}</h2>
     <p class="muted">Số lượng đã ghi: ${item.qty}</p>
     <label>Số lượng đúng</label>
     <input type="number" id="editQty" min="0" value="${item.qty}">
@@ -26333,7 +26350,7 @@ function academyCalendarEventCompactHtml(ev){
       ${ev.makeupCount ? '<span class="badge" style="background:#d97706;">+' +ev.makeupCount+ ' HỌC BÙ</span>' : ''}
       ${ev.hasSkillCheck ? '<span class="badge" style="background:#0f766e;">CHECK</span>' : ''}
     </div>
-    <div style="font-weight:700; margin-top:2px;">${ev.title}${numTxt?(' · '+numTxt):''}</div>
+    <div style="font-weight:700; margin-top:2px;">${escapeHtml(ev.title)}${numTxt?(' · '+numTxt):''}</div>
     <div class="muted" style="font-size:.78rem;">${courtTxt} · ${coachTxt}${ev.sourceType==='SESSION'?(' · '+ev.studentCount+' HV'):''}</div>
     ${(ev.issues||[]).length ? '<div style="color:#dc2626; font-weight:600; font-size:.76rem; margin-top:2px;">'+ev.issues.map(i=>i.text).join(' · ')+'</div>' : ''}
   </div>`;
@@ -26342,7 +26359,7 @@ function academyCalendarEventCompactHtml(ev){
 function academyCalendarEventTinyHtml(ev){
   const muted = ev.status === 'CANCELLED';
   const crit = (ev.issues||[]).some(i=>i.level==='CRITICAL');
-  return `<div style="font-size:.72rem; padding:1px 3px; margin-bottom:1px; border-radius:4px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${crit?'color:#dc2626; font-weight:700;':''} ${muted?'opacity:.5; text-decoration:line-through;':''}" onclick="event.stopPropagation(); ${academyCalendarEventClickHandler(ev)}" title="${ev.title}">${fmtHM(ev.start)} ${ev.title}</div>`;
+  return `<div style="font-size:.72rem; padding:1px 3px; margin-bottom:1px; border-radius:4px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; ${crit?'color:#dc2626; font-weight:700;':''} ${muted?'opacity:.5; text-decoration:line-through;':''}" onclick="event.stopPropagation(); ${academyCalendarEventClickHandler(ev)}" title="${escapeHtml(ev.title)}">${fmtHM(ev.start)} ${escapeHtml(ev.title)}</div>`;
 }
 
 /* ---- Filter bar + header (dung chung ca 3 view) ---- */
@@ -26388,7 +26405,7 @@ function academyCalendarIssueBoxHtml(events){
     <summary style="cursor:pointer; color:#dc2626; font-weight:700; font-size:.85rem;">⚠ ${withIssues.length} lịch cần kiểm tra</summary>
     <div style="margin-top:6px;">
       ${withIssues.map(e=>`<div style="padding:5px 8px; border-left:3px solid #dc2626; background:rgba(220,38,38,.06); margin-bottom:4px; cursor:pointer; font-size:.82rem;" onclick="${academyCalendarEventClickHandler(e)}">
-        <b>${e.title}</b> — ${(e.issues||[]).map(i=>i.text).join(' · ')} ${e.start?('('+fmtHM(e.start)+(e.start?(' · '+e.start.slice(0,10)):'')+')'):''}
+        <b>${escapeHtml(e.title)}</b> — ${(e.issues||[]).map(i=>i.text).join(' · ')} ${e.start?('('+fmtHM(e.start)+(e.start?(' · '+e.start.slice(0,10)):'')+')'):''}
       </div>`).join('')}
     </div>
   </details>`;
@@ -31531,7 +31548,7 @@ function billLinesHtml(bill){
       } else if(canEdit && it.type==='water' && it.meta && it.meta.waterLossId){
         actions = `<button class="small danger" style="margin-left:6px;" onclick="cancelWaterLoss('${it.meta.waterLossId}')">Hủy</button>`;
       }
-      return `<div class="bill-line"><span>${it.label}${qtyLabel}</span><span>${fmtVnd(it.amount)}${actions}</span></div>`;
+      return `<div class="bill-line"><span>${escapeHtml(it.label)}${qtyLabel}</span><span>${fmtVnd(it.amount)}${actions}</span></div>`;
     }).join('');
     return `<div class="bill-section-label">${g.icon} ${g.label}</div>${rows}`;
   }).join('');
@@ -31874,8 +31891,22 @@ function voidBillPaymentRecord(paymentId){
   // lai Visit/doi player.status chi vi Outstanding tang lai — giu dung quy uoc cu cua voidBillPayment()
   // o tren (cung khong dong cham player/visit), de "no cu tang lai" khong lam "hoi sinh" nham 1 phien
   // choi da ket thuc that su tu lau.
+  if(payment.voided) state.sales.filter(x=>x.paymentId===payment.id && !x.voided).forEach(x=>{ x.voided = true; }); // §AUDIT-2026-10-30
   if(bill){
     recalculateBillFinancialStatus(bill);
+    // §AUDIT-2026-10-30 — bill phi giai: thu theo kieu tat-ca-hoac-khong (payBill khong thu tiep bill da thu 1 phan) ->
+    // hoan tac 1 khoan thi hoan tac luon cac khoan con lai cua bill (vd Credit + tien mat), VDV ve Chưa đóng/Đang nợ.
+    if(bill.status !== 'paid' && (bill.items||[]).some(it=>it.type==='tournament_entry')){
+      const cuR = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+      state.payments.filter(op=>op!==payment && !op.voided && (normalizePaymentAllocations(op), op.allocations.some(x=>x.billId===bill.id && !x.voided))).forEach(op=>{
+        op.allocations.forEach(x=>{ if(x.billId===bill.id) x.voided = true; });
+        op.voided = !op.allocations.some(x=>!x.voided);
+        if(op.voided){ reverseFinanceTransactionByPaymentId(op.id); state.sales.filter(x=>x.paymentId===op.id && !x.voided).forEach(x=>{ x.voided = true; }); }
+        if(op.voided && op.paymentMethod === 'CREDIT') reverseCreditsForPayment(op.id, cuR ? cuR.name : 'staff');
+        markEntityDirty('payments', op.id);
+      });
+      revertTournParticipantsForBill(bill);
+    }
     markEntityDirty('bills', bill.id);
   }
   saveState();
@@ -38104,7 +38135,19 @@ function toggleTournFeeExpand(pairId){
 function toggleTournFeePaidSection(){ tournFeeUiState.paidSectionOpen = !tournFeeUiState.paidSectionOpen; renderTournamentTab(); }
 /* Nhan dien phuong thuc thanh toan de hien trong hang "ĐÃ ĐÓNG" khi bam XEM — dung chung nhan voi
    ACADEMY_PAYMENT_METHOD_LABELS (CASH:'Tiền mặt', BANK_TRANSFER:'Chuyển khoản') de nhat quan toan app. */
-function tfeePaymentMethodLabel(method){ return method === 'CASH' ? 'Tiền mặt' : 'Chuyển khoản'; }
+function tfeePaymentMethodLabel(method){ return method === 'CASH' ? 'Tiền mặt' : (method === 'CREDIT' ? 'Picpoc Credits' : 'Chuyển khoản'); }
+// §AUDIT-2026-10-30 — phuong thuc thu cua 1 VDV: gom moi khoan con hieu luc cua bill (vd "Picpoc Credits + Tiền mặt");
+// truoc day chi doc p.paymentId -> tra bang Credit hien nham "Chuyển khoản", khong tim thay payment thi hien "—".
+function tfeeParticipantMethodLabel(p){
+  const pays = p.billId ? (state.payments||[]).filter(x=>!x.voided && (x.allocations||[]).some(a=>a.billId===p.billId && !a.voided)) : [];
+  const methods = [];
+  pays.forEach(x=>{ const l = tfeePaymentMethodLabel(x.paymentMethod); if(methods.indexOf(l)<0) methods.push(l); });
+  if(methods.length) return methods.join(' + ');
+  const pay = p.paymentId ? (state.payments||[]).find(x=>x.id===p.paymentId) : null;
+  if(pay) return tfeePaymentMethodLabel(pay.paymentMethod);
+  const bill = p.billId ? state.bills.find(b=>b.id===p.billId) : null;
+  return bill && bill.paymentMethod ? tfeePaymentMethodLabel(bill.paymentMethod) : '—';
+}
 function tfeeFormatTime(ts){
   if(!ts) return '';
   try{ return new Date(ts).toLocaleString('vi-VN', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; }
@@ -38210,7 +38253,7 @@ function renderTournamentEntryFeeSection(catKey){
   const paidDetailHtml = info => {
     const rows = info.players.map(({p,name})=>{
       const payment = p.paymentId ? (state.payments||[]).find(x=>x.id===p.paymentId) : null;
-      const methodLabel = payment ? tfeePaymentMethodLabel(payment.paymentMethod) : '—';
+      const methodLabel = tfeeParticipantMethodLabel(p);
       const timeLabel = tfeeFormatTime(p.paidAt || (payment?payment.createdAt:null));
       return `<div class="tfee-detail-player">
           <span class="tfee-detail-name" title="${escapeHtml(name)}">${escapeHtml(tournFeeInitials(name))} · ${escapeHtml(name)}</span>
