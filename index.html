@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.59 (2026-10-30) — §FIX-ANONDEBT-STALE-2026. Admin gửi 10 cảnh báo ANONYMOUS_DEBT (bill "Đôi Nam 5.4 — cặp", "Tú
+  Anh"…). Check cũ xét MỌI bill từng có debtCreatedAt — cả bill nợ giải đã thu (THU TẤT CẢ) hay đã chuyển công nợ Club
+  (cancelled). Giờ chỉ xét bill còn nợ thật; nợ phí giải hiện rõ tên VĐV + giải, có nút "CHUYỂN CÔNG NỢ CLUB" mở luồng
+  xử lý từng người (chọn/tạo hồ sơ). Modal Kiểm tra dữ liệu hỗ trợ nút hành động riêng (actionLabel/actionJs).
+
   v1.44.58 (2026-10-30) — §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026. Admin hỏi 4 lỗi
   CREDIT_LOT_BALANCE_MISMATCH (lot 20.000đ của "p_mtu6s8so4l3n9"… còn 0đ nhưng lịch sử tính ra 20.000đ). Đây là lot của
   hồ sơ ĐÃ XOÁ, đã được chính Kiểm tra dữ liệu sửa an toàn trước đó (repairOrphanedCreditLot: về 0, EXPIRED, không ghi
@@ -9438,7 +9443,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.58'; // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026
+const PICPOC_APP_VERSION = 'Picpoc v1.44.59'; // §FIX-ANONDEBT-STALE-2026 — canh bao no khach vang lai: chi bill con no + nut chuyen cong no Club cho no phi giai
+// (ban truoc: 'Picpoc v1.44.58') // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026
 // (ban truoc: 'Picpoc v1.44.57') // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
 // (ban truoc: 'Picpoc v1.44.56') // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
 // (ban truoc: 'Picpoc v1.44.55') // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
@@ -34875,8 +34881,23 @@ function runDataIntegrityCheck(){
   // §14/§37 khong cho phep no khach vang lai/anonymous.
   state.bills.forEach(b=>{
     if(!b.debtCreatedAt) return;
+    // §FIX-ANONDEBT-STALE-2026 — chi xet bill CON NO that (open + con phai thu): bill no giai da THU (THU TẤT CẢ/thu sau)
+    // hoac da CHUYEN CONG NO CLUB (bill giai -> cancelled) truoc day van bi bao.
+    if(b.status !== 'open' || !(getBillOutstanding(b) > 0)) return;
     const p = playerById(b.playerId);
     if(!b.playerId || !p){
+      // No phi giai (bill giai khong gan Player) -> chi ro tung VDV + nut chuyen sang Cong no Club
+      const partIds = Array.from(new Set((b.items||[]).filter(it=>it && it.type==='tournament_entry' && it.meta && it.meta.participantId).map(it=>it.meta.participantId)));
+      const parts = partIds.map(id=>(state.tournamentEntryParticipants||[]).find(x=>x.id===id)).filter(x=>x && !isTournFeeSettled(x));
+      if(parts.length){
+        const t = state.tournaments[parts[0].catKey];
+        addIssue('Payment','WARNING','Nợ phí giải ' + fmtVnd(getBillOutstanding(b)) + ' — ' + parts.map(x=>x.name).join(', ') + (t ? ' (' + t.label + ')' : '') + ' chưa gắn hồ sơ Club, nên không nằm trong Công nợ của ai.', {
+          code:'ANONYMOUS_DEBT', entityType:'bill', entityId:b.id, entityLabel:b.playerName,
+          impact:'Khoản nợ có thật nhưng không hiện ở Công nợ Club nên dễ quên thu. Bấm CHUYỂN CÔNG NỢ CLUB để chọn/tạo hồ sơ cho từng người (hoặc thu tiền ở màn Phí tham gia giải).',
+          actionLabel:'CHUYỂN CÔNG NỢ CLUB', actionJs:'closeModal(); startTournFeeClubDebtFlow(' + JSON.stringify(parts.map(x=>x.id)).replace(/"/g,"'") + ')'
+        });
+        return;
+      }
       addIssue('Payment','WARNING','Bill "' + (b.playerName||b.id) + '" có công nợ nhưng không gắn với khách hàng có hồ sơ hợp lệ (vi phạm chính sách không cho nợ khách vãng lai).', {
         code:'ANONYMOUS_DEBT', entityType:'bill', entityId:b.id, entityLabel:b.playerName
       });
@@ -36128,6 +36149,7 @@ function renderDataIntegrityModal(issues){
         <span>${icon} ${i.message}${legacyBadgeHtml(i)}</span>
         <span style="white-space:nowrap; display:flex; gap:4px;">
           ${canSafeRepair ? `<button class="small" onclick='__dataIntegrityRunRepair(${JSON.stringify(String(i.code))}, ${JSON.stringify(String(i.entityId))})'>SỬA AN TOÀN</button>` : ''}
+          ${i.actionLabel && i.actionJs ? `<button class="small" onclick="${i.actionJs}">${escapeHtml(i.actionLabel)}</button>` : ''}
           <button class="secondary small" onclick="__dataIntegrityToggleDetail('${detailId}')">CHI TIẾT</button>
         </span>
       </div>
