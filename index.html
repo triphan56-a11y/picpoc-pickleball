@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.61 (2026-10-30) — §TOURN-CREDIT-HINT-2026. Admin hỏi bấm THU từng VĐV ở Phí tham gia có chọn Credits được không.
+  Có (từ v1.44.53) nhưng ô tick chỉ hiện khi VĐV đã liên kết hồ sơ Club và còn Credit, nên nhân viên không biết vì sao
+  không thấy. Modal thu nay ghi rõ từng VĐV: "chưa liên kết hồ sơ Club — bấm LIÊN KẾT" hoặc "hồ sơ X hiện không có Credit".
+
   v1.44.60 (2026-10-30) — §DRAW-MP4-2026. Admin yêu cầu video bốc thăm xuất ra MP4 thay vì WebM. startDrawRecording
   ưu tiên MediaRecorder 'video/mp4;codecs=avc1…' (Chrome/Edge mới, Safari), chỉ fallback WebM khi trình duyệt không
   hỗ trợ; drawUI.videoExt quyết định đuôi file tải về (.mp4/.webm), fallback WebM có toast nhắc dùng trình duyệt mới.
@@ -9447,7 +9451,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.60'; // §DRAW-MP4-2026 — video boc tham ghi/xuat MP4 (fallback WebM)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.61'; // §TOURN-CREDIT-HINT-2026 — modal thu phi giai noi ro vi sao khong dung duoc Credit
+// (ban truoc: 'Picpoc v1.44.60') // §DRAW-MP4-2026
 // (ban truoc: 'Picpoc v1.44.59') // §FIX-ANONDEBT-STALE-2026
 // (ban truoc: 'Picpoc v1.44.58') // §FIX-ORPHANLOT-FALSE-MISMATCH-2026 + §FIX-CREDIT-REVERSE-TXN-2026
 // (ban truoc: 'Picpoc v1.44.57') // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
@@ -38135,6 +38140,12 @@ function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
         Dùng Credit của <b>${escapeHtml(playerName(x.p.playerId))}</b> <span class="muted">(có ${fmtVnd(getAvailableCredits(x.p.playerId))})</span></span>
       <b>−${fmtVnd(x.usable)}</b>
     </label>`).join('') : '';
+  // §TOURN-CREDIT-HINT-2026 — noi ro vi sao VDV khong dung duoc Credit (chua lien ket ho so / het Credit)
+  const creditHint = isCreditSystemEnabled() ? tournEntryModalParticipants().filter(p=>!(getTournCreditUsable(p) > 0)).map(p=>{
+    const linked = p.playerId && playerById(p.playerId);
+    return `<div class="muted" style="font-size:.82rem; margin:2px 0;">🎫 ${escapeHtml(p.name || '')}: ${linked
+      ? 'hồ sơ <b>' + escapeHtml(playerName(p.playerId)) + '</b> hiện không có Credit'
+      : 'chưa liên kết hồ sơ Club — bấm <b>LIÊN KẾT</b> ở cặp đấu để dùng Credit'}</div>`; }).join('') : '';
   const extraListHtml = tournEntryModalExtraItems.length ? tournEntryModalExtraItems.map(it=>`
     <div class="bill-line" style="align-items:center;">
       <span>${escapeHtml(it.name)} ×${it.qty}</span>
@@ -38149,7 +38160,7 @@ function renderTournEntryFeeConfirmModal(title, amount, mode, targetId){
     ${extraListHtml ? `<div class="bill-section-label">Sản phẩm thêm</div>${extraListHtml}` : ''}
     <button type="button" class="secondary" style="width:100%; margin:6px 0;" onclick="toggleTournEntryExtraPicker()">🥤 + Thêm nước uống / sản phẩm</button>
     <div id="tefExtraPickerGrid" style="display:none; flex-direction:column; gap:6px; max-height:220px; overflow:auto; margin-bottom:8px;"></div>
-    ${creditHtml}
+    ${creditHtml}${creditHint}
     ${creditUsed > 0
       ? `<p>Tổng cộng: ${fmtVnd(grandTotal)} · Trừ Credit: −${fmtVnd(creditUsed)}<br>Còn phải thu: <b style="font-size:1.3rem;">${fmtVnd(Math.max(0, grandTotal - creditUsed))}</b></p>`
       : `<p>Tổng cộng: <b style="font-size:1.3rem;">${fmtVnd(grandTotal)}</b></p>`}
