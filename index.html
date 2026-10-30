@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.64 (2026-10-30) — §CREDIT-SOURCE-DETAIL-2026. Admin hỏi "Mốc buổi chơi 220k" ở Tài chính khi mốc mới áp dụng từ
+  01/11. Code từ v1.44.57 chặn phát trước ngày bắt đầu; 220k là lot đã phát trong tháng 10 theo cấu hình CŨ (milestone đã
+  bật trước đó). Thêm openCreditIssuedDetail(source): bấm dòng nguồn để xem từng lần phát (VĐV, ngày giờ, mốc, còn lại).
+
   v1.44.63 (2026-10-30) — §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026. (1) Admin bấm "Hoàn tác" ở Tài chính cho khoản
   phí giải của Xanh nhưng Giải đấu vẫn "Đã đóng": nút đó trước đây CHỈ đánh dấu dòng sổ Thu&Chi, bill/payment/VĐV giữ
   nguyên. Nay giao dịch tự động của 1 khoản thu bill -> hoàn tác khoản thu thật (voidBillPaymentCore: void mọi payment
@@ -9463,7 +9467,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.63'; // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026 — Hoan tac o Tai chinh huy khoan thu that; giao dich phi giai ghi ten VDV
+const PICPOC_APP_VERSION = 'Picpoc v1.44.64'; // §CREDIT-SOURCE-DETAIL-2026 — xem chi tiet Credit da phat theo nguon
+// (ban truoc: 'Picpoc v1.44.63') // §FIN-UNDO-REAL-2026 + §FIN-TOURN-NAMES-2026
 // (ban truoc: 'Picpoc v1.44.62') // §TOURN-DISPLAY-LABEL-2026
 // (ban truoc: 'Picpoc v1.44.61') // §TOURN-CREDIT-HINT-2026
 // (ban truoc: 'Picpoc v1.44.60') // §DRAW-MP4-2026
@@ -30078,7 +30083,8 @@ function financeCreditSummaryHtml(){
   const expiredTotal = (state.creditLots||[]).filter(l=>
     l.status==='ACTIVE' && l.expiresAt && l.expiresAt>=monthStart && l.expiresAt<monthEnd && l.expiresAt<=now && (l.remainingAmount||0)>0
   ).reduce((s,l)=>s+l.remainingAmount, 0);
-  const rowsHtml = sources.map(s=>`<div class="bill-line"><span>${sourceLabel[s]}</span><span>${fmtVnd(issuedThisMonth[s])}</span></div>`).join('');
+  // §CREDIT-SOURCE-DETAIL-2026 — bam 1 nguon de xem tung lan phat (ai, khi nao, bao nhieu, con lai)
+  const rowsHtml = sources.map(s=>`<div class="bill-line" ${issuedThisMonth[s] > 0 ? `style="cursor:pointer;" title="Xem chi tiết" onclick="openCreditIssuedDetail('${s}')"` : ''}><span>${sourceLabel[s]}${issuedThisMonth[s] > 0 ? ' <span class="muted" style="font-size:.78rem;">· xem chi tiết ›</span>' : ''}</span><span>${fmtVnd(issuedThisMonth[s])}</span></div>`).join('');
   return `
     <div class="fin-section-title">🎫 PICPOC CREDITS</div>
     <div class="fin-kpi-grid">
@@ -30090,6 +30096,31 @@ function financeCreditSummaryHtml(){
     <div class="bill-section-label">Theo nguồn (phát tháng này)</div>
     ${rowsHtml}
   `;
+}
+function openCreditIssuedDetail(sourceType){
+  const d = new Date();
+  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 1).getTime();
+  const label = { TOURNAMENT_REWARD:'Giải đấu', RETURN_SOON_REWARD:'Quay lại nhanh', VISIT_MILESTONE_REWARD:'Mốc buổi chơi' }[sourceType] || sourceType;
+  const list = (state.creditTransactions||[]).filter(t=>t.type==='ISSUE' && t.sourceType===sourceType && t.createdAt>=monthStart && t.createdAt<monthEnd)
+    .sort((a,b)=>b.createdAt-a.createdAt);
+  const fmtD = ts=>{ const x = new Date(ts); return String(x.getDate()).padStart(2,'0') + '/' + String(x.getMonth()+1).padStart(2,'0') + ' ' + String(x.getHours()).padStart(2,'0') + ':' + String(x.getMinutes()).padStart(2,'0'); };
+  const rows = list.map(t=>{
+    const lot = (state.creditLots||[]).find(l=>l.id===t.lotId) || (state.creditLots||[]).find(l=>l.operationId && l.operationId===t.operationId);
+    const pl = t.playerId && playerById(t.playerId);
+    const tier = sourceType==='VISIT_MILESTONE_REWARD' && lot && lot.sourceId ? ' · mốc ' + String(lot.sourceId).split('_').pop() + ' buổi' : '';
+    const left = lot ? (lot.status==='EXPIRED' || (lot.expiresAt && lot.expiresAt<=Date.now()) ? 'hết hạn' : 'còn ' + fmtVnd(lot.remainingAmount||0)) : '';
+    return `<div class="bill-line" style="align-items:center;"><span><b>${escapeHtml(pl ? pl.name : 'Hồ sơ đã xoá')}</b> <span class="muted" style="font-size:.8rem;">${fmtD(t.createdAt)}${tier}${t.createdBy ? ' · ' + escapeHtml(t.createdBy) : ''}</span></span><span style="text-align:right;">${fmtVnd(t.amount)}<div class="muted" style="font-size:.75rem;">${left}</div></span></div>`;
+  }).join('');
+  const total = list.reduce((s,t)=>s+(t.amount||0),0);
+  const cfg = getCreditSettings(); const ms = cfg.milestoneReward || {};
+  const note = sourceType==='VISIT_MILESTONE_REWARD' ? `<p class="muted" style="font-size:.85rem;">Cấu hình hiện tại: ${ms.enabled ? 'đang bật' : 'đang tắt'}${ms.startDate ? ' · áp dụng từ ' + ms.startDate.split('-').reverse().join('/') : ''}. Các khoản dưới đây là Credit đã phát thật trong tháng (theo cấu hình lúc phát).</p>` : '';
+  document.getElementById('matchModalContent').innerHTML = `
+    <h2>🎫 ${escapeHtml(label)} — phát tháng ${d.getMonth()+1}</h2>${note}
+    ${rows || '<div class="muted">Không có.</div>'}
+    <p>Tổng: <b>${fmtVnd(total)}</b> · ${list.length} lần phát</p>
+    <button class="secondary" onclick="closeModal()">Đóng</button>`;
+  document.getElementById('matchModal').classList.add('show');
 }
 function getFinanceOverviewToday(){
   const { start, end } = getTodayRangeTs();
