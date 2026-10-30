@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.57 (2026-10-30) — §MILESTONE-4TIER-2026/§MILESTONE-STARTDATE-2026/§MILESTONE-PRESET-2026-11. Admin gửi poster
+  "Chơi đều tay nhận thưởng ngay": 6 buổi 30K · 12 buổi 60K · 18 buổi 100K · 23 buổi 150K, hạn 30 ngày, bắt đầu 01/11/2026.
+  Cài đặt Thưởng mốc thêm Mốc 4 (để trống = không dùng) + "Bắt đầu áp dụng từ ngày" (trước ngày đó không phát; tháng đầu chỉ
+  đếm buổi chơi từ ngày đó). Áp cấu hình poster 1 lần lên cài đặt thật khi Admin mở app (cờ presetMs20261101).
+
   v1.44.56 (2026-10-24) — §PLAYER-MERGE-VERIFY-2026. Admin: "vẫn còn" (Thi Tèo vẫn hiện "Check-in lại" ở ô tìm CHECK-IN).
   Sau khi bấm GỘP: chờ server xác nhận ghi 2 hồ sơ — báo "đã lưu lên server" hoặc cảnh báo rõ để gộp lại. Ô tìm CHECK-IN
   không hiện hồ sơ đã gộp (mergedInto).
@@ -8202,9 +8207,12 @@
           <div><label>Mốc 2 — tổng thưởng</label><input type="number" id="creditsMSTier2AmountInput" min="0" step="1000"></div>
           <div><label>Mốc 3 — số buổi</label><input type="number" id="creditsMSTier3VisitsInput" min="1" step="1"></div>
           <div><label>Mốc 3 — tổng thưởng</label><input type="number" id="creditsMSTier3AmountInput" min="0" step="1000"></div>
+          <div><label>Mốc 4 — số buổi (để trống = không dùng)</label><input type="number" id="creditsMSTier4VisitsInput" min="0" step="1"></div>
+          <div><label>Mốc 4 — tổng thưởng</label><input type="number" id="creditsMSTier4AmountInput" min="0" step="1000"></div>
           <div><label>Hạn dùng (ngày)</label><input type="number" id="creditsMSExpiryInput" min="1" step="1"></div>
+          <div><label>Bắt đầu áp dụng từ ngày</label><input type="date" id="creditsMSStartDateInput"></div>
         </div>
-        <div class="small-note">Mốc sau LUÔN là tổng thưởng cao nhất tháng đó (không cộng dồn từng mốc) — hệ thống tự phát đúng phần chênh lệch khi đạt mốc mới.</div>
+        <div class="small-note">Mốc sau LUÔN là tổng thưởng cao nhất tháng đó (không cộng dồn từng mốc) — hệ thống tự phát đúng phần chênh lệch khi đạt mốc mới. Có "Bắt đầu áp dụng từ ngày" thì chỉ đếm buổi chơi từ ngày đó (trước ngày đó không phát thưởng).</div>
         <div class="settings-save-row" data-require-permission="PRICING_EDIT">
           <button onclick="savePicpocCreditsSettings()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v15H5V3Z"/><path d="M8 3v5h8V3"/><path d="M8 21v-7h8v7"/></svg>LƯU PICPOC CREDITS</button>
         </div>
@@ -9423,7 +9431,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.56'; // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
+const PICPOC_APP_VERSION = 'Picpoc v1.44.57'; // §MILESTONE-4TIER-2026 + §MILESTONE-STARTDATE-2026 + preset 01/11
+// (ban truoc: 'Picpoc v1.44.56') // §PLAYER-MERGE-VERIFY-2026 — xac nhan server sau khi gop + an ho so da gop o tim check-in
 // (ban truoc: 'Picpoc v1.44.55') // §PLAYER-MERGE-FIX-2026 — ghi ho so khi gop bang transaction patch
 // (ban truoc: 'Picpoc v1.44.54') // §PLAYER-MERGE-2026 — gop 2 ho so trung
 // (ban truoc: 'Picpoc v1.44.53') // §TOURN-CREDIT-2026 + §CREDIT-VOID-FIX-2026 — tru Credit khi thu phi giai; hoan tac bill tra Credit hoan lai Credit
@@ -14385,10 +14394,12 @@ function populatePicpocCreditsSettingsForm(){
   setVal('creditsMSTier1VisitsInput', t1.visits); setVal('creditsMSTier1AmountInput', t1.amount);
   setVal('creditsMSTier2VisitsInput', t2.visits); setVal('creditsMSTier2AmountInput', t2.amount);
   setVal('creditsMSTier3VisitsInput', t3.visits); setVal('creditsMSTier3AmountInput', t3.amount);
+  const t4 = tiers[3]; setVal('creditsMSTier4VisitsInput', t4 ? t4.visits : ''); setVal('creditsMSTier4AmountInput', t4 ? t4.amount : ''); // §MILESTONE-4TIER-2026
   setVal('creditsMSExpiryInput', cfg.milestoneReward.expiryDays);
+  setVal('creditsMSStartDateInput', cfg.milestoneReward.startDate || '');
   ['creditsEnabledInput','creditsTournEnabledInput','creditsTournExpiryInput','creditsTournFirstInput','creditsTournSecondInput','creditsTournThirdInput',
    'creditsRSEnabledInput','creditsRSAmountInput','creditsRSExpiryInput','creditsRSCooldownInput',
-   'creditsMSEnabledInput','creditsMSTier1VisitsInput','creditsMSTier1AmountInput','creditsMSTier2VisitsInput','creditsMSTier2AmountInput','creditsMSTier3VisitsInput','creditsMSTier3AmountInput','creditsMSExpiryInput'
+   'creditsMSEnabledInput','creditsMSTier1VisitsInput','creditsMSTier1AmountInput','creditsMSTier2VisitsInput','creditsMSTier2AmountInput','creditsMSTier3VisitsInput','creditsMSTier3AmountInput','creditsMSTier4VisitsInput','creditsMSTier4AmountInput','creditsMSExpiryInput','creditsMSStartDateInput'
   ].forEach(setDisabled);
 }
 function savePicpocCreditsSettings(){
@@ -14404,15 +14415,38 @@ function savePicpocCreditsSettings(){
     enabled: chk('creditsEnabledInput'),
     tournamentReward: { enabled: chk('creditsTournEnabledInput'), first: num('creditsTournFirstInput', existingTournReward.first), second: num('creditsTournSecondInput', existingTournReward.second), third: num('creditsTournThirdInput', existingTournReward.third), expiryDays: num('creditsTournExpiryInput',60)||60 }, // §CREDIT-TOURN-DEFAULTS-2026
     returnSoonReward: { enabled: chk('creditsRSEnabledInput'), amount: num('creditsRSAmountInput',20000), expiryDays: num('creditsRSExpiryInput',7)||7, cooldownDays: num('creditsRSCooldownInput',7)||7 },
-    milestoneReward: { enabled: chk('creditsMSEnabledInput'), expiryDays: num('creditsMSExpiryInput',20)||20, tiers: [
+    milestoneReward: Object.assign({}, getCreditSettings().milestoneReward, { enabled: chk('creditsMSEnabledInput'), expiryDays: num('creditsMSExpiryInput',20)||20, tiers: [
       { visits: num('creditsMSTier1VisitsInput',5)||5, amount: num('creditsMSTier1AmountInput',30000) },
       { visits: num('creditsMSTier2VisitsInput',10)||10, amount: num('creditsMSTier2AmountInput',80000) },
-      { visits: num('creditsMSTier3VisitsInput',15)||15, amount: num('creditsMSTier3AmountInput',150000) }
-    ].sort((a,b)=>a.visits-b.visits) }
+      { visits: num('creditsMSTier3VisitsInput',15)||15, amount: num('creditsMSTier3AmountInput',150000) },
+      { visits: num('creditsMSTier4VisitsInput',0), amount: num('creditsMSTier4AmountInput',0) } // §MILESTONE-4TIER-2026 — de trong = bo
+    ].filter(t=>t.visits > 0 && t.amount > 0).sort((a,b)=>a.visits-b.visits),
+      startDate: ((document.getElementById('creditsMSStartDateInput')||{}).value || '') || null })
   };
   logOverride('settings_update', 'Cập nhật cấu hình Picpoc Credits', 'settings', 'picpocCredits');
   saveState();
   showToast('✓ Đã lưu cấu hình Picpoc Credits');
+}
+/* §MILESTONE-PRESET-2026-11 — Admin (30/10/2026): "chỉnh lại mốc thưởng theo hình này và bật để ngày 1/11 này bắt đầu
+   áp dụng" — poster: 6 buổi 30K · 12 buổi 60K · 18 buổi 100K · 23 buổi 150K, hạn dùng 30 ngày, tính từ 01/11/2026.
+   Ap 1 LAN DUY NHAT len cau hinh that (co co danh dau presetMs20261101) tren thiet bi ADMIN dau tien mo app sau khi
+   len ban nay — sau do Admin sua tay trong Cai dat thi KHONG bi ghi de lai. */
+function applyMilestonePreset20261101(){
+  try{
+    if(!__hydratedNodes.has('settings')) return;
+    const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+    if(!u || u.role !== 'ADMIN') return;
+    // co danh dau rieng ngoai picpocCredits (getCreditSettings()/LUU PICPOC CREDITS dung lai object nen se lam mat co)
+    if(state.settings.creditPresetsApplied && state.settings.creditPresetsApplied.ms20261101) return;
+    const cur = getCreditSettings();
+    state.settings.creditPresetsApplied = Object.assign({}, state.settings.creditPresetsApplied, { ms20261101: Date.now() });
+    state.settings.picpocCredits = Object.assign({}, cur, {
+      milestoneReward: { enabled: true, expiryDays: 30, startDate: '2026-11-01',
+        tiers: [ {visits:6, amount:30000}, {visits:12, amount:60000}, {visits:18, amount:100000}, {visits:23, amount:150000} ] } });
+    logOverride('settings_update', 'Picpoc Credits — Thưởng mốc buổi chơi: 6/12/18/23 buổi = 30K/60K/100K/150K, hạn 30 ngày, áp dụng từ 01/11/2026 (theo poster)', 'settings', 'picpocCredits');
+    saveState();
+    if(typeof populatePicpocCreditsSettingsForm === 'function') populatePicpocCreditsSettingsForm();
+  }catch(e){ console.error('[milestone preset]', e); }
 }
 function isLotUsable(lot, now){
   now = now || Date.now();
@@ -14807,7 +14841,10 @@ function maybeIssueMilestoneReward(playerId, now){
   if(!cfg.enabled || !cfg.milestoneReward.enabled) return;
   now = now || Date.now();
   const d = new Date(now);
-  const monthStart = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  // §MILESTONE-STARTDATE-2026 — chi ap dung tu ngay bat dau (vd 01/11/2026): truoc ngay do khong phat; thang dau chi dem buoi tu ngay do
+  const startTs = cfg.milestoneReward.startDate ? new Date(cfg.milestoneReward.startDate + 'T00:00:00').getTime() : 0;
+  if(startTs && now < startTs) return;
+  const monthStart = Math.max(startTs, new Date(d.getFullYear(), d.getMonth(), 1).getTime());
   const monthEnd = new Date(d.getFullYear(), d.getMonth()+1, 1).getTime();
   const monthKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
   const visitsThisMonth = countValidCompletedVisitsInMonth(playerId, monthStart, monthEnd);
@@ -41725,6 +41762,7 @@ function attachEntityListener(node){
     scopedRenderFor(node);
     // §AUTO-CLOSE-STALE-ZERO-2026 — ngay khi du du lieu that (players/visits/bills/courts) + da biet nguoi dang nhap
     if(['players','playerVisits','bills','courts','users','payments','dailyClosures','history'].includes(node)){ try{ autoCloseStaleZeroSessions(); }catch(e){ console.error('[autoCloseStale]', e); } }
+    if(node === 'users') applyMilestonePreset20261101(); // §MILESTONE-PRESET-2026-11
   }, err=>{
     console.error('[listener] ' + node + ' error', err);
     setSyncStatus('Mất kết nối đồng bộ', 'err');
@@ -41746,6 +41784,7 @@ function attachSettingsListener(){
     if(!val) return;
     isRemoteUpdate = true;
     state.settings = deepMerge(defaultState().settings, val);
+    setTimeout(applyMilestonePreset20261101, 0); // §MILESTONE-PRESET-2026-11 — sau khi xu ly xong settings tu server
     /* §REMOVE-SMARTSOCIAL-2026 — migrate 1 chieu: neu du lieu cu tren server van con
        socialMode:'SMART_SOCIAL' (vd tu truoc khi tinh nang nay bi xoa hoan toan — chinh la truong hop
        cua club nay, dang o SMART_SOCIAL luc phat sinh bug "san ma" AUTO_MATCH), ep ve lai 'SELF_PLAY'
@@ -41969,6 +42008,7 @@ function resolveEnterAppFor(firebaseUser, authProfile, attempt){
     // §AUTHFIX2026 — day la nguon THAT cho getCurrentUser() trong suot phien nay (xem chu thich tai
     // __resolvedPicpocUserId) — dat TRUOC khi render de moi lan render dau tien da dung nguoi.
     __resolvedPicpocUserId = picpocUser.id;
+    setTimeout(applyMilestonePreset20261101, 3000); // §MILESTONE-PRESET-2026-11 — doi settings tu server ve truoc
     // §AUTH-11/56 — hop le: an overlay, render app. attachAllBusinessEntityListenersOnce() da duoc goi
     // truoc khi vao nhanh nay (xem beginProductionAuthFlow) nen state.users o day la du lieu that.
     hideProductionAuthOverlay();
