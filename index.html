@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.70 (2026-10-31) — §PAIR-UNDO-2026. Admin lỡ tay bấm Xóa 1 cặp (xoá ngay, không hỏi, không hoàn tác). removePair
+  giờ hỏi xác nhận (cảnh báo nếu cặp đang ở bảng/lịch) + lưu bản sao t.removedPairs. getRecoverableRemovedPairs dựng lại
+  cả cặp xoá TRƯỚC bản này từ dấu vết (id còn trong bảng/lịch, drawSessions.originalPairs, vé phí giải PAIR_REMOVED).
+  restoreRemovedPair khôi phục đúng id cũ (bảng/lịch/điểm nối lại), bỏ huỷ vé phí giải. Thanh "KHÔI PHỤC" trên danh sách cặp.
+
   v1.44.69 (2026-10-30) — §FIX-GROUPEDIT-AUTOFINAL-2026. Admin: điểm vòng bảng nhập sai (3-11) mà không sửa được. Vòng
   bảng đủ điểm -> tự chốt + tạo cây; SỬA KẾT QUẢ chỉ báo "MỞ LẠI VÒNG BẢNG", mà mở lại xong maybeAutoProgressTournament
   tự chốt lại ngay -> kẹt. Nay SỬA KẾT QUẢ làm 1 bước: cảnh báo cây sẽ tạo lại (đếm trận vòng trong có kết quả sẽ mất),
@@ -9527,7 +9532,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.69'; // §FIX-GROUPEDIT-AUTOFINAL-2026 — sua ket qua vong bang sau khi da tu chot
+const PICPOC_APP_VERSION = 'Picpoc v1.44.70'; // §PAIR-UNDO-2026 — xoa cap co xac nhan + khoi phuc cap da xoa
+// (ban truoc: 'Picpoc v1.44.69') // §FIX-GROUPEDIT-AUTOFINAL-2026
 // (ban truoc: 'Picpoc v1.44.68') // §BRACKET-POSTER-2026
 // (ban truoc: 'Picpoc v1.44.67') // §MOBILE-HEADER-COMPACT-2026 + §MOBILE-PLAYERFILTER-2026
 // (ban truoc: 'Picpoc v1.44.66') // §AUDIT-2026-10-30
@@ -37335,9 +37341,77 @@ function insertPlayerIntoBulkPairs(playerId){
 }
 function removePair(id){
   const t = currentTournament();
+  const pair = (t.pairs||[]).find(p=>p.id===id);
+  if(!pair) return;
+  // §PAIR-UNDO-2026 — Admin lo tay bam Xoa 1 cap (truoc day xoa ngay, khong hoi, khong hoan tac). Nay hoi xac nhan
+  // (canh bao rieng neu cap dang co trong bang/lich) + luu ban sao vao t.removedPairs de KHOI PHUC duoc.
+  const inGroups = (t.groups||[]).some(g=>Array.isArray(g) && g.indexOf(id)>=0);
+  if(!confirm('Xóa cặp "' + pair.label + '"?' + (inGroups ? '\n\n⚠ Cặp này đang có trong bảng đấu/lịch thi đấu — xoá sẽ làm các trận của cặp mất tên. Có thể KHÔI PHỤC lại ngay sau đó.' : '\n\nCó thể khôi phục lại sau.'))) return;
+  const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  t.removedPairs = (t.removedPairs||[]).filter(x=>x && x.pair && x.pair.id!==id).concat([{ pair: JSON.parse(JSON.stringify(pair)), removedAt: Date.now(), removedBy: cu ? cu.name : 'staff' }]).slice(-30);
   cancelParticipantsForPair(id, 'PAIR_REMOVED'); // §TOURN-ENTRY-37 — huy participant (khong xoa) truoc khi go cap, giu audit Payment/Inventory da phat sinh neu co
   t.pairs = t.pairs.filter(p=>p.id!==id);
+  logOverride('tournament_pair_removed', 'Xóa cặp ' + pair.label, 'tournament', state.currentCat);
   saveState(); renderTournamentTab();
+  showToast('Đã xóa cặp "' + pair.label + '" — bấm KHÔI PHỤC ở danh sách cặp nếu xóa nhầm');
+}
+/* §PAIR-UNDO-2026 — cac cap da bi xoa co the khoi phuc: (1) ban sao luu khi xoa (t.removedPairs); (2) cap xoa TRUOC ban
+   nay (khong co ban sao) nhung van con dau vet: id con trong bang/lich, ket qua boc tham (drawSessions.originalPairs co
+   ten), hoac ve phi giai bi huy 'PAIR_REMOVED' (co ten + ho so tung VDV). Khoi phuc DUNG id cu -> bang/lich/ket qua noi lai. */
+function getRecoverableRemovedPairs(catKey){
+  const t = state.tournaments[catKey];
+  if(!t) return [];
+  const have = new Set((t.pairs||[]).map(p=>p.id));
+  const out = {};
+  (t.removedPairs||[]).forEach(x=>{ if(x && x.pair && !have.has(x.pair.id)) out[x.pair.id] = { pair: x.pair, removedAt: x.removedAt, source:'backup' }; });
+  const parts = (state.tournamentEntryParticipants||[]).filter(p=>p.catKey===catKey && p.canceled && p.cancelReason==='PAIR_REMOVED' && p.pairId && !have.has(p.pairId));
+  const refIds = new Set();
+  (t.groups||[]).forEach(g=>Array.isArray(g) && g.forEach(id=>refIds.add(id)));
+  (t.schedule||[]).forEach(r=>Array.isArray(r) && r.forEach(m=>{ if(m){ if(m.a) refIds.add(m.a); if(m.b) refIds.add(m.b); } }));
+  parts.forEach(p=>refIds.add(p.pairId));
+  const drawLabel = {};
+  (t.drawSessions||[]).forEach(sess=>(sess && sess.originalPairs || []).forEach(op=>{ if(op && op.id) drawLabel[op.id] = op.label; }));
+  refIds.forEach(id=>{
+    if(have.has(id) || out[id]) return;
+    const ps = parts.filter(p=>p.pairId===id).sort((a,b)=>String(a.slot).localeCompare(String(b.slot)));
+    const label = drawLabel[id] || (ps.length ? ps.map(p=>p.name).join(' - ') : '');
+    if(!label) return;
+    const pa = ps.find(p=>p.slot==='A'), pb = ps.find(p=>p.slot==='B');
+    const pair = setPairPlayerIds({ id, label, manualGroup: null }, pa && pa.playerId, pb && pb.playerId);
+    out[id] = { pair, removedAt: ps.length ? Math.max(...ps.map(p=>p.canceledAt||0)) : null, source:'trace' };
+  });
+  return Object.values(out).sort((a,b)=>(b.removedAt||0)-(a.removedAt||0));
+}
+function restoreRemovedPair(pairId){
+  const catKey = state.currentCat, t = currentTournament();
+  const item = getRecoverableRemovedPairs(catKey).find(x=>x.pair.id===pairId);
+  if(!item){ showToast('Không tìm thấy cặp để khôi phục.'); return; }
+  const pair = JSON.parse(JSON.stringify(item.pair));
+  // dat lai dung vi tri cu theo thu tu trong ket qua boc tham (neu co), khong thi them cuoi
+  const order = []; (t.drawSessions||[]).forEach(sess=>(sess && sess.originalPairs || []).forEach(op=>{ if(op && op.id && order.indexOf(op.id)<0) order.push(op.id); }));
+  const pos = order.indexOf(pairId);
+  let idx = t.pairs.length;
+  if(pos >= 0){ idx = t.pairs.findIndex(p=>{ const q = order.indexOf(p.id); return q > pos; }); if(idx < 0) idx = t.pairs.length; }
+  t.pairs.splice(idx, 0, pair);
+  t.removedPairs = (t.removedPairs||[]).filter(x=>x && x.pair && x.pair.id!==pairId);
+  (state.tournamentEntryParticipants||[]).filter(p=>p.pairId===pairId && p.canceled && p.cancelReason==='PAIR_REMOVED').forEach(p=>{
+    p.canceled = false; p.canceledAt = null; p.cancelReason = null;
+    markEntityDirty('tournamentEntryParticipants', p.id);
+  });
+  if(t.entryFeeConfig && typeof syncTournamentEntryParticipants === 'function') syncTournamentEntryParticipants(catKey);
+  logOverride('tournament_pair_restored', 'Khôi phục cặp ' + pair.label, 'tournament', catKey);
+  saveState(); renderTournamentTab();
+  showToast('✓ Đã khôi phục cặp "' + pair.label + '"');
+}
+function openRestorePairsModal(){
+  const list = getRecoverableRemovedPairs(state.currentCat);
+  const rows = list.map(x=>`<div class="bill-line" style="align-items:center;"><span><b>${escapeHtml(x.pair.label)}</b>${x.removedAt ? ' <span class="muted" style="font-size:.78rem;">· xóa lúc ' + new Date(x.removedAt).toLocaleString('vi-VN') + '</span>' : ''}</span>
+    <button class="small" onclick="restoreRemovedPair('${x.pair.id}'); openRestorePairsModal();">↶ KHÔI PHỤC</button></div>`).join('');
+  document.getElementById('matchModalContent').innerHTML = `<h2>↶ Khôi phục cặp đã xóa</h2>
+    <p class="muted" style="font-size:.85rem;">Khôi phục giữ nguyên mã cặp cũ nên cặp tự nối lại với bảng đấu, lịch thi đấu, điểm đã nhập và vé phí giải (đã đóng tiền vẫn là đã đóng).</p>
+    ${rows || '<div class="muted">Không còn cặp nào để khôi phục.</div>'}
+    <button class="secondary" style="width:100%; margin-top:8px;" onclick="closeModal()">Đóng</button>`;
+  document.getElementById('matchModal').classList.add('show');
 }
 function clearPairs(){
   const t = currentTournament();
@@ -40884,7 +40958,11 @@ function renderTournamentTab(){
   // "Xep vao bang" trung voi widget #manualGroupBoard moi (renderManualGroupBoard() tu tinh rieng
   // groupCountForSelect cua no tu t.groupCount, khong can bien nay o day nua) — tranh duplicate UI.
   const pairsBody = document.getElementById('pairsListBody');
-  pairsBody.innerHTML = t.pairs.map((p, idx)=>{
+  const recoverable = getRecoverableRemovedPairs(catKey); // §PAIR-UNDO-2026
+  const restoreBar = recoverable.length ? `<div class="no-print" style="grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; background:#FFF7ED; border:1px solid #FED7AA; border-radius:10px; padding:8px 12px;">
+      <span style="font-size:.85rem;">🗑 Có <b>${recoverable.length}</b> cặp đã xóa: ${recoverable.slice(0,3).map(x=>escapeHtml(x.pair.label)).join(', ')}${recoverable.length>3?'…':''}</span>
+      <button class="small" onclick="${recoverable.length===1 ? `restoreRemovedPair('${recoverable[0].pair.id}')` : 'openRestorePairsModal()'}">↶ KHÔI PHỤC${recoverable.length===1 ? '' : '…'}</button></div>` : '';
+  pairsBody.innerHTML = restoreBar + t.pairs.map((p, idx)=>{
     // §TOURN-CLUB-LINK-2026 — hien trang thai lien ket ho so Club cua tung cap + nut sua lien ket
     const ids = getPairPlayerIds(p);
     const linkedCount = ids.filter(Boolean).length;
