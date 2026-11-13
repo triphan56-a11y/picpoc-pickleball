@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.74 (2026-11-13) — §TOURN-HIDE-2026: nút "Xóa khỏi danh sách" bị giấu với giải chưa kết thúc -> Admin không thấy.
+  Nay luôn hiện (khi có >1 giải); giải chưa kết thúc còn VĐV chưa xử lý phí -> chặn + mở màn Kết thúc giải; phí xong -> hỏi thêm.
+
   v1.44.73 (2026-11-13) — §TOURN-HIDE-2026. Admin muốn xóa 2 giải cũ khỏi thanh chọn giải. Giải đã kết thúc / có lịch
   sử -> nút "🗑 Xóa khỏi danh sách" (ẩn, t.hiddenAt; kết quả + phí giữ nguyên, Lịch sử có mục "Giải đã xóa khỏi danh
   sách" + "Hiện lại"). Giải đang có cặp chưa kết thúc -> phải Kết thúc giải trước. Luôn còn ít nhất 1 giải hiện.
@@ -9547,7 +9550,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.73'; // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.74'; // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
+// (ban truoc: 'Picpoc v1.44.73') // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
 // (ban truoc: 'Picpoc v1.44.72') // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
 // (ban truoc: 'Picpoc v1.44.71') // §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026
 // (ban truoc: 'Picpoc v1.44.70') // §PAIR-UNDO-2026
@@ -37287,15 +37291,26 @@ function visibleTournamentSlotKeys(){
 }
 function canHideTournamentSlot(catKey){
   const t = state.tournaments[catKey];
-  if(!t || t.hiddenAt) return false;
-  return !!t.endedAt || !(t.pairs||[]).length;
+  return !!t && !t.hiddenAt; // v1.44.74: luon cho bam — giai chua ket thuc duoc kiem tra phi khi bam
 }
 function hideTournamentSlot(catKey){
   const t = state.tournaments[catKey];
   if(!t) return;
-  if(!canHideTournamentSlot(catKey)){ showToast('Giải đang có danh sách cặp — bấm KẾT THÚC GIẢI (chốt kết quả & phí) trước rồi mới xóa khỏi danh sách.'); return; }
+  if(!canHideTournamentSlot(catKey)) return;
   const others = visibleTournamentSlotKeys().filter(k=>k!==catKey);
   if(!others.length){ showToast('Đây là giải cuối cùng — bấm "＋ GIẢI MỚI" tạo giải khác trước rồi xóa giải này.'); return; }
+  if(!t.endedAt && (t.pairs||[]).length){
+    // giai chua ket thuc: con VDV chua xu ly phi -> khong cho an (tranh quen tien); het no -> hoi xac nhan them
+    const unsettled = t.entryFeeConfig ? getTournamentUnsettledParticipants(catKey) : [];
+    if(unsettled.length){
+      const amt = unsettled.reduce((x,p)=>x+(p.entryFeeAmount||0),0);
+      if(confirm('Giải "' + tournLabel(t) + '" còn ' + unsettled.length + ' VĐV chưa xử lý phí (' + amt.toLocaleString('vi-VN') + 'đ).\n\nPhải THU hoặc CHUYỂN CÔNG NỢ CLUB trước khi xóa giải. Mở màn Kết thúc giải để xử lý?')){
+        state.currentCat = catKey; renderTournamentTab(); openEndTournamentModal();
+      }
+      return;
+    }
+    if(!confirm('Giải "' + tournLabel(t) + '" chưa bấm KẾT THÚC GIẢI (kết quả chưa chốt), nhưng phí đã xử lý xong.\n\nVẫn xóa khỏi danh sách giải?')) return;
+  }
   if(!confirm('Xóa giải "' + tournLabel(t) + '" khỏi danh sách giải?\n\nKết quả, tiền phí đã thu vẫn được giữ trong LỊCH SỬ (có thể Hiện lại khi cần).')) return;
   const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
   t.hiddenAt = Date.now(); t.hiddenBy = u ? u.name : 'staff';
@@ -41119,7 +41134,7 @@ function renderTournamentTab(){
   { const delWrap = document.getElementById('tournSlotDelWrap'); if(delWrap){ const ck = state.currentCat; const multi = visibleTournamentSlotKeys().length > 1;
       delWrap.innerHTML = (!(t.pairs||[]).length && !(t.archives||[]).length && Object.keys(state.tournaments).length > 1)
         ? `<button class="small secondary" onclick="deleteTournamentSlot('${ck}')">🗑 Xóa giải trống</button>`
-        : (multi && canHideTournamentSlot(ck)) ? `<button class="small secondary" onclick="hideTournamentSlot('${ck}')" title="Bỏ giải khỏi thanh chọn giải — kết quả & tiền phí vẫn giữ trong Lịch sử">🗑 Xóa khỏi danh sách</button>` : ''; } }
+        : multi ? `<button class="small secondary" onclick="hideTournamentSlot('${ck}')" title="Bỏ giải khỏi thanh chọn giải — kết quả & tiền phí vẫn giữ trong Lịch sử">🗑 Xóa khỏi danh sách</button>` : ''; } }
   document.getElementById('tsContent').value = t.setup.content || '';
   document.getElementById('tsMatchDate').value = t.setup.matchDate || '';
   document.getElementById('tsStartTime').value = t.setup.startTime || ''; // §TOURNTV2026-AUTOSTART
