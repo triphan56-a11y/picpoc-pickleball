@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.72 (2026-11-13) — §MULTI-TOURN-2026. Admin muốn nhập trước danh sách cho giải Chủ nhật khi tối nay + mai cũng có
+  giải. Trước chỉ 2 slot cố định. Nay thanh chọn giải động (sắp theo ngày thi đấu) + "＋ GIẢI MỚI" (tạo slot key riêng,
+  sync qua 'tournaments'), "🗑 Xóa giải trống" (không cặp, không lịch sử). Thanh "cặp đã xóa" hiện 103 cặp của các giải cũ
+  cùng slot -> chỉ tính vé phí huỷ trong chu kỳ giải hiện tại; Tạo giải mới/Xóa danh sách xoá removedPairs.
+
   v1.44.71 (2026-11-03) — §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026. Kiểm tra dữ liệu báo 3 bill phí giải
   (5. Linh 50k, Xanh 50k, 7. Béo 10k) PAID nhưng còn Outstanding + VĐV PAID trỏ tới payment không tồn tại. Gốc: thu Credit +
   tiền mặt tạo 2 payment liền nhau -> transaction OCC của payment 2 thấy payVersion do CHÍNH payment 1 ghi -> tưởng máy
@@ -7621,16 +7626,16 @@
          vao page-header (canh phai, cung hang voi tieu de trang — dung pattern page-header 2-con da
          dung o cac tab khac vd SẢN PHẨM/KHO), KHONG doi class/data-cat/id/thu tu DOM con lai cua 2 nut
          — nen listener goc "#tab-tournament .subtab-btn" (querySelectorAll, click) va vong lap sync
-         active state trong renderTournamentTab() VAN hoat dong y nguyen, khong can sua 1 dong JS nao. */
+         active state trong renderTournamentTab() VAN hoat dong y nguyen, khong can sua 1 dong JS nao. -->
     <div class="page-header">
       <div><h1 class="page-title">GIẢI ĐẤU</h1><p class="page-desc">Quản lý bảng đấu, tỷ số và xếp hạng</p></div>
-      <div class="subtabs tournament-cat-switcher no-print">
-        <button class="subtab-btn active" data-cat="nam54" aria-pressed="true">Đôi Nam 5.4</button>
-        <button class="subtab-btn" data-cat="honhop485" aria-pressed="false">Đôi Hỗn Hợp 4.85</button>
+      <div class="subtabs tournament-cat-switcher no-print" id="tournCatSwitcher" style="flex-wrap:wrap;">
+        <button class="subtab-btn active" data-cat="nam54" aria-pressed="true" onclick="selectTournamentCat('nam54')">Đôi Nam 5.4</button>
+        <button class="subtab-btn" data-cat="honhop485" aria-pressed="false" onclick="selectTournamentCat('honhop485')">Đôi Hỗn Hợp 4.85</button>
         <!-- §TOURNTV2026 — nut TV rieng NGAY TRONG man Giai dau (§16): bam la mo thang man TV rieng
              (tab-tournament-tv/Club TV tuy tinh trang giai), KHONG nhet TV UI vao man quan tri. Tai su
              dung DUNG toggleTvMode() da co san (nut TV goc o header tren cung, line ~2616) — khong tao
-             state/luong rieng, tranh 2 co che TV song song lech nhau. */
+             state/luong rieng, tranh 2 co che TV song song lech nhau. -->
         <button type="button" class="secondary small tv-mode-btn" onclick="toggleTvMode()">📺 Chế độ TV</button>
       </div>
     </div>
@@ -7672,7 +7677,7 @@
         <div class="tourn-step-section">
           <div class="tourn-step-head"><span class="tourn-step-num">01</span><h2 class="tourn-step-title">THÔNG TIN &amp; QUY CHẾ</h2></div>
           <div class="card no-print" id="tournamentSetupCard">
-            <h3 class="tourn-subcard-title" style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">THÔNG TIN GIẢI <span class="badge" id="tournamentStatusBadge"></span><span id="tournEndBtnWrap" style="margin-left:auto; display:inline-flex; align-items:center; gap:8px;"></span></h3>
+            <h3 class="tourn-subcard-title" style="display:flex; align-items:center; flex-wrap:wrap; gap:8px;">THÔNG TIN GIẢI <span class="badge" id="tournamentStatusBadge"></span><span id="tournSlotDelWrap" style="margin-left:auto;"></span><span id="tournEndBtnWrap" style="display:inline-flex; align-items:center; gap:8px;"></span></h3>
             <div class="tournament-setup-grid">
               <div><label>Tên giải</label><input type="text" id="tsName" placeholder="VD: Giải Picpoc Mùa Hè 2026" onchange="saveTournamentSetup()"></div>
               <div><label>Nội dung</label><input type="text" id="tsContent" placeholder="VD: Đôi Nam 5.4" onchange="saveTournamentSetup()"></div>
@@ -9538,7 +9543,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.71'; // §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026
+const PICPOC_APP_VERSION = 'Picpoc v1.44.72'; // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
+// (ban truoc: 'Picpoc v1.44.71') // §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026
 // (ban truoc: 'Picpoc v1.44.70') // §PAIR-UNDO-2026
 // (ban truoc: 'Picpoc v1.44.69') // §FIX-GROUPEDIT-AUTOFINAL-2026
 // (ban truoc: 'Picpoc v1.44.68') // §BRACKET-POSTER-2026
@@ -37227,16 +37233,60 @@ function closeDrawStage(){
 }
 
 
-document.querySelectorAll('#tab-tournament .subtab-btn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('#tab-tournament .subtab-btn').forEach(b=>{ b.classList.remove('active'); b.setAttribute('aria-pressed','false'); });
-    btn.classList.add('active');
-    btn.setAttribute('aria-pressed','true');
-    state.currentCat = btn.dataset.cat;
-    saveState();
-    renderTournamentTab();
-  });
-});
+/* §MULTI-TOURN-2026 — Admin: "tối nay 1 giải, mai 1 giải, chủ nhật 1 giải — nhập trước danh sách giải chủ nhật được
+   không". Truoc day chi co 2 slot co dinh (nam54/honhop485), moi slot giu 1 giai. Nay so giai tuy y: nut "＋ GIẢI MỚI" tao
+   slot moi (key rieng, dong bo nhu slot cu qua OBJECT_ENTITY_NODES 'tournaments'); thanh chuyen giai ve dong theo ngay thi dau. */
+function selectTournamentCat(catKey){
+  if(!state.tournaments[catKey]) return;
+  state.currentCat = catKey;
+  saveState();
+  renderTournamentTab();
+}
+function tournamentSlotSortKey(k){ const t = state.tournaments[k] || {}; const st = t.setup || {}; return (st.matchDate || '9999-99-99') + ' ' + (st.startTime || '99:99') + ' ' + k; }
+function renderTournamentCatSwitcher(){
+  const box = document.getElementById('tournCatSwitcher');
+  if(!box) return;
+  const keys = Object.keys(state.tournaments||{}).sort((a,b)=>tournamentSlotSortKey(a).localeCompare(tournamentSlotSortKey(b)));
+  const html = keys.map(k=>{
+    const t = state.tournaments[k], st = t.setup || {};
+    const d = st.matchDate ? st.matchDate.split('-').reverse().slice(0,2).join('/') : '';
+    const tag = t.endedAt ? ' ✓' : '';
+    const active = k === state.currentCat;
+    return `<button class="subtab-btn${active?' active':''}" data-cat="${k}" aria-pressed="${active}" onclick="selectTournamentCat('${k}')" title="${escapeHtml(tournLabel(t))}">${d ? '<b>' + d + '</b> · ' : ''}${escapeHtml(tournLabel(t))}${tag}</button>`;
+  }).join('') + `<button class="subtab-btn" onclick="createTournamentSlot()" title="Tạo thêm 1 giải (nhập trước danh sách cho giải ngày khác)">＋ GIẢI MỚI</button>`;
+  // giu nut TV/nut khac nam sau trong cung khung (neu co) — chi thay cac nut chon giai
+  box.querySelectorAll('.subtab-btn').forEach(b=>b.remove());
+  box.insertAdjacentHTML('afterbegin', html);
+}
+function createTournamentSlot(){
+  const name = prompt('Tên giải mới (VD: Đôi nam 5.0 — Chủ nhật):', '');
+  if(name === null) return;
+  const key = 'tg' + Date.now().toString(36);
+  const t = { label: (name || '').trim() || 'Giải mới', pairs:[], groups:[], schedule:[], courtsList:['1','2'], groupCourts:[], drawSessions:[],
+    rules: defaultTournamentRules(), groupCount:2, groupingMode:'RANDOM_DRAW', entryFeeConfig:null, status:'DRAFT',
+    setup: { name: (name || '').trim(), content:'', matchDate:'', startTime:'', note:'' }, createdAt: Date.now(), cycleId: uid('tcy') };
+  state.tournaments[key] = t;
+  state.currentCat = key;
+  logOverride('tournament_slot_created', 'Tạo giải mới: ' + t.label, 'tournament', key);
+  saveState();
+  markEntityDirty('tournaments', key);
+  renderTournamentTab();
+  showToast('✓ Đã tạo giải mới — nhập Ngày thi đấu, Nội dung rồi nhập danh sách cặp');
+}
+function deleteTournamentSlot(catKey){
+  const t = state.tournaments[catKey];
+  if(!t) return;
+  if(Object.keys(state.tournaments).length <= 1){ showToast('Phải còn ít nhất 1 giải.'); return; }
+  if((t.pairs||[]).length){ showToast('Giải còn danh sách cặp — xóa danh sách cặp (hoặc Kết thúc giải) trước.'); return; }
+  if((t.archives||[]).length){ showToast('Giải này có lịch sử kết quả đã lưu — không xóa để giữ lịch sử.'); return; }
+  if(!confirm('Xóa giải "' + tournLabel(t) + '" (giải trống)?')) return;
+  delete state.tournaments[catKey];
+  if(SYNC_ENABLED && dbRoot){ try{ DataService.tournaments.remove(catKey); }catch(e){ console.error(e); } }
+  state.currentCat = Object.keys(state.tournaments).sort((a,b)=>tournamentSlotSortKey(a).localeCompare(tournamentSlotSortKey(b)))[0];
+  logOverride('tournament_slot_deleted', 'Xóa giải trống: ' + tournLabel(t), 'tournament', catKey);
+  saveState();
+  renderTournamentTab();
+}
 
 function currentTournament(){ return state.tournaments[state.currentCat]; }
 // §TOURN-DISPLAY-LABEL-2026 — ten giai hien thi = "Ten giai" + "Noi dung" nhap o Thong tin giai; t.label chi la
@@ -37433,7 +37483,11 @@ function getRecoverableRemovedPairs(catKey){
   const have = new Set((t.pairs||[]).map(p=>p.id));
   const out = {};
   (t.removedPairs||[]).forEach(x=>{ if(x && x.pair && !have.has(x.pair.id)) out[x.pair.id] = { pair: x.pair, removedAt: x.removedAt, source:'backup' }; });
-  const parts = (state.tournamentEntryParticipants||[]).filter(p=>p.catKey===catKey && p.canceled && p.cancelReason==='PAIR_REMOVED' && p.pairId && !have.has(p.pairId));
+  // chi xet trong CHU KY giai hien tai: ve phi giai bi huy SAU khi giai nay bat dau (moc = luc tao ve som nhat con hieu luc
+  // cua giai, hoac luc tao slot) — tranh keo ca tram cap cua cac giai da xong truoc do tren cung slot.
+  const liveParts = (state.tournamentEntryParticipants||[]).filter(p=>p.catKey===catKey && !p.canceled);
+  const cycleStart = Math.max(t.cycleStartedAt || 0, liveParts.length ? Math.min(...liveParts.map(p=>p.createdAt||0)) : 0);
+  const parts = (state.tournamentEntryParticipants||[]).filter(p=>p.catKey===catKey && p.canceled && p.cancelReason==='PAIR_REMOVED' && p.pairId && !have.has(p.pairId) && cycleStart && (p.canceledAt||0) >= cycleStart);
   const refIds = new Set();
   (t.groups||[]).forEach(g=>Array.isArray(g) && g.forEach(id=>refIds.add(id)));
   (t.schedule||[]).forEach(r=>Array.isArray(r) && r.forEach(m=>{ if(m){ if(m.a) refIds.add(m.a); if(m.b) refIds.add(m.b); } }));
@@ -37490,6 +37544,7 @@ function clearPairs(){
   if(!confirm('Xóa toàn bộ danh sách cặp của giải này?' + (t && t.endedAt ? ' (Giải đã kết thúc — kết quả đã được lưu vào lịch sử giải.)' : '') + warn)) return;
   (t.pairs||[]).forEach(pair=> cancelParticipantsForPair(pair.id, 'TOURNAMENT_CLEARED')); // §TOURN-ENTRY-8/37 — huy (khong xoa) participant cu, giu audit
   t.pairs = []; t.groups = []; t.schedule = [];
+  t.removedPairs = []; t.cycleStartedAt = Date.now(); // §MULTI-TOURN-2026
   t.entryFeeConfig = null; // §TOURN-ENTRY-8 — reset ve tinh nang CHUA kich hoat cho chu ky giai moi (cung catKey) — lan kich hoat tiep theo se snapshot Settings hien hanh, KHONG dung config cu
   clearGroupStageFinalization(t); t.knockout = []; // §STALE-FINALIZE-2026 — khong cap thi khong con vong bang/cay nao hop le
   if(t.endedAt) resetEndedTournamentCycle(t); // §TOURN-END-2026 — giai da ket thuc + luu archives -> bat dau chu ky giai moi sach se (archives giu nguyen)
@@ -37503,6 +37558,7 @@ function resetEndedTournamentCycle(t){
   clearGroupStageFinalization(t); // §STALE-FINALIZE-2026
   t.bracketVersion = null; t.bracketGeneratedAt = null; t.bracketGeneratedBy = null;
   t.cycleId = uid('tcy');
+  t.cycleStartedAt = Date.now(); t.removedPairs = []; // §MULTI-TOURN-2026 — cap da xoa cua giai truoc khong con hien o giai moi
 }
 function startNewTournament(){
   const t = currentTournament();
@@ -41003,15 +41059,18 @@ function renderTournamentSetupProgress(t){
   ).join('');
 }
 function renderTournamentTab(){
+  if(!state.tournaments[state.currentCat]){ const ks = Object.keys(state.tournaments||{}); if(ks.length) state.currentCat = ks[0]; } // §MULTI-TOURN-2026 — giai vua bi xoa tren may khac
+  renderTournamentCatSwitcher();
   const t = currentTournament();
   const catKey = state.currentCat;
   maybeAutoProgressTournament(catKey); // §AUTO-Q/R/BI — luoi an toan: bat kip khi trang thai vua chuyen qua remote-sync/multi-device, khong tu tao lai khi da co
   if(typeof updateTournamentTvView === 'function') updateTournamentTvView(); // §AUTO-AE/AF — TV cap nhat qua realtime render map co san, khong polling moi
   document.getElementById('catLabel').textContent = tournLabel(t);
-  document.querySelectorAll('#tab-tournament .subtab-btn').forEach(b=>{ const tt = state.tournaments[b.dataset.cat]; if(tt && b.dataset.cat) b.textContent = tournLabel(tt); const a=b.dataset.cat === state.currentCat; b.classList.toggle('active', a); b.setAttribute('aria-pressed', a?'true':'false'); });
+  document.querySelectorAll('#tab-tournament .subtab-btn').forEach(b=>{ const a=b.dataset.cat === state.currentCat; b.classList.toggle('active', a); b.setAttribute('aria-pressed', a?'true':'false'); });
   // §C.30/31 — THIET LAP GIAI + trang thai
   t.setup = t.setup || {};
   document.getElementById('tsName').value = t.setup.name || '';
+  { const delWrap = document.getElementById('tournSlotDelWrap'); if(delWrap) delWrap.innerHTML = (!(t.pairs||[]).length && !(t.archives||[]).length && Object.keys(state.tournaments).length > 1) ? `<button class="small secondary" onclick="deleteTournamentSlot('${state.currentCat}')">🗑 Xóa giải trống</button>` : ''; }
   document.getElementById('tsContent').value = t.setup.content || '';
   document.getElementById('tsMatchDate').value = t.setup.matchDate || '';
   document.getElementById('tsStartTime').value = t.setup.startTime || ''; // §TOURNTV2026-AUTOSTART
