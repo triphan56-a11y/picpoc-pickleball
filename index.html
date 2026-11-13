@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.78 (2026-11-13) — §FIX-CREDITPAY-ENDSESSION-2026. A Cường trả Vé Social 30k bằng Picpoc Credits, bill "Đã thanh toán đủ"
+  nhưng vẫn ở Đang ở sân: createBillPayment() (Credits/chia phương thức/thu nốt) không coi 'waiting' là kết thúc phiên như
+  markBillPaid(). Nay có (chỉ khi bill thuộc lượt chơi đang mở); vòng tự dọn đóng các phiên đã kẹt vì lỗi này + nhật ký.
+
   v1.44.77 (2026-11-13) — §FIX-LEFT-REVERT-2026. "2 người đã thanh toán và đi về mà vẫn còn ở Đang ở sân". Ghi 'paid_and_left'
   (12 chỗ) qua CAS: máy khác vừa chạm hồ sơ -> huỷ + kéo 'waiting' cũ về. Nay khi CAS huỷ, trạng thái KẾT THÚC (player rời sân,
   Visit COMPLETED) được ghi lại lên bản server mới nhất (trừ khi đã check-in lại); vòng tự dọn 10 phút đưa người kẹt (không Visit
@@ -9588,7 +9592,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.77'; // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
+const PICPOC_APP_VERSION = 'Picpoc v1.44.78'; // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
+// (ban truoc: 'Picpoc v1.44.77') // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
 // (ban truoc: 'Picpoc v1.44.76') // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
 // (ban truoc: 'Picpoc v1.44.75') // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
 // (ban truoc: 'Picpoc v1.44.74') // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
@@ -16758,7 +16763,13 @@ function createBillPayment(bill, amount, method, opts){
   recalculateBillFinancialStatus(bill);
   const p = playerById(bill.playerId);
   if(bill.status === 'paid' && p){
-    const endsSession = p.status === 'checked_out' || p.status === 'waiting_payment';
+    // §FIX-CREDITPAY-ENDSESSION-2026 — Admin: "A Cường, A Hậu Dương đã thanh toán (Picpoc Credits) và đi về mà vẫn ở Đang ở sân".
+    // markBillPaid() (tien mat 1 lan) da tinh 'waiting' (trang thai DUY NHAT cua quy trinh check-in hien tai) nhung duong nay
+    // (Credits / chia nhieu phuong thuc / thu not) thi KHONG -> tra du ma phien khong dong. Chi dong khi bill la bill cua
+    // LUOT CHOI DANG MO (khong dong nham phien moi khi chi thu 1 khoan no cu).
+    const avNow = getActiveVisitForPlayer(p.id);
+    const isCurrentVisitBill = !!avNow && (bill.visitId ? bill.visitId === avNow.id : (bill.openedAt||bill.createdAt||0) >= (avNow.checkInAt||0) - 60000);
+    const endsSession = p.status === 'checked_out' || p.status === 'waiting_payment' || (p.status === 'waiting' && isCurrentVisitBill);
     removePlayerFromOperationalQueues(bill.playerId);
     // §FIX-MARKBILLPAID-PLAYERNOFLUSH-2026 (tiep, ap dung cung cach cho createBillPayment() — dung boi
     // collectPlayerDebt()/THU NỢ): day p.status/paidAndLeftAt NGAY thay vi cho luoi an toan debounce/
@@ -19546,6 +19557,26 @@ function autoCloseStaleZeroSessions(){
     markEntityDirty('players', p.id);
     markEntityDirty('playerVisits', v.id);
     logOverride('auto_close_stale_zero_session', 'Tự đóng phiên ngày ' + new Date(v.checkInAt).toLocaleDateString('vi-VN') + ' của ' + p.name + ' (bill 0đ, không còn khoản nào phải thu — cuối buổi chưa ai bấm KẾT THÚC)', 'player', p.id);
+    closed.push(p.name);
+  });
+  // §FIX-CREDITPAY-ENDSESSION-2026 — don cac phien bi ket do ban cu: Visit ACTIVE, status 'waiting', bill CUA CHINH luot nay
+  // da 'paid' bang 1 khoan thu that (sau luc check-in), khong con bill mo nao co tien/ghi no, khong tren san -> dong nhu markBillPaid.
+  (state.playerVisits||[]).filter(v=>v && v.status==='ACTIVE').forEach(v=>{
+    const p = playerById(v.playerId);
+    if(!p || p.status !== 'waiting' || onCourt.has(p.id)) return;
+    if(getActiveVisitForPlayer(p.id) !== v) return;
+    const paidBill = (state.bills||[]).find(b=>b.playerId===p.id && b.status==='paid' && b.visitId===v.id && (b.paidAt||0) > (v.checkInAt||0) && getBillCollected(b) > 0);
+    if(!paidBill) return;
+    const openBills = (state.bills||[]).filter(b=>b.playerId===p.id && b.status==='open');
+    if(openBills.some(b=> billTotal(b) > 0 || b.debtCreatedAt)) return;
+    if(openBills.some(b=>(b.openedAt||b.createdAt||0) > (paidBill.paidAt||0))) return; // mo bill moi sau khi tra -> van dang choi
+    removePlayerFromOperationalQueues(p.id);
+    if(!v.finishedPlayingAt) v.finishedPlayingAt = paidBill.paidAt;
+    completePlayerVisit(p.id, 'PAID');
+    p.status = 'paid_and_left'; p.paidAndLeftAt = paidBill.paidAt || nowTs; p.socialParticipation = false;
+    markEntityDirty('players', p.id);
+    markEntityDirty('playerVisits', v.id);
+    logOverride('auto_close_paid_session', p.name + ' — bill đã thanh toán đủ (' + (paidBill.paymentMethod || 'nhiều phương thức') + ') nhưng phiên chưa đóng (lỗi bản cũ khi trả bằng Credits) -> đóng phiên', 'player', p.id);
     closed.push(p.name);
   });
   // §FIX-LEFT-REVERT-2026 — don nguoi choi KET o "Đang ở sân": status chua 'paid_and_left' nhung KHONG con Visit ACTIVE,
