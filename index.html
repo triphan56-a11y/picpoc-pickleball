@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.76 (2026-11-13) — §PLAYER-MERGE-ATOMIC-2026. Gộp "Vương Bạn Đô" vào "A Vương bạn Đô": hồ sơ đã gộp nhưng 4 lượt
+  chơi vẫn ở hồ sơ cũ. Gốc: chuyển từng lượt chơi/bill bằng ghi CAS — server vừa bị máy khác chạm -> huỷ ghi + kéo playerId cũ
+  về, không báo. Nay patch-transaction trên bản server mới nhất, báo số mục chưa chuyển; hồ sơ giữ lại hiện "còn N mục" +
+  nút CHUYỂN NỐT; gộp lại vào cùng hồ sơ được; khôi phục hồ sơ đã gộp bỏ dấu mergedInto.
+
   v1.44.75 (2026-11-13) — §PLAYER-MERGE-DIR-2026. Admin gộp hồ sơ trùng "vào" A Vương bạn Đô nhưng dữ liệu cũ không sang:
   nút GỘP mở trên hồ sơ nào thì hồ sơ đó bị coi là BỊ GỘP -> dễ nhầm chiều. Nay hồ sơ đang mở mặc định GIỮ LẠI + nút
   "⇅ Đổi chiều", nút xác nhận ghi rõ "GỘP X → Y", gợi ý theo từng từ trong tên; hồ sơ hiện "Đã gộp từ / đã gộp vào".
@@ -9554,7 +9559,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.75'; // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
+const PICPOC_APP_VERSION = 'Picpoc v1.44.76'; // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
+// (ban truoc: 'Picpoc v1.44.75') // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
 // (ban truoc: 'Picpoc v1.44.74') // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
 // (ban truoc: 'Picpoc v1.44.73') // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
 // (ban truoc: 'Picpoc v1.44.72') // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
@@ -21593,6 +21599,7 @@ function archivePlayer(id){
 function restorePlayer(id){
   const p = playerById(id); if(!p) return;
   p.archived = false;
+  if(p.mergedInto){ p.restoredFromMergeInto = p.mergedInto; p.mergedInto = null; } // §PLAYER-MERGE-ATOMIC-2026
   logOverride('player_restore', p.name + ' — đã khôi phục', 'player', p.id);
   saveState();
   if(typeof renderPlayersTab === 'function') renderPlayersTab();
@@ -21621,14 +21628,20 @@ function mergePlayers(sourceId, targetId){
   const src = playerById(sourceId), dst = playerById(targetId);
   if(!src || !dst) return { ok:false, reason:'Không tìm thấy hồ sơ.' };
   if(src.id === dst.id) return { ok:false, reason:'Phải chọn 2 hồ sơ khác nhau.' };
-  if(src.mergedInto) return { ok:false, reason:'Hồ sơ này đã được gộp trước đó.' };
+  if(src.mergedInto && src.mergedInto !== dst.id && src.archived) return { ok:false, reason:'Hồ sơ này đã được gộp vào hồ sơ khác trước đó.' }; // §PLAYER-MERGE-ATOMIC-2026 — gop lai vao CUNG ho so = chuyen not phan con sot
   const busy = p => PLAYER_ACTIVE_STATUSES.includes(p.status) || !!getActiveVisitForPlayer(p.id);
   if(busy(src) || busy(dst)) return { ok:false, reason:'Một trong 2 người đang check-in / ở sân — kết thúc lượt chơi rồi mới gộp.' };
   const dirty = (node, id)=>markEntityDirty(node, id);
-  const moveField = (node, field)=>{ let n = 0; (state[node]||[]).forEach(e=>{ if(e && e[field]===sourceId){ e[field] = targetId; n++; dirty(node, e.id); } }); return n; };
+  /* §PLAYER-MERGE-ATOMIC-2026 — Admin gop "Vương Bạn Đô" vao "A Vương bạn Đô" nhung luot choi/bill KHONG sang. Goc: moi
+     ban ghi duoc day bang markEntityDirty (CAS so voi snapshot cu) — server vua bi may khac cham (vd tu dong dong luot
+     choi cuoi ngay) -> CAS huy va KEO playerId cu ve, khong bao gi. Nay: patch CHI field doi chu tren ban MOI NHAT cua
+     server (transaction, khong CAS) + gom ket qua de bao loi that. */
+  const patchJobs = [];
+  const patchMove = (node, e, patch)=>{ Object.assign(e, patch); patchJobs.push(patchEntityAtomic(node, e.id, patch)); };
+  const moveField = (node, field)=>{ let n = 0; (state[node]||[]).forEach(e=>{ if(e && e[field]===sourceId){ patchMove(node, e, { [field]: targetId }); n++; } }); return n; };
   const moved = {};
   moved.bills = 0;
-  (state.bills||[]).forEach(b=>{ if(b && b.playerId===sourceId){ b.playerId = targetId; b.playerName = dst.name; moved.bills++; dirty('bills', b.id); } });
+  (state.bills||[]).forEach(b=>{ if(b && b.playerId===sourceId){ patchMove('bills', b, { playerId: targetId, playerName: dst.name }); moved.bills++; } });
   moved.visits = moveField('playerVisits','playerId');
   moved.creditLots = moveField('creditLots','playerId');
   moveField('creditTransactions','playerId');
@@ -21676,19 +21689,46 @@ function mergePlayers(sourceId, targetId){
   ['recentPartners','recentOpponents'].forEach(k=>{ dst[k] = Array.from(new Set([].concat(dst[k]||[], src[k]||[]))).filter(id=>id!==dst.id && id!==src.id); });
   // Ho so bo: luu tru, ghi ro da gop vao dau; bo SDT de khong chan trung SDT voi ho so giu lai
   src.archived = true; src.mergedInto = dst.id; src.mergedAt = Date.now();
-  src.note = (src.note ? src.note + '\n' : '') + 'Đã gộp vào hồ sơ "' + dst.name + '"';
+  if(String(src.note||'').indexOf('Đã gộp vào hồ sơ "' + dst.name + '"') < 0) src.note = (src.note ? src.note + '\n' : '') + 'Đã gộp vào hồ sơ "' + dst.name + '"';
   src.phone = ''; src.phoneDigits = ''; src.checkins = 0; src.gamesPlayed = 0; // so lieu da cong sang ho so giu lai (gop lai lan 2 khong cong trung)
   // §PLAYER-MERGE-FIX-2026 — ghi 2 ho so bang transaction VA CHAM PATCH len ban server (khong CAS theo snapshot cu):
   // Admin bao lan gop dau "ho so van hien, khong thay ghi chu" — luot choi da chuyen nhung ban ghi ho so bi CAS huy
   // va keo ban server cu ve. Patch chi gom cac field cua thao tac gop, ap len du lieu MOI NHAT tren server.
   const pick = (p, keys)=>{ const o = {}; keys.forEach(k=>{ o[k] = p[k] === undefined ? null : p[k]; }); return o; };
-  const saved = Promise.all([
+  const saved = Promise.all(patchJobs.concat([
     patchPlayerAtomic(dst.id, pick(dst, ['checkins','gamesPlayed','phone','phoneDigits','gender','tags','note','createdAt','lastCheckInAt','recentPartners','recentOpponents'])),
     patchPlayerAtomic(src.id, pick(src, ['archived','mergedInto','mergedAt','note','phone','phoneDigits','checkins','gamesPlayed']))
-  ]);
+  ]));
   logOverride('player_merged', 'Gộp hồ sơ "' + src.name + '" vào "' + dst.name + '" — ' + moved.bills + ' bill, ' + moved.visits + ' lượt chơi, ' + moved.creditLots + ' khoản Credit, ' + moved.matches + ' trận', 'player', dst.id);
   saveState();
   return { ok:true, moved, source: src, target: dst, saved };
+}
+function patchEntityAtomic(node, id, patch){ // §PLAYER-MERGE-ATOMIC-2026 — ap patch len ban server MOI NHAT (khong CAS)
+  if(!SYNC_ENABLED || !dbRoot) return Promise.resolve(true);
+  markEntityPendingWrite(node, id);
+  const local = Array.isArray(state[node]) ? state[node].find(e=>e && e.id===id) : (state[node]||{})[id];
+  return dbRoot.child(fbNodeNameFor(node)).child(id).transaction(remote=>{
+    const base = remote || sanitizeForFirebase(local) || {};
+    const next = Object.assign({}, base);
+    Object.keys(patch).forEach(k=>{ if(patch[k] === null || patch[k] === undefined) delete next[k]; else next[k] = patch[k]; });
+    return sanitizeForFirebase(next);
+  }).then(result=>{
+    clearEntityPendingWrite(node, id);
+    if(result && result.committed && result.snapshot){ applyRemoteEntityLocally(node, id, result.snapshot.val ? result.snapshot.val() : result.snapshot); return true; }
+    if(typeof logSystemError === 'function') logSystemError('player-merge', 'Không ghi được ' + node + '/' + id + ' khi gộp', null);
+    return false;
+  }).catch(err=>{ clearEntityPendingWrite(node, id); handleWriteError(node,'transaction',err); return false; });
+}
+function playerLeftoverRefs(playerId){ // so ban ghi con tro toi ho so (de phat hien gop do dang)
+  const c = (arr, f)=>(arr||[]).filter(e=>e && f(e)).length;
+  return c(state.playerVisits, v=>v.playerId===playerId) + c(state.bills, b=>b.playerId===playerId) + c(state.creditLots, l=>l.playerId===playerId)
+    + c(state.socialPassPackages, x=>x.playerId===playerId) + c(state.tournamentEntryParticipants, x=>x.playerId===playerId);
+}
+function finishMergeLeftovers(srcId, dstId){
+  const src = playerById(srcId), dst = playerById(dstId); if(!src || !dst) return;
+  if(!confirm('Chuyển nốt ' + playerLeftoverRefs(srcId) + ' mục còn nằm ở "' + src.name + '" sang "' + dst.name + '"?')) return;
+  __mergeUi = { openedId: dstId, keepOpened: true, otherId: srcId, sourceId: srcId, targetId: dstId };
+  runMergeAndReport(src, dst);
 }
 function patchPlayerAtomic(playerId, patch){
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve(true);
@@ -21797,7 +21837,7 @@ function renderMergeTargetList(){
     words.forEach(w=>pairLinkMatches(w, 8).forEach(p=>{ if(!seen.has(p.id)){ seen.add(p.id); m.push(p); } }));
     m = m.slice(0, 10);
   }
-  m = m.filter(p=>p.id!==__mergeUi.openedId && !p.mergedInto);
+  m = m.filter(p=>p.id!==__mergeUi.openedId && (!p.mergedInto || p.mergedInto===__mergeUi.openedId || !p.archived));
   list.innerHTML = (m.length ? `<div class="plink-results-title">${q.trim() ? m.length + ' kết quả' : 'Gợi ý hồ sơ giống tên'}</div>` : '<div class="plink-empty">Gõ tên hoặc SĐT để tìm hồ sơ giữ lại.</div>') +
     m.map(p=>`<button type="button" class="plink-row${p.id===__mergeUi.otherId?' on':''}" onclick="pickMergeTarget('${p.id}')">
       <span class="plink-avatar">${escapeHtml((String(p.name||'?').trim()[0]||'?').toUpperCase())}</span>
@@ -21815,6 +21855,9 @@ function confirmMergePlayers(){
   const src = playerById(__mergeUi.sourceId), dst = playerById(__mergeUi.targetId);
   if(!src || !dst) return;
   if(!confirm('Gộp "' + src.name + '" vào "' + dst.name + '"?\n\n' + mergeImpactText(getPlayerMergeImpact(src.id)) + '\n\nHồ sơ "' + src.name + '" sẽ được lưu trữ. Không hoàn tác tự động được.')) return;
+  runMergeAndReport(src, dst);
+}
+function runMergeAndReport(src, dst){
   const r = mergePlayers(src.id, dst.id);
   if(!r.ok){ showToast('⚠ ' + r.reason); return; }
   closeModal();
@@ -21824,8 +21867,11 @@ function confirmMergePlayers(){
   Promise.resolve(r.saved).then(results=>{
     const ok = !results || results.every(Boolean);
     const s2 = playerById(src.id);
-    if(ok && s2 && s2.archived && s2.mergedInto === dst.id){ if(typeof renderPlayersTab === 'function') renderPlayersTab(); showToast('✓ Đã gộp "' + src.name + '" vào "' + dst.name + '" — đã lưu lên server'); }
-    else showToast('⚠ Dữ liệu đã chuyển nhưng CHƯA lưu được hồ sơ lên server — kiểm tra kết nối rồi bấm GỘP lại lần nữa (không bị trùng).');
+    const left = playerLeftoverRefs(src.id);
+    if(typeof renderPlayersTab === 'function') renderPlayersTab();
+    if(typeof renderPlayerDetail === 'function') renderPlayerDetail();
+    if(ok && !left && s2 && s2.archived && s2.mergedInto === dst.id) showToast('✓ Đã gộp "' + src.name + '" vào "' + dst.name + '" — đã lưu lên server');
+    else showToast('⚠ Còn ' + left + ' mục chưa chuyển được lên server — kiểm tra kết nối rồi bấm "CHUYỂN NỐT" ở hồ sơ "' + dst.name + '".');
   });
 }
 /* §PLAYER-27 — khoi phuc + check-in trong 1 thao tac tu ket qua tim kiem CHECK-IN, dung lai
@@ -41906,7 +41952,9 @@ function renderPlayerDetail(){
       ${(()=>{ // §PLAYER-MERGE-DIR-2026
         const from = (state.players||[]).filter(x=>x && x.mergedInto === p.id);
         const into = p.mergedInto ? playerById(p.mergedInto) : null;
-        return (from.length ? `<div class="small-note" style="margin-top:6px;">🔀 Đã gộp từ: ${from.map(x=>'<b>' + escapeHtml(x.name) + '</b>' + (x.mergedAt ? ' (' + new Date(x.mergedAt).toLocaleDateString('vi-VN') + ')' : '')).join(', ')}</div>` : '') +
+        return (from.length ? `<div class="small-note" style="margin-top:6px;">🔀 Đã gộp từ: ${from.map(x=>{ const left = playerLeftoverRefs(x.id);
+            return '<b>' + escapeHtml(x.name) + '</b>' + (x.mergedAt ? ' (' + new Date(x.mergedAt).toLocaleDateString('vi-VN') + ')' : '') +
+              (left ? ` <span style="color:var(--danger); font-weight:700;">— còn ${left} mục chưa chuyển</span> <button class="small" data-require-permission="PAYMENT_VOID" onclick="finishMergeLeftovers('${x.id}','${p.id}')">CHUYỂN NỐT</button>` : ''); }).join(', ')}</div>` : '') +
           (into ? `<div class="small-note" style="margin-top:6px; color:var(--danger);">🔀 Hồ sơ này đã gộp vào <a href="#" onclick="selectPlayer('${into.id}'); return false;"><b>${escapeHtml(into.name)}</b></a></div>` : '');
       })()}
     </div>
