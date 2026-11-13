@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.75 (2026-11-13) — §PLAYER-MERGE-DIR-2026. Admin gộp hồ sơ trùng "vào" A Vương bạn Đô nhưng dữ liệu cũ không sang:
+  nút GỘP mở trên hồ sơ nào thì hồ sơ đó bị coi là BỊ GỘP -> dễ nhầm chiều. Nay hồ sơ đang mở mặc định GIỮ LẠI + nút
+  "⇅ Đổi chiều", nút xác nhận ghi rõ "GỘP X → Y", gợi ý theo từng từ trong tên; hồ sơ hiện "Đã gộp từ / đã gộp vào".
+
   v1.44.74 (2026-11-13) — §TOURN-HIDE-2026: nút "Xóa khỏi danh sách" bị giấu với giải chưa kết thúc -> Admin không thấy.
   Nay luôn hiện (khi có >1 giải); giải chưa kết thúc còn VĐV chưa xử lý phí -> chặn + mở màn Kết thúc giải; phí xong -> hỏi thêm.
 
@@ -9550,7 +9554,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.74'; // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.75'; // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
+// (ban truoc: 'Picpoc v1.44.74') // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
 // (ban truoc: 'Picpoc v1.44.73') // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
 // (ban truoc: 'Picpoc v1.44.72') // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
 // (ban truoc: 'Picpoc v1.44.71') // §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026
@@ -21703,7 +21708,47 @@ function patchPlayerAtomic(playerId, patch){
     return false;
   }).catch(err=>{ clearEntityPendingWrite('players', playerId); handleWriteError('players','transaction',err); return false; });
 }
-function openMergePlayerModal(sourceId){
+/* §PLAYER-MERGE-DIR-2026 — Admin bam "GỘP HỒ SƠ TRÙNG" tren ho so muon GIU ("toi da gop ho so trung vao") nhung modal
+   coi ho so dang mo la ho so BI GOP -> de nham chieu. Nay mac dinh ho so dang mo = GIU LAI, chon ho so trung de gop VAO;
+   co nut "⇅ Đổi chiều". Ho so giu lai hien "Đã gộp từ: ..." de kiem tra. */
+function openMergePlayerModal(openedId, mode){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
+  const opened = playerById(openedId); if(!opened) return;
+  __mergeUi = { openedId, keepOpened: mode !== 'source', otherId: '', sourceId: '', targetId: '' };
+  renderMergePlayerModal();
+  document.getElementById('matchModal').classList.add('show');
+}
+function mergeUiSync(){
+  const u = __mergeUi;
+  u.sourceId = u.keepOpened ? u.otherId : u.openedId;
+  u.targetId = u.keepOpened ? u.openedId : u.otherId;
+}
+function swapMergeDirection(){ __mergeUi.keepOpened = !__mergeUi.keepOpened; renderMergePlayerModal(); }
+function renderMergePlayerModal(){
+  mergeUiSync();
+  const u = __mergeUi, opened = playerById(u.openedId), other = u.otherId ? playerById(u.otherId) : null;
+  const src = playerById(u.sourceId), dst = playerById(u.targetId);
+  const otherSlot = `<div class="plink-search"><input type="search" id="mergeSearch" placeholder="Tìm hồ sơ ${u.keepOpened ? 'TRÙNG cần gộp vào' : 'GIỮ LẠI'} theo tên hoặc SĐT…" oninput="renderMergeTargetList()" autocomplete="off"></div>
+      <div class="plink-results" id="mergeTargetList"></div>`;
+  const card = (badge, color, p, isOther)=>`<div class="plink-card">
+      <div class="plink-head"><span class="plink-badge"${color ? ' style="background:' + color + ';"' : ''}>${badge}</span><b>${p ? escapeHtml(p.name) : '— chọn hồ sơ —'}</b></div>
+      ${p ? `<div class="small-note">${badge === 'BỊ GỘP' ? mergeImpactText(getPlayerMergeImpact(p.id)) : 'Giữ tên, PPR/trình độ của hồ sơ này; nhận toàn bộ dữ liệu của hồ sơ bị gộp.'}</div>` : ''}
+      ${isOther ? otherSlot : ''}
+    </div>`;
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>🔀 Gộp hồ sơ trùng</h2>
+    <p class="plink-intro">Dùng khi <b>1 người bị tạo 2 hồ sơ</b>. Toàn bộ bill, công nợ, lượt chơi, Credits, lịch sử trận, gói Social, giải đấu của hồ sơ <b>BỊ GỘP</b> chuyển sang hồ sơ <b>GIỮ LẠI</b>. Hồ sơ bị gộp được lưu trữ (không xoá).</p>
+    ${u.keepOpened ? card('GIỮ LẠI', '', opened, false) : card('BỊ GỘP', 'var(--danger)', opened, false)}
+    <div style="text-align:center; margin:-2px 0 8px;"><button type="button" class="small secondary" onclick="swapMergeDirection()">⇅ Đổi chiều (giữ lại hồ sơ kia)</button></div>
+    ${u.keepOpened ? card('BỊ GỘP', 'var(--danger)', other, true) : card('GIỮ LẠI', '', other, true)}
+    <div class="plink-actions">
+      <button class="secondary" onclick="closeModal()">Hủy</button>
+      <button class="big" id="mergeConfirmBtn" ${src && dst ? '' : 'disabled'} onclick="confirmMergePlayers()">${src && dst ? 'GỘP "' + escapeHtml(src.name) + '" → "' + escapeHtml(dst.name) + '"' : 'GỘP HỒ SƠ'}</button>
+    </div>`;
+  renderMergeTargetList();
+}
+function openMergePlayerModalLegacy(sourceId){
   if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
   const src = playerById(sourceId); if(!src) return;
   __mergeUi = { sourceId, targetId: '' };
@@ -21727,7 +21772,7 @@ function openMergePlayerModal(sourceId){
   renderMergeTargetList();
   document.getElementById('matchModal').classList.add('show');
 }
-let __mergeUi = { sourceId:'', targetId:'' };
+let __mergeUi = { openedId:'', keepOpened:true, otherId:'', sourceId:'', targetId:'' };
 function mergeImpactText(m){
   const parts = [];
   if(m.bills) parts.push(m.bills + ' bill');
@@ -21741,25 +21786,32 @@ function mergeImpactText(m){
 }
 function renderMergeTargetList(){
   const list = document.getElementById('mergeTargetList'); if(!list) return;
-  const src = playerById(__mergeUi.sourceId);
+  const opened = playerById(__mergeUi.openedId);
   const q = (document.getElementById('mergeSearch')||{}).value || '';
-  // chua go: goi y ho so co ten giong (bo emoji/ky tu dac biet, so khong dau)
-  const base = q.trim() || String(src && src.name || '').replace(/[^\p{L}\p{N}\s]/gu,'').trim().split(/\s+/).pop() || '';
-  const m = pairLinkMatches(base, 8).filter(p=>p.id!==__mergeUi.sourceId && !p.mergedInto);
+  // chua go: goi y ho so co ten giong — thu tung tu trong ten (VD "A Vương bạn Đô" -> goi y ca "A Vương")
+  let m;
+  if(q.trim()) m = pairLinkMatches(q.trim(), 8);
+  else {
+    const words = String(opened && opened.name || '').replace(/[^\p{L}\p{N}\s]/gu,'').trim().split(/\s+/).filter(w=>w.length >= 2);
+    const seen = new Set(); m = [];
+    words.forEach(w=>pairLinkMatches(w, 8).forEach(p=>{ if(!seen.has(p.id)){ seen.add(p.id); m.push(p); } }));
+    m = m.slice(0, 10);
+  }
+  m = m.filter(p=>p.id!==__mergeUi.openedId && !p.mergedInto);
   list.innerHTML = (m.length ? `<div class="plink-results-title">${q.trim() ? m.length + ' kết quả' : 'Gợi ý hồ sơ giống tên'}</div>` : '<div class="plink-empty">Gõ tên hoặc SĐT để tìm hồ sơ giữ lại.</div>') +
-    m.map(p=>`<button type="button" class="plink-row${p.id===__mergeUi.targetId?' on':''}" onclick="pickMergeTarget('${p.id}')">
+    m.map(p=>`<button type="button" class="plink-row${p.id===__mergeUi.otherId?' on':''}" onclick="pickMergeTarget('${p.id}')">
       <span class="plink-avatar">${escapeHtml((String(p.name||'?').trim()[0]||'?').toUpperCase())}</span>
       <span class="plink-row-main"><b>${escapeHtml(p.name)}</b><span>${p.phone ? escapeHtml(p.phone) : 'Chưa có SĐT'} · ${mergeImpactText(getPlayerMergeImpact(p.id)).replace('Sẽ chuyển: ','')}</span></span>
-      ${p.id===__mergeUi.targetId ? '<span class="plink-check">✓</span>' : ''}</button>`).join('');
+      ${p.id===__mergeUi.otherId ? '<span class="plink-check">✓</span>' : ''}</button>`).join('');
 }
 function pickMergeTarget(id){
-  __mergeUi.targetId = id;
-  const p = playerById(id);
-  const n = document.getElementById('mergeTargetName'); if(n) n.textContent = p ? p.name : '—';
-  const btn = document.getElementById('mergeConfirmBtn'); if(btn) btn.disabled = !p;
-  renderMergeTargetList();
+  __mergeUi.otherId = id;
+  const q = (document.getElementById('mergeSearch')||{}).value || '';
+  renderMergePlayerModal();
+  const inp = document.getElementById('mergeSearch'); if(inp && q){ inp.value = q; renderMergeTargetList(); }
 }
 function confirmMergePlayers(){
+  mergeUiSync();
   const src = playerById(__mergeUi.sourceId), dst = playerById(__mergeUi.targetId);
   if(!src || !dst) return;
   if(!confirm('Gộp "' + src.name + '" vào "' + dst.name + '"?\n\n' + mergeImpactText(getPlayerMergeImpact(src.id)) + '\n\nHồ sơ "' + src.name + '" sẽ được lưu trữ. Không hoàn tác tự động được.')) return;
@@ -41851,6 +41903,12 @@ function renderPlayerDetail(){
         <button class="small secondary" data-require-permission="PPR_MANUAL_EDIT" onclick="openManualPprEditModal('${p.id}')">🛠️ SỬA PPR</button>
         ${archiveBtnHtml}
       </div>
+      ${(()=>{ // §PLAYER-MERGE-DIR-2026
+        const from = (state.players||[]).filter(x=>x && x.mergedInto === p.id);
+        const into = p.mergedInto ? playerById(p.mergedInto) : null;
+        return (from.length ? `<div class="small-note" style="margin-top:6px;">🔀 Đã gộp từ: ${from.map(x=>'<b>' + escapeHtml(x.name) + '</b>' + (x.mergedAt ? ' (' + new Date(x.mergedAt).toLocaleDateString('vi-VN') + ')' : '')).join(', ')}</div>` : '') +
+          (into ? `<div class="small-note" style="margin-top:6px; color:var(--danger);">🔀 Hồ sơ này đã gộp vào <a href="#" onclick="selectPlayer('${into.id}'); return false;"><b>${escapeHtml(into.name)}</b></a></div>` : '');
+      })()}
     </div>
 
     <div class="pp-grid2">
