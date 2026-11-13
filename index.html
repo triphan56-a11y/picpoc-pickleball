@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.79 (2026-11-13) — §PLAYER-CREATOR-2026. Admin hỏi ai tạo "Vương bạn đô" / "A Vương bạn đô": hồ sơ không lưu người tạo.
+  Nay lưu createdBy/createdByUid/createdDeviceId khi tạo hồ sơ (3 chỗ) + createdBy cho mỗi lượt check-in; hồ sơ hiện "Tạo hồ sơ: ai ·
+  lúc nào", hồ sơ cũ hiện check-in đầu + người thu tiền lần đầu để suy ra.
+
   v1.44.78 (2026-11-13) — §FIX-CREDITPAY-ENDSESSION-2026. A Cường trả Vé Social 30k bằng Picpoc Credits, bill "Đã thanh toán đủ"
   nhưng vẫn ở Đang ở sân: createBillPayment() (Credits/chia phương thức/thu nốt) không coi 'waiting' là kết thúc phiên như
   markBillPaid(). Nay có (chỉ khi bill thuộc lượt chơi đang mở); vòng tự dọn đóng các phiên đã kẹt vì lỗi này + nhật ký.
@@ -9592,7 +9596,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.78'; // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
+const PICPOC_APP_VERSION = 'Picpoc v1.44.79'; // §PLAYER-CREATOR-2026 — ghi + hien nguoi tao ho so / nguoi check-in
+// (ban truoc: 'Picpoc v1.44.78') // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
 // (ban truoc: 'Picpoc v1.44.77') // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
 // (ban truoc: 'Picpoc v1.44.76') // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
 // (ban truoc: 'Picpoc v1.44.75') // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
@@ -14056,7 +14061,7 @@ function submitCreatePlayerForSocialPass(mode){
     pprRatedMatches: 0, pprStatus: 'PROVISIONAL', pprLastRatedMatchAt: null,
     pprAlgorithmVersion: PPR_ALGORITHM_VERSION, pprManualOverrideAt: null, pprManualOverrideBy: null,
     initialAssessment: null };
-  state.players.push(player);
+  state.players.push(stampPlayerCreator(player));
   markEntityDirty('players', player.id);
   saveState();
   showToast('Đã tạo người chơi mới: ' + name);
@@ -14947,7 +14952,7 @@ function createPlayerVisit(player, bill){
     id: uid('visit'), playerId: player.id, playerName: player.name,
     checkInAt: Date.now(), finishedPlayingAt: null, checkOutAt: null,
     gamesPlayed: 0, billId: bill ? bill.id : null, status: 'ACTIVE',
-    closedByEndOfDay: false, closeReason: null, createdAt: Date.now()
+    closedByEndOfDay: false, closeReason: null, createdAt: Date.now(), createdBy: currentActorInfo().name // §PLAYER-CREATOR-2026 — ai bam check-in
   };
   state.playerVisits.push(visit);
   player.activeVisitId = visit.id; // §DATA-ARCH-16/64 — dinh danh on dinh de transaction check-in phat hien trung Active Visit da thiet bi
@@ -17164,6 +17169,31 @@ function logOverride(action, detail, entityType, entityId, createdBy){
 }
 
 function playerById(id){ return state.players.find(p=>p.id===id); }
+/* §PLAYER-CREATOR-2026 — Admin: "kiểm tra xem ai là người tạo Vương bạn đô và a Vương bạn đô". Truoc day ho so KHONG luu nguoi
+   tao, luot check-in KHONG luu nguoi bam -> chi suy ra duoc tu nguoi THU TIEN (payment.createdBy). Tu nay ghi createdBy/
+   createdByUid/createdDeviceId khi tao ho so, createdBy cho moi luot check-in (Visit). */
+function currentActorInfo(){
+  let u = null; try{ u = (typeof getCurrentUser === 'function') ? getCurrentUser() : null; }catch(e){ u = null; }
+  return { name: u ? u.name : 'staff', uid: u ? (u.uid || u.id || null) : null, deviceId: (typeof DEVICE_ID !== 'undefined') ? DEVICE_ID : null };
+}
+function stampPlayerCreator(player){
+  if(player && !player.createdBy){ const a = currentActorInfo(); player.createdBy = a.name; player.createdByUid = a.uid; player.createdDeviceId = a.deviceId; }
+  return player;
+}
+function playerCreatorInfoHtml(p){
+  const fmt = ts => ts ? new Date(ts).toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric' }) : '?';
+  if(p.createdBy) return `👤 Tạo hồ sơ: <b>${escapeHtml(p.createdBy)}</b> · ${fmt(p.createdAt)}`;
+  // ho so cu: suy tu luot check-in dau tien + khoan thu dau tien
+  const visits = (state.playerVisits||[]).filter(v=>v && v.playerId===p.id).sort((a,b)=>(a.checkInAt||0)-(b.checkInAt||0));
+  const v0 = visits[0];
+  const billIds = new Set((state.bills||[]).filter(b=>b && b.playerId===p.id).map(b=>b.id));
+  const pays = (state.payments||[]).filter(x=>x && !x.voided && (x.allocations||[]).some(a=>billIds.has(a.billId))).sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  const p0 = pays[0];
+  const parts = ['👤 Tạo hồ sơ: ' + fmt(p.createdAt) + ' · <span class="muted">chưa ghi người tạo (hồ sơ tạo trước bản v1.44.79)</span>'];
+  if(v0) parts.push('check-in đầu: ' + fmt(v0.checkInAt) + (v0.createdBy ? ' bởi <b>' + escapeHtml(v0.createdBy) + '</b>' : ''));
+  if(p0) parts.push('thu tiền lần đầu: <b>' + escapeHtml(p0.createdBy || '?') + '</b> · ' + fmt(p0.createdAt));
+  return parts.join(' · ');
+}
 function playerName(id){ const p = playerById(id); return p ? escapeHtml(p.name) : '(đã xóa)'; } // §RC-135 — choke point dung nhat de escape ten player o hang tram noi goi ham nay
 function playerLevel(id){ const p = playerById(id); return p ? p.level : null; }
 /* Avatar-initials: khong co anh that nen dung sang kien mau + chu cai dau ten (du lieu that, khong bia).
@@ -21032,7 +21062,7 @@ function checkInPlayer(){
       pprRatedMatches: 0, pprStatus: 'PROVISIONAL', pprLastRatedMatchAt: null,
       pprAlgorithmVersion: PPR_ALGORITHM_VERSION, pprManualOverrideAt: null, pprManualOverrideBy: null,
       initialAssessment: initialAssessment };
-    state.players.push(player);
+    state.players.push(stampPlayerCreator(player));
   }
   reopenPlayerSession(player); // status/waitSince/checkins + Open Bill + Ve Social — 1 service duy nhat
   saveState();
@@ -39085,7 +39115,7 @@ function createPlayerFromTournament(name, phoneRaw, gender, note, phoneOptional)
     gender, ppr: seedPpr, pprInitial: seedPpr, pprInitialSource:'SEED_LEVEL_PICK', pprInitialAt: now,
     pprUncertainty: pprSet.initialUncertainty, pprConfidence: 0, pprRatedMatches: 0, pprStatus:'PROVISIONAL', pprLastRatedMatchAt: null,
     pprAlgorithmVersion: PPR_ALGORITHM_VERSION, pprManualOverrideAt: null, pprManualOverrideBy: null, initialAssessment: null };
-  state.players.push(player);
+  state.players.push(stampPlayerCreator(player));
   markEntityDirty('players', player.id);
   logOverride('player_created_from_tournament', 'Tạo hồ sơ người chơi "' + name + '" (' + (ph.phoneDigits ? ph.phone : 'chưa có SĐT') + ') từ Giải đấu', 'player', player.id);
   return { ok:true, player };
@@ -42037,7 +42067,8 @@ function renderPlayerDetail(){
         return (from.length ? `<div class="small-note" style="margin-top:6px;">🔀 Đã gộp từ: ${from.map(x=>{ const left = playerLeftoverRefs(x.id);
             return '<b>' + escapeHtml(x.name) + '</b>' + (x.mergedAt ? ' (' + new Date(x.mergedAt).toLocaleDateString('vi-VN') + ')' : '') +
               (left ? ` <span style="color:var(--danger); font-weight:700;">— còn ${left} mục chưa chuyển</span> <button class="small" data-require-permission="PAYMENT_VOID" onclick="finishMergeLeftovers('${x.id}','${p.id}')">CHUYỂN NỐT</button>` : ''); }).join(', ')}</div>` : '') +
-          (into ? `<div class="small-note" style="margin-top:6px; color:var(--danger);">🔀 Hồ sơ này đã gộp vào <a href="#" onclick="selectPlayer('${into.id}'); return false;"><b>${escapeHtml(into.name)}</b></a></div>` : '');
+          (into ? `<div class="small-note" style="margin-top:6px; color:var(--danger);">🔀 Hồ sơ này đã gộp vào <a href="#" onclick="selectPlayer('${into.id}'); return false;"><b>${escapeHtml(into.name)}</b></a></div>` : '') +
+          `<div class="small-note" style="margin-top:6px;">${playerCreatorInfoHtml(p)}</div>`; // §PLAYER-CREATOR-2026
       })()}
     </div>
 
