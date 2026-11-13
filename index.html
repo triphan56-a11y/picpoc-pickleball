@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.73 (2026-11-13) — §TOURN-HIDE-2026. Admin muốn xóa 2 giải cũ khỏi thanh chọn giải. Giải đã kết thúc / có lịch
+  sử -> nút "🗑 Xóa khỏi danh sách" (ẩn, t.hiddenAt; kết quả + phí giữ nguyên, Lịch sử có mục "Giải đã xóa khỏi danh
+  sách" + "Hiện lại"). Giải đang có cặp chưa kết thúc -> phải Kết thúc giải trước. Luôn còn ít nhất 1 giải hiện.
+
   v1.44.72 (2026-11-13) — §MULTI-TOURN-2026. Admin muốn nhập trước danh sách cho giải Chủ nhật khi tối nay + mai cũng có
   giải. Trước chỉ 2 slot cố định. Nay thanh chọn giải động (sắp theo ngày thi đấu) + "＋ GIẢI MỚI" (tạo slot key riêng,
   sync qua 'tournaments'), "🗑 Xóa giải trống" (không cặp, không lịch sử). Thanh "cặp đã xóa" hiện 103 cặp của các giải cũ
@@ -9543,7 +9547,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.72'; // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.73'; // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
+// (ban truoc: 'Picpoc v1.44.72') // §MULTI-TOURN-2026 — tao nhieu giai song song (nhap truoc danh sach)
 // (ban truoc: 'Picpoc v1.44.71') // §FIX-SELFRACE-MULTIPAY-2026 + §RESTORE-LOST-PAYMENT-2026
 // (ban truoc: 'Picpoc v1.44.70') // §PAIR-UNDO-2026
 // (ban truoc: 'Picpoc v1.44.69') // §FIX-GROUPEDIT-AUTOFINAL-2026
@@ -37246,7 +37251,7 @@ function tournamentSlotSortKey(k){ const t = state.tournaments[k] || {}; const s
 function renderTournamentCatSwitcher(){
   const box = document.getElementById('tournCatSwitcher');
   if(!box) return;
-  const keys = Object.keys(state.tournaments||{}).sort((a,b)=>tournamentSlotSortKey(a).localeCompare(tournamentSlotSortKey(b)));
+  const keys = visibleTournamentSlotKeys();
   const html = keys.map(k=>{
     const t = state.tournaments[k], st = t.setup || {};
     const d = st.matchDate ? st.matchDate.split('-').reverse().slice(0,2).join('/') : '';
@@ -37273,6 +37278,47 @@ function createTournamentSlot(){
   renderTournamentTab();
   showToast('✓ Đã tạo giải mới — nhập Ngày thi đấu, Nội dung rồi nhập danh sách cặp');
 }
+/* §TOURN-HIDE-2026 — Admin: "lam sao xoa luon 2 giai nay" (giai cu da xong). Giai co lich su ket qua / phi da thu thi
+   KHONG xoa that (mat lich su + ve phi/bill tro toi catKey) -> AN khoi thanh chon giai (t.hiddenAt), van nam o Lich su,
+   bam "Hiện lại" de dua ve. Chi an duoc giai DA KET THUC hoac khong con cap (giai dang chay con phi chua xu ly -> chan). */
+function visibleTournamentSlotKeys(){
+  return Object.keys(state.tournaments||{}).filter(k=>state.tournaments[k] && !state.tournaments[k].hiddenAt)
+    .sort((a,b)=>tournamentSlotSortKey(a).localeCompare(tournamentSlotSortKey(b)));
+}
+function canHideTournamentSlot(catKey){
+  const t = state.tournaments[catKey];
+  if(!t || t.hiddenAt) return false;
+  return !!t.endedAt || !(t.pairs||[]).length;
+}
+function hideTournamentSlot(catKey){
+  const t = state.tournaments[catKey];
+  if(!t) return;
+  if(!canHideTournamentSlot(catKey)){ showToast('Giải đang có danh sách cặp — bấm KẾT THÚC GIẢI (chốt kết quả & phí) trước rồi mới xóa khỏi danh sách.'); return; }
+  const others = visibleTournamentSlotKeys().filter(k=>k!==catKey);
+  if(!others.length){ showToast('Đây là giải cuối cùng — bấm "＋ GIẢI MỚI" tạo giải khác trước rồi xóa giải này.'); return; }
+  if(!confirm('Xóa giải "' + tournLabel(t) + '" khỏi danh sách giải?\n\nKết quả, tiền phí đã thu vẫn được giữ trong LỊCH SỬ (có thể Hiện lại khi cần).')) return;
+  const u = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  t.hiddenAt = Date.now(); t.hiddenBy = u ? u.name : 'staff';
+  if(state.currentCat === catKey) state.currentCat = others[0];
+  logOverride('tournament_slot_hidden', 'Xóa khỏi danh sách giải: ' + tournLabel(t), 'tournament', catKey);
+  saveState();
+  markEntityDirty('tournaments', catKey);
+  renderTournamentTab();
+  if(typeof renderTournamentHistoryTab === 'function') renderTournamentHistoryTab();
+  showToast('✓ Đã xóa "' + tournLabel(t) + '" khỏi danh sách (lịch sử vẫn giữ)');
+}
+function unhideTournamentSlot(catKey){
+  const t = state.tournaments[catKey];
+  if(!t || !t.hiddenAt) return;
+  t.hiddenAt = null; t.hiddenBy = null;
+  state.currentCat = catKey;
+  logOverride('tournament_slot_unhidden', 'Hiện lại giải: ' + tournLabel(t), 'tournament', catKey);
+  saveState();
+  markEntityDirty('tournaments', catKey);
+  renderTournamentTab();
+  if(typeof renderTournamentHistoryTab === 'function') renderTournamentHistoryTab();
+  showToast('✓ Đã hiện lại giải ' + tournLabel(t));
+}
 function deleteTournamentSlot(catKey){
   const t = state.tournaments[catKey];
   if(!t) return;
@@ -37282,7 +37328,7 @@ function deleteTournamentSlot(catKey){
   if(!confirm('Xóa giải "' + tournLabel(t) + '" (giải trống)?')) return;
   delete state.tournaments[catKey];
   if(SYNC_ENABLED && dbRoot){ try{ DataService.tournaments.remove(catKey); }catch(e){ console.error(e); } }
-  state.currentCat = Object.keys(state.tournaments).sort((a,b)=>tournamentSlotSortKey(a).localeCompare(tournamentSlotSortKey(b)))[0];
+  state.currentCat = visibleTournamentSlotKeys()[0] || Object.keys(state.tournaments)[0];
   logOverride('tournament_slot_deleted', 'Xóa giải trống: ' + tournLabel(t), 'tournament', catKey);
   saveState();
   renderTournamentTab();
@@ -41059,7 +41105,7 @@ function renderTournamentSetupProgress(t){
   ).join('');
 }
 function renderTournamentTab(){
-  if(!state.tournaments[state.currentCat]){ const ks = Object.keys(state.tournaments||{}); if(ks.length) state.currentCat = ks[0]; } // §MULTI-TOURN-2026 — giai vua bi xoa tren may khac
+  if(!state.tournaments[state.currentCat] || state.tournaments[state.currentCat].hiddenAt){ const ks = visibleTournamentSlotKeys(); const all = Object.keys(state.tournaments||{}); if(ks.length) state.currentCat = ks[0]; else if(!state.tournaments[state.currentCat] && all.length) state.currentCat = all[0]; } // §MULTI-TOURN-2026 + §TOURN-HIDE-2026 — giai vua bi xoa/an tren may khac
   renderTournamentCatSwitcher();
   const t = currentTournament();
   const catKey = state.currentCat;
@@ -41070,7 +41116,10 @@ function renderTournamentTab(){
   // §C.30/31 — THIET LAP GIAI + trang thai
   t.setup = t.setup || {};
   document.getElementById('tsName').value = t.setup.name || '';
-  { const delWrap = document.getElementById('tournSlotDelWrap'); if(delWrap) delWrap.innerHTML = (!(t.pairs||[]).length && !(t.archives||[]).length && Object.keys(state.tournaments).length > 1) ? `<button class="small secondary" onclick="deleteTournamentSlot('${state.currentCat}')">🗑 Xóa giải trống</button>` : ''; }
+  { const delWrap = document.getElementById('tournSlotDelWrap'); if(delWrap){ const ck = state.currentCat; const multi = visibleTournamentSlotKeys().length > 1;
+      delWrap.innerHTML = (!(t.pairs||[]).length && !(t.archives||[]).length && Object.keys(state.tournaments).length > 1)
+        ? `<button class="small secondary" onclick="deleteTournamentSlot('${ck}')">🗑 Xóa giải trống</button>`
+        : (multi && canHideTournamentSlot(ck)) ? `<button class="small secondary" onclick="hideTournamentSlot('${ck}')" title="Bỏ giải khỏi thanh chọn giải — kết quả & tiền phí vẫn giữ trong Lịch sử">🗑 Xóa khỏi danh sách</button>` : ''; } }
   document.getElementById('tsContent').value = t.setup.content || '';
   document.getElementById('tsMatchDate').value = t.setup.matchDate || '';
   document.getElementById('tsStartTime').value = t.setup.startTime || ''; // §TOURNTV2026-AUTOSTART
@@ -41434,6 +41483,15 @@ function renderTournamentHistoryTab(){
     const name = (t.setup && t.setup.name) ? t.setup.name : (tournLabel(t) || catKey);
     return `<div class="card" style="margin-bottom:8px;"><b>${escapeHtml(name)}</b><div class="small-note" style="color:var(--muted);">${escapeHtml(TOURNAMENT_STATUS_LABELS[t.status]||t.status)}${(t.setup&&t.setup.matchDate) ? ' · ' + escapeHtml(t.setup.matchDate) : ''}</div></div>`;
   }).filter(Boolean);
+  const hiddenTournaments = catKeys.filter(k=>state.tournaments[k] && state.tournaments[k].hiddenAt).map(k=>{ // §TOURN-HIDE-2026
+    const t = state.tournaments[k], st = t.setup || {};
+    const arc = (t.archives||[]).slice(-1)[0];
+    const champ = arc && arc.podium && arc.podium.champion ? ' · Vô địch: ' + arc.podium.champion : '';
+    return `<div class="card" style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div><b>${escapeHtml(tournLabel(t))}</b><div class="small-note" style="color:var(--muted);">${st.matchDate ? escapeHtml(st.matchDate.split('-').reverse().join('/')) + ' · ' : ''}${(t.archives||[]).length} lần kết thúc${escapeHtml(champ)} · đã xóa khỏi danh sách ${new Date(t.hiddenAt).toLocaleDateString('vi-VN')}</div></div>
+      <button class="small secondary" onclick="unhideTournamentSlot('${k}'); setTournamentWorkspaceSubtab('giaidau');">Hiện lại</button>
+    </div>`;
+  });
   const doneSeries = (state.tournamentSeries||[]).filter(s=>s.status==='COMPLETED').map(s=>{
     const total = s.totalWeeks || (s.seriesWeeks||[]).length;
     return `<div class="card" style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
@@ -41448,6 +41506,7 @@ function renderTournamentHistoryTab(){
       <button class="subtab-btn ${filter==='series'?'active':''}" onclick="setTournamentHistoryFilter('series')">Series</button>
     </div>
     ${filter!=='series' ? `<div class="card"><h3>🏆 GIẢI ĐẤU ĐÃ HOÀN THÀNH</h3>${doneTournaments.length ? doneTournaments.join('') : '<div class="muted">Chưa có giải đấu nào hoàn thành.</div>'}</div>` : ''}
+    ${filter!=='series' && hiddenTournaments.length ? `<div class="card"><h3>🗂 GIẢI ĐÃ XÓA KHỎI DANH SÁCH</h3>${hiddenTournaments.join('')}</div>` : ''}
     ${filter!=='tournament' ? `<div class="card"><h3>🔁 SERIES ĐÃ HOÀN THÀNH</h3>${doneSeries.length ? doneSeries.join('') : '<div class="muted">Chưa có Series nào hoàn thành.</div>'}</div>` : ''}
   `;
 }
