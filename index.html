@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.77 (2026-11-13) — §FIX-LEFT-REVERT-2026. "2 người đã thanh toán và đi về mà vẫn còn ở Đang ở sân". Ghi 'paid_and_left'
+  (12 chỗ) qua CAS: máy khác vừa chạm hồ sơ -> huỷ + kéo 'waiting' cũ về. Nay khi CAS huỷ, trạng thái KẾT THÚC (player rời sân,
+  Visit COMPLETED) được ghi lại lên bản server mới nhất (trừ khi đã check-in lại); vòng tự dọn 10 phút đưa người kẹt (không Visit
+  ACTIVE, lượt cuối đã đóng, không nợ) về đã rời sân + nhật ký.
+
   v1.44.76 (2026-11-13) — §PLAYER-MERGE-ATOMIC-2026. Gộp "Vương Bạn Đô" vào "A Vương bạn Đô": hồ sơ đã gộp nhưng 4 lượt
   chơi vẫn ở hồ sơ cũ. Gốc: chuyển từng lượt chơi/bill bằng ghi CAS — server vừa bị máy khác chạm -> huỷ ghi + kéo playerId cũ
   về, không báo. Nay patch-transaction trên bản server mới nhất, báo số mục chưa chuyển; hồ sơ giữ lại hiện "còn N mục" +
@@ -9141,7 +9146,9 @@ function flushDirtyEntityCAS(node, fb, id){
     return payload;
   }).then(result=>{
     if(!result || !result.committed){
-      applyRemoteEntityLocally(node, id, result && result.snapshot ? result.snapshot.val() : null);
+      const remoteVal = result && result.snapshot ? result.snapshot.val() : null;
+      applyRemoteEntityLocally(node, id, remoteVal);
+      reassertTerminalStateAfterCasAbort(node, id, payload, remoteVal); // §FIX-LEFT-REVERT-2026
     } else {
       if(!lastSyncedSnapshot[node]) lastSyncedSnapshot[node] = {};
       lastSyncedSnapshot[node][id] = fbCanonJson(payload);
@@ -9164,6 +9171,28 @@ function flushDirtyEntityCAS(node, fb, id){
    tri da bi cong 1 lan va cong THEM 1 lan nua). Ham nay CHI cap nhat lastSyncedSnapshot de vong flush
    debounce cua saveState() (diffAndFlushEntities) khong coi entity la "dirty" va khong .set() lai —
    khong dong nghia voi viec da day len server (transaction da lam roi). */
+/* §FIX-LEFT-REVERT-2026 — Admin: "2 người này đã thanh toán tiền và đi về rồi mà vẫn còn ở Đang ở sân". Goc: thanh toan
+   ghi player 'paid_and_left' (+ dong Visit) bang markEntityDirty CAS; server vua bi may khac cham vao ho so (vd sua ten,
+   gop ho so, cap nhat PPR) -> CAS huy va KEO trang thai cu ('waiting') ve -> nguoi choi "quay lai san". Trang thai KET
+   THUC la mot chieu: khi CAS huy, ap lai DUNG cac field ket thuc len ban server moi nhat (transaction), tru khi tren
+   server nguoi do da CHECK-IN LAI sau thoi diem roi san (lastCheckInAt moi hon) / Visit da dong roi. */
+function reassertTerminalStateAfterCasAbort(node, id, localPayload, remoteVal){
+  try{
+    if(!localPayload || !remoteVal) return;
+    if(node === 'players' && localPayload.status === 'paid_and_left' && remoteVal.status !== 'paid_and_left'){
+      const leftAt = localPayload.paidAndLeftAt || 0;
+      if(!leftAt || (remoteVal.lastCheckInAt || 0) > leftAt) return; // da check-in lai sau khi roi -> ton trong server
+      patchEntityAtomic('players', id, { status:'paid_and_left', paidAndLeftAt: leftAt, activeVisitId: null, socialParticipation: false },
+        remote => !remote || (remote.lastCheckInAt || 0) <= leftAt);
+      if(typeof logSystemError === 'function') logSystemError('sync-left-revert', 'Ghi lại trạng thái "đã rời sân" của ' + (localPayload.name || id) + ' (lần ghi đầu bị huỷ do máy khác vừa sửa hồ sơ)', null);
+    }
+    if(node === 'playerVisits' && localPayload.status === 'COMPLETED' && remoteVal.status === 'ACTIVE'){
+      patchEntityAtomic('playerVisits', id, { status:'COMPLETED', checkOutAt: localPayload.checkOutAt || Date.now(), closeReason: localPayload.closeReason || null,
+        finishedPlayingAt: localPayload.finishedPlayingAt || remoteVal.finishedPlayingAt || null, closedByEndOfDay: localPayload.closedByEndOfDay || null },
+        remote => !remote || remote.status === 'ACTIVE');
+    }
+  }catch(e){ console.error('[reassertTerminalState]', e); }
+}
 function markEntitySynced(node, id){
   if(!SYNC_ENABLED || !dbRoot) return;
   const arr = state[node];
@@ -9559,7 +9588,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.76'; // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
+const PICPOC_APP_VERSION = 'Picpoc v1.44.77'; // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
+// (ban truoc: 'Picpoc v1.44.76') // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
 // (ban truoc: 'Picpoc v1.44.75') // §PLAYER-MERGE-DIR-2026 — gop ho so: ho so dang mo = GIU LAI, nut doi chieu
 // (ban truoc: 'Picpoc v1.44.74') // §TOURN-HIDE-2026 — nut Xoa khoi danh sach luon hien (giai chua ket thuc: kiem tra phi)
 // (ban truoc: 'Picpoc v1.44.73') // §TOURN-HIDE-2026 — xoa giai cu khoi thanh chon giai (giu lich su)
@@ -19518,6 +19548,26 @@ function autoCloseStaleZeroSessions(){
     logOverride('auto_close_stale_zero_session', 'Tự đóng phiên ngày ' + new Date(v.checkInAt).toLocaleDateString('vi-VN') + ' của ' + p.name + ' (bill 0đ, không còn khoản nào phải thu — cuối buổi chưa ai bấm KẾT THÚC)', 'player', p.id);
     closed.push(p.name);
   });
+  // §FIX-LEFT-REVERT-2026 — don nguoi choi KET o "Đang ở sân": status chua 'paid_and_left' nhung KHONG con Visit ACTIVE,
+  // luot choi gan nhat da dong SAU lan check-in cuoi (khong co check-in moi dang dong bo), khong tren san, khong no.
+  (state.players||[]).forEach(p=>{
+    if(!p || p.status === 'paid_and_left' || p.archived) return;
+    if(onCourt.has(p.id) || getActiveVisitForPlayer(p.id)) return;
+    const visits = (state.playerVisits||[]).filter(v=>v && v.playerId===p.id);
+    if(!visits.length) return;
+    const last = visits.reduce((a,b)=>(b.checkInAt||0) > (a.checkInAt||0) ? b : a);
+    if(last.status !== 'COMPLETED') return;
+    if((p.lastCheckInAt||0) > (last.checkInAt||0) + 60000) return; // co check-in moi hon luot da dong -> co the Visit chua kip dong bo ve
+    const openBills = (state.bills||[]).filter(b=>b.playerId===p.id && b.status==='open');
+    if(openBills.some(b=> billTotal(b) > 0 || b.debtCreatedAt)) return;
+    removePlayerFromOperationalQueues(p.id);
+    const leftAt = last.checkOutAt || nowTs;
+    p.status = 'paid_and_left'; p.paidAndLeftAt = leftAt; p.activeVisitId = null; p.socialParticipation = false;
+    patchEntityAtomic('players', p.id, { status:'paid_and_left', paidAndLeftAt: leftAt, activeVisitId: null, socialParticipation: false },
+      remote => !remote || ((remote.lastCheckInAt||0) <= (last.checkInAt||0) + 60000 && remote.status !== 'paid_and_left'));
+    logOverride('auto_fix_left_status', p.name + ' — lượt chơi đã đóng nhưng vẫn hiện ở "Đang ở sân" (lệnh ghi "đã rời sân" từng bị huỷ khi đồng bộ) -> chuyển về đã rời sân', 'player', p.id);
+    closed.push(p.name);
+  });
   if(closed.length) saveState();
   // §AUTO-END-OF-DAY-2026 — sau khi dong sach cac phien 0d, tu chot cac ngay truoc (thay nut "Kết thúc ngày")
   let eod = null;
@@ -21703,11 +21753,12 @@ function mergePlayers(sourceId, targetId){
   saveState();
   return { ok:true, moved, source: src, target: dst, saved };
 }
-function patchEntityAtomic(node, id, patch){ // §PLAYER-MERGE-ATOMIC-2026 — ap patch len ban server MOI NHAT (khong CAS)
+function patchEntityAtomic(node, id, patch, guard){ // §PLAYER-MERGE-ATOMIC-2026 — ap patch len ban server MOI NHAT (khong CAS); guard(remote)=false -> khong ghi
   if(!SYNC_ENABLED || !dbRoot) return Promise.resolve(true);
   markEntityPendingWrite(node, id);
   const local = Array.isArray(state[node]) ? state[node].find(e=>e && e.id===id) : (state[node]||{})[id];
   return dbRoot.child(fbNodeNameFor(node)).child(id).transaction(remote=>{
+    if(guard && !guard(remote)) return undefined;
     const base = remote || sanitizeForFirebase(local) || {};
     const next = Object.assign({}, base);
     Object.keys(patch).forEach(k=>{ if(patch[k] === null || patch[k] === undefined) delete next[k]; else next[k] = patch[k]; });
