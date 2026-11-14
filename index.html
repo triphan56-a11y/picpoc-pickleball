@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.84 (2026-11-14) — §REC-CRASH-GUARD-2026 (tiếp). Admin báo "vẫn bị" sập. Vẽ cảnh đã vét cạn 2..130 người không treo -> nghi bộ
+  đóng gói MP4 của MediaRecorder (CHECK trong renderer = STATUS_BREAKPOINT); mức 1 cũ (MP4-VP9) vẫn qua bộ đó. Bậc mới: 0 MP4 H.264 ->
+  1 WebM VP8 -> 2 tắt ghi hình (chỉ chạy hiệu ứng, có link bật lại). Sân khấu ghi rõ đang ghi kiểu gì / không ghi.
+
   v1.44.83 (2026-11-14) — §REC-CRASH-GUARD-2026. Bấm "BỐC CẶP + QUAY VIDEO" -> tab sập (Aw Snap STATUS_BREAKPOINT) trên máy Admin;
   không tái hiện được trên Chromium (app thật, đủ 6 cảnh, ra MP4). Thêm dấu "đang quay" trong localStorage: lần mở sau còn dấu =
   lần trước sập -> tự hạ mức mã hoá (H.264 -> MP4 VP9 phần mềm -> WebM VP8) + báo; đóng sân khấu giữa chừng thì dừng ghi.
@@ -9612,7 +9616,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.83'; // §REC-CRASH-GUARD-2026 — quay video sap tab -> tu chuyen kieu ma hoa an toan
+const PICPOC_APP_VERSION = 'Picpoc v1.44.84'; // §REC-CRASH-GUARD-2026 — bac du phong: MP4 -> WebM -> tat ghi hinh
+// (ban truoc: 'Picpoc v1.44.83') // §REC-CRASH-GUARD-2026 — quay video sap tab -> tu chuyen kieu ma hoa an toan
 // (ban truoc: 'Picpoc v1.44.82') // §AUTH-WATCHDOG-2026 — man Dang kiem tra dang nhap khong con xoay mai
 // (ban truoc: 'Picpoc v1.44.81') // §PAIR-DRAW-VIDEO-2026 — quay video boc tham ghep cap
 // (ban truoc: 'Picpoc v1.44.80') // §RANDOM-PAIRING-2026 — ghep cap ngau nhien (hoan toan / can trinh A+B)
@@ -37245,6 +37250,8 @@ function openDrawStage(session){
   drawUI.running = true;
 
   startDrawRecording(canvas);
+  { const ind = document.querySelector('#drawStageControlsRunning .rec-indicator'); if(ind) ind.innerHTML = drawUI.recorder ? '<span class="rec-dot"></span> ĐANG GHI HÌNH...' + (recSafeLevel() >= 1 ? ' (WebM)' : '') : 'ĐANG BỐC THĂM... (không ghi hình trên máy này)'; }
+  if(session.kind === 'PAIR' && !drawUI.recorder) __rp.videoPending = false;
   if(drawUI.rafId) cancelAnimationFrame(drawUI.rafId);
   drawUI.rafId = requestAnimationFrame(drawLoop);
 }
@@ -37418,6 +37425,8 @@ function startDrawRecording(canvas){
   drawUI.chunks = [];
   drawUI.videoBlob = null;
   if(drawUI.videoUrl){ URL.revokeObjectURL(drawUI.videoUrl); drawUI.videoUrl = null; }
+  if(recSafeLevel() >= 2){ drawUI.recorder = null; drawUI.recDisabled = true; return; } // §REC-CRASH-GUARD-2026 (v1.44.84) — may nay quay kieu nao cung sap -> chi chay hieu ung
+  drawUI.recDisabled = false;
   if(typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined'){
     drawUI.recorder = null;
     return; // graceful degrade: khong ghi video duoc, nhung van xem duoc animation + ket qua
@@ -37428,8 +37437,8 @@ function startDrawRecording(canvas){
     // §DRAW-MP4-2026: uu tien MP4 (H.264) de mo duoc tren dien thoai/Zalo/Facebook; trinh duyet cu chi co WebM.
     // §REC-CRASH-GUARD-2026: muc an toan 0 = MP4 H.264 (bo ma hoa phan cung cua may); 1 = MP4 VP9 (ma hoa phan mem); 2 = WebM VP8.
     const level = recSafeLevel();
-    const cands = level >= 2 ? ['video/webm;codecs=vp8', 'video/webm']
-      : level === 1 ? ['video/mp4;codecs=vp09.00.10.08', 'video/mp4;codecs=vp9', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    // v1.44.84: muc 1 KHONG con dung MP4-VP9 (van qua bo dong goi MP4 cua Chrome — nghi la cho gay sap) -> thang WebM VP8.
+    const cands = level >= 1 ? ['video/webm;codecs=vp8', 'video/webm']
       : ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
     cands.some(mt=>{
       if(typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mt)){ mimeType = mt; return true; }
@@ -37470,9 +37479,10 @@ function resetRecSafeLevel(){ try{ localStorage.removeItem(REC_LEVEL_KEY); local
       localStorage.removeItem(REC_INFLIGHT_KEY);
       const prev = recSafeLevel(), next = Math.min(2, prev + 1);
       localStorage.setItem(REC_LEVEL_KEY, String(next));
-      const names = ['MP4 chuẩn (H.264)', 'MP4 mã hoá phần mềm (VP9)', 'WebM (an toàn nhất)'];
+      const names = ['MP4 chuẩn (H.264)', 'WebM', 'KHÔNG ghi hình (chỉ chạy hiệu ứng bốc thăm)'];
       setTimeout(()=>{ try{
-        showToast('⚠ Lần quay video trước làm trình duyệt bị sập. App đã tự chuyển sang kiểu quay "' + names[next] + '" — anh bốc/quay lại bình thường.');
+        showToast(next >= 2 ? '⚠ Trình duyệt trên máy này bị sập cả khi quay WebM. App đã TẮT ghi hình trên máy này — bốc thăm vẫn chạy hiệu ứng, dùng phần mềm quay màn hình (Win+Alt+R) để ghi lại.'
+          : '⚠ Lần quay video trước làm trình duyệt bị sập. App đã tự chuyển sang kiểu quay "' + names[next] + '" — bốc/quay lại bình thường.');
         if(typeof logSystemError === 'function') logSystemError('draw-rec', 'Tab sập khi quay video (' + raw + ') -> chuyển mức an toàn ' + prev + ' -> ' + next, null);
       }catch(e){} }, 4000);
     }
@@ -37506,7 +37516,7 @@ function downloadDrawVideo(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  if(drawUI.videoExt !== 'mp4') toast(recSafeLevel() >= 2 ? 'Đang ở chế độ quay an toàn (WebM) vì lần quay MP4 trước làm sập trình duyệt.' : 'Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
+  if(drawUI.videoExt !== 'mp4') toast(recSafeLevel() >= 1 ? 'Đang ở chế độ quay an toàn (WebM) vì lần quay MP4 trước làm sập trình duyệt.' : 'Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
 }
 
 function confirmRedraw(){
@@ -37707,7 +37717,7 @@ function renderRandomPairingModal(){
     <div class="card" style="margin-top:12px; padding:12px;">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;"><b>Kết quả bốc: ${__rp.pairs.length} cặp</b>
         <span style="display:inline-flex; gap:6px; flex-wrap:wrap;">
-          ${rpHasVideo() ? `<button class="small" onclick="reopenDrawVideoPlayback()">▶ Xem video</button><button class="small" onclick="downloadDrawVideo()">⬇ Lưu video ${(drawUI.videoExt||'mp4').toUpperCase()}</button>` : `<span class="muted" style="font-size:.78rem; align-self:center;">${__rp.videoPending ? 'đang xử lý video…' : 'lần bốc này không quay video'}</span>`}
+          ${rpHasVideo() ? `<button class="small" onclick="reopenDrawVideoPlayback()">▶ Xem video</button><button class="small" onclick="downloadDrawVideo()">⬇ Lưu video ${(drawUI.videoExt||'mp4').toUpperCase()}</button>` : `<span class="muted" style="font-size:.78rem; align-self:center;">${recSafeLevel() >= 2 ? 'máy này đã tắt ghi hình (trình duyệt bị sập khi quay) — <a href="#" onclick="resetRecSafeLevel(); renderRandomPairingModalIfOpen(); return false;">bật lại</a>' : __rp.videoPending ? 'đang xử lý video…' : 'lần bốc này không quay video'}</span>`}
         </span></div>
       <ol style="margin:8px 0 0 18px; padding:0; line-height:1.7;">${__rp.pairs.map(pr=>`<li><b>${escapeHtml(pr[0])}</b> - <b>${escapeHtml(pr[1])}</b></li>`).join('')}</ol>
       ${__rp.leftover.length ? `<div class="small-note" style="margin-top:8px; color:var(--danger); font-weight:700;">⚠ Chưa có cặp (${__rp.leftover.length}): ${__rp.leftover.map(escapeHtml).join(', ')} — bổ sung người hoặc tự ghép tay sau.</div>` : ''}
