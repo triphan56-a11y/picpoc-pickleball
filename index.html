@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.80 (2026-11-14) — §RANDOM-PAIRING-2026. Nút "🎲 GHÉP CẶP NGẪU NHIÊN" ở Bước 02 Cặp đấu: nhập từng VĐV (gõ tên / chọn từ
+  hồ sơ Club), 2 chế độ: ngẫu nhiên hoàn toàn; cân trình — mỗi cặp 1 người Trình A (mạnh) + 1 người Trình B (yếu), Admin tự xếp A/B.
+  Xem trước, bốc lại, báo người dư/trùng tên/đã có trong giải; thêm qua addPairsFromInput (tự nối hồ sơ) + nhật ký kết quả bốc.
+
   v1.44.79 (2026-11-13) — §PLAYER-CREATOR-2026. Admin hỏi ai tạo "Vương bạn đô" / "A Vương bạn đô": hồ sơ không lưu người tạo.
   Nay lưu createdBy/createdByUid/createdDeviceId khi tạo hồ sơ (3 chỗ) + createdBy cho mỗi lượt check-in; hồ sơ hiện "Tạo hồ sơ: ai ·
   lúc nào", hồ sơ cũ hiện check-in đầu + người thu tiền lần đầu để suy ra.
@@ -7768,6 +7772,7 @@
             <div class="tournament-pairs-toolbar">
               <button type="button" onclick="openPairQuickAddModal()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>THÊM CẶP</button>
               <button type="button" class="secondary" onclick="openPairBulkImportModal()" style="display:inline-flex; align-items:center; gap:6px;"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1"/><path d="M9 10h6M9 14h6"/></svg>NHẬP DANH SÁCH</button>
+              <button type="button" class="secondary" onclick="openRandomPairingModal()" title="Nhập từng VĐV, app tự ghép thành cặp ngẫu nhiên">🎲 GHÉP CẶP NGẪU NHIÊN</button>
             </div>
             <!-- §TOURNGRID — table 4 cot (#/Cặp đấu/Xếp vào bảng/Xóa) thay bang CARD GRID; #pairsListBody
                  gio la DIV grid (khong con la <tbody>) nhung GIU NGUYEN id de renderTournamentTab() khong
@@ -9596,7 +9601,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.79'; // §PLAYER-CREATOR-2026 — ghi + hien nguoi tao ho so / nguoi check-in
+const PICPOC_APP_VERSION = 'Picpoc v1.44.80'; // §RANDOM-PAIRING-2026 — ghep cap ngau nhien (hoan toan / can trinh A+B)
+// (ban truoc: 'Picpoc v1.44.79') // §PLAYER-CREATOR-2026 — ghi + hien nguoi tao ho so / nguoi check-in
 // (ban truoc: 'Picpoc v1.44.78') // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
 // (ban truoc: 'Picpoc v1.44.77') // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
 // (ban truoc: 'Picpoc v1.44.76') // §PLAYER-MERGE-ATOMIC-2026 — gop ho so ghi tung muc chac chan + CHUYEN NOT
@@ -37592,6 +37598,138 @@ function addPairsFromInput(){
     showToast('Có lỗi khi thêm danh sách. Vui lòng tải lại trang và thử lại.');
     if(typeof logSystemError === 'function') logSystemError('tournament', 'addPairsFromInput: ' + (e && e.message), e && e.stack);
   }
+}
+/* §RANDOM-PAIRING-2026 — Admin: "làm 2 kiểu: ngẫu nhiên hoàn toàn và ngẫu nhiên có cân trình, chia trình A (mạnh) và B (yếu),
+   trình A/B do tôi chọn". Nhap tung VDV (go ten hoac chon tu ho so Club) -> boc cap (Fisher-Yates, crypto random) -> xem truoc,
+   boc lai, -> them vao danh sach cap qua addPairsFromInput() (tu noi ho so khi ten khop dung 1 nguoi). Che do can trinh: moi cap
+   = 1 nguoi nhom A + 1 nguoi nhom B (Admin tu xep ai vao A/B). Nguoi du (le / 2 nhom lech so) duoc bao ro, khong tu ghep. */
+let __rp = { mode:'RANDOM', all:'', a:'', b:'', pairs:null, leftover:[], pickTarget:'all' };
+function rpRandInt(n){ try{ const u = new Uint32Array(1); crypto.getRandomValues(u); return u[0] % n; }catch(e){ return Math.floor(Math.random()*n); } }
+function rpShuffle(arr){ const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = rpRandInt(i+1); const x = a[i]; a[i] = a[j]; a[j] = x; } return a; }
+function rpNames(text){ return String(text||'').split('\n').map(x=>x.replace(/^\s*\d+[.)]\s*/,'').trim()).filter(Boolean); }
+function rpSyncInputs(){
+  ['all','a','b'].forEach(k=>{ const el = document.getElementById('rpList_' + k); if(el) __rp[k] = el.value; });
+}
+function openRandomPairingModal(){
+  if(!currentTournament()){ showToast('Chưa chọn giải đấu.'); return; }
+  __rp.pairs = null; __rp.leftover = [];
+  renderRandomPairingModal();
+  document.getElementById('matchModal').classList.add('show');
+}
+function setRandomPairingMode(m){ rpSyncInputs(); __rp.mode = m; __rp.pairs = null; __rp.pickTarget = m === 'RANDOM' ? 'all' : 'a'; renderRandomPairingModal(); }
+function rpCountText(k){ const n = rpNames(__rp[k]).length; return n + ' người'; }
+function rpUpdateCounts(){ rpSyncInputs(); ['all','a','b'].forEach(k=>{ const el = document.getElementById('rpCount_' + k); if(el) el.textContent = rpCountText(k); }); }
+function renderRandomPairingModal(){
+  const t = currentTournament();
+  const box = document.getElementById('matchModalContent');
+  const isBal = __rp.mode === 'BALANCED';
+  const listBox = (k, title, hint, color)=>`<div style="flex:1 1 220px; min-width:0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;"><b style="${color ? 'color:' + color + ';' : ''}">${title}</b><span class="muted" id="rpCount_${k}" style="font-size:.8rem;">${rpCountText(k)}</span></div>
+      <textarea id="rpList_${k}" rows="9" placeholder="${hint}" oninput="rpUpdateCounts()" onfocus="__rp.pickTarget='${k}'; rpRenderPickHint();" style="width:100%;">${escapeHtml(__rp[k])}</textarea>
+    </div>`;
+  const preview = __rp.pairs ? `
+    <div class="card" style="margin-top:12px; padding:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;"><b>Kết quả bốc: ${__rp.pairs.length} cặp</b><button class="small secondary" onclick="runRandomPairing()">🎲 Bốc lại</button></div>
+      <ol style="margin:8px 0 0 18px; padding:0; line-height:1.7;">${__rp.pairs.map(pr=>`<li><b>${escapeHtml(pr[0])}</b> - <b>${escapeHtml(pr[1])}</b></li>`).join('')}</ol>
+      ${__rp.leftover.length ? `<div class="small-note" style="margin-top:8px; color:var(--danger); font-weight:700;">⚠ Chưa có cặp (${__rp.leftover.length}): ${__rp.leftover.map(escapeHtml).join(', ')} — bổ sung người hoặc tự ghép tay sau.</div>` : ''}
+    </div>` : '';
+  box.innerHTML = `
+    <h2>🎲 Ghép cặp ngẫu nhiên — ${escapeHtml(tournLabel(t))}</h2>
+    <div class="subtabs" style="margin-bottom:10px;">
+      <button class="subtab-btn ${!isBal?'active':''}" onclick="setRandomPairingMode('RANDOM')">Ngẫu nhiên hoàn toàn</button>
+      <button class="subtab-btn ${isBal?'active':''}" onclick="setRandomPairingMode('BALANCED')">Ngẫu nhiên có cân trình (A + B)</button>
+    </div>
+    <p class="muted" style="font-size:.85rem; margin:0 0 8px;">${isBal ? 'Mỗi cặp = <b>1 người trình A (mạnh)</b> + <b>1 người trình B (yếu)</b>, bốc ngẫu nhiên. Anh tự xếp ai vào A, ai vào B.' : 'Bốc ngẫu nhiên hoàn toàn: ai cũng có thể ghép với ai.'} Mỗi dòng 1 người — gõ tên hoặc tìm ở ô dưới để chọn từ hồ sơ Club.</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      ${isBal ? listBox('a', 'Trình A (mạnh)', 'Tuấn&#10;Hùng&#10;…', 'var(--primary,#0f766e)') + listBox('b', 'Trình B (yếu)', 'Nam&#10;Long&#10;…', '#b45309') : listBox('all', 'Danh sách VĐV', 'Tuấn&#10;Nam&#10;Hùng&#10;Long&#10;…', '')}
+    </div>
+    <div style="margin-top:8px;">
+      <input type="search" id="rpPickSearch" placeholder="Tìm người chơi trong Club theo tên / SĐT để thêm nhanh…" oninput="rpRenderPickResults()" autocomplete="off">
+      <div id="rpPickHint" class="muted" style="font-size:.78rem; margin-top:4px;"></div>
+      <div id="rpPickResults" style="max-height:170px; overflow-y:auto;"></div>
+    </div>
+    ${preview}
+    <div class="form-actions" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+      <button class="secondary" onclick="closeModal()">Đóng</button>
+      <button class="secondary" onclick="runRandomPairing()">🎲 BỐC CẶP</button>
+      <button class="big" ${__rp.pairs && __rp.pairs.length ? '' : 'disabled'} onclick="commitRandomPairing()">✓ THÊM ${__rp.pairs ? __rp.pairs.length : 0} CẶP VÀO GIẢI</button>
+    </div>`;
+  rpRenderPickHint();
+}
+function rpRenderPickHint(){
+  const el = document.getElementById('rpPickHint'); if(!el) return;
+  const lbl = { all:'Danh sách VĐV', a:'Trình A (mạnh)', b:'Trình B (yếu)' }[__rp.pickTarget] || '';
+  el.innerHTML = __rp.mode === 'BALANCED' ? 'Bấm <b>+A</b> / <b>+B</b> để thêm vào nhóm tương ứng.' : 'Bấm vào tên để thêm vào ' + lbl + '.';
+}
+function rpRenderPickResults(){
+  const el = document.getElementById('rpPickResults'); if(!el) return;
+  const q = (document.getElementById('rpPickSearch')||{}).value || '';
+  if(!q.trim()){ el.innerHTML = ''; return; }
+  rpSyncInputs();
+  const used = new Set([].concat(rpNames(__rp.all), rpNames(__rp.a), rpNames(__rp.b)).map(n=>vnFold(n).toLowerCase()));
+  const m = pairLinkMatches(q, 8);
+  const bal = __rp.mode === 'BALANCED';
+  el.innerHTML = m.length ? m.map(p=>{
+    const inList = used.has(vnFold(p.name).toLowerCase());
+    const ppr = (typeof getPlayerPpr === 'function') ? ' · ' + getPlayerPpr(p).toFixed(2) : '';
+    const btns = inList ? '<span class="muted" style="font-size:.78rem;">đã có trong danh sách</span>'
+      : bal ? `<button class="small" onclick="rpAddName('a', ${JSON.stringify(p.name).replace(/"/g,'&quot;')})">+A</button> <button class="small secondary" onclick="rpAddName('b', ${JSON.stringify(p.name).replace(/"/g,'&quot;')})">+B</button>`
+      : `<button class="small" onclick="rpAddName('all', ${JSON.stringify(p.name).replace(/"/g,'&quot;')})">+ Thêm</button>`;
+    return `<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--border,#e5e7eb);"><span><b>${escapeHtml(p.name)}</b><span class="muted" style="font-size:.78rem;">${ppr}${p.phone ? ' · ' + escapeHtml(p.phone) : ''}</span></span><span>${btns}</span></div>`;
+  }).join('') : '<div class="muted" style="font-size:.85rem; padding:4px;">Không tìm thấy — gõ thẳng tên vào ô danh sách.</div>';
+}
+function rpAddName(k, name){
+  rpSyncInputs();
+  const cur = __rp[k] ? __rp[k].replace(/\s+$/,'') + '\n' : '';
+  __rp[k] = cur + name;
+  const el = document.getElementById('rpList_' + k); if(el) el.value = __rp[k];
+  rpUpdateCounts(); rpRenderPickResults();
+}
+function runRandomPairing(){
+  rpSyncInputs();
+  const t = currentTournament(); if(!t) return;
+  const fold = n=>vnFold(n).toLowerCase().replace(/\s+/g,' ');
+  const lists = __rp.mode === 'BALANCED' ? [rpNames(__rp.a), rpNames(__rp.b)] : [rpNames(__rp.all)];
+  const all = [].concat(...lists);
+  if(all.length < 2){ showToast('Cần ít nhất 2 người.'); return; }
+  // trung ten trong danh sach / giua 2 nhom
+  const seen = {}, dups = [];
+  all.forEach(n=>{ const k = fold(n); if(seen[k]) dups.push(n); seen[k] = true; });
+  if(dups.length){ showToast('Tên bị trùng trong danh sách: ' + Array.from(new Set(dups)).join(', ') + ' — sửa lại trước khi bốc.'); return; }
+  if(__rp.mode === 'BALANCED' && (!lists[0].length || !lists[1].length)){ showToast('Cần có người ở cả Trình A và Trình B.'); return; }
+  // da co trong danh sach cap cua giai
+  const inPairs = new Set();
+  (t.pairs||[]).forEach(pr=>String(pr.label||'').split(/\s*[&+/,]\s*| và | vs | - | – | — /i).forEach(x=>{ if(x.trim()) inPairs.add(fold(x.trim())); }));
+  const already = all.filter(n=>inPairs.has(fold(n)));
+  if(already.length && !confirm('Đã có trong danh sách cặp của giải: ' + already.join(', ') + '.\n\nVẫn bốc tiếp?')) return;
+  let pairs = [], leftover = [];
+  if(__rp.mode === 'BALANCED'){
+    const A = rpShuffle(lists[0]), B = rpShuffle(lists[1]);
+    const n = Math.min(A.length, B.length);
+    for(let i=0;i<n;i++) pairs.push([A[i], B[i]]);
+    leftover = A.slice(n).concat(B.slice(n));
+  } else {
+    const L = rpShuffle(lists[0]);
+    for(let i=0;i+1<L.length;i+=2) pairs.push([L[i], L[i+1]]);
+    if(L.length % 2) leftover = [L[L.length-1]];
+  }
+  __rp.pairs = rpShuffle(pairs); __rp.leftover = leftover;
+  renderRandomPairingModal();
+}
+function commitRandomPairing(){
+  if(!__rp.pairs || !__rp.pairs.length) return;
+  const t = currentTournament(); if(!t) return;
+  if(!confirm('Thêm ' + __rp.pairs.length + ' cặp vừa bốc vào giải "' + tournLabel(t) + '"?')) return;
+  const ta = document.getElementById('pairsInput');
+  if(!ta){ showToast('Lỗi: không tìm thấy ô nhập danh sách cặp — tải lại trang.'); return; }
+  const n = __rp.pairs.length;
+  ta.value = __rp.pairs.map(pr=>pr[0] + ' - ' + pr[1]).join('\n');
+  logOverride('tournament_random_pairing', 'Ghép cặp ngẫu nhiên (' + (__rp.mode === 'BALANCED' ? 'cân trình A+B' : 'hoàn toàn') + ') ' + tournLabel(t) + ': ' + __rp.pairs.map(pr=>pr[0] + ' - ' + pr[1]).join('; ') + (__rp.leftover.length ? ' | chưa có cặp: ' + __rp.leftover.join(', ') : ''), 'tournament', state.currentCat);
+  closeModal();
+  addPairsFromInput();
+  __rp.all = __rp.leftover.join('\n'); __rp.a = ''; __rp.b = ''; if(__rp.mode === 'BALANCED' && __rp.leftover.length){ __rp.a = __rp.leftover.join('\n'); }
+  __rp.pairs = null; __rp.leftover = [];
+  showToast('✓ Đã thêm ' + n + ' cặp ghép ngẫu nhiên');
 }
 /* §HOTFIX-TOURNSETUP1 — mo/dong 2 modal moi cua Buoc 02 CAP DAU (xem HTML #pairBulkImportModal/
    #pairQuickAddModal, dat top-level gan #matchModal). KHONG doi logic addPairsFromInput()/clearPairs()
