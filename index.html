@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.87 (2026-11-14) — Máy Admin: bậc 1 (MP4 app tự tạo) không sập nhưng ra WebM dự phòng, chưa rõ lý do. Thêm chẩn đoán hiện ngay
+  trong cửa sổ ghép cặp (lỗi encoder/muxer, số khung vào/ra, các cấu hình H.264 đã thử + VP9/AV1, tên trình duyệt); thử thêm prefer-hardware + avc1.42E01F.
+
   v1.44.86 (2026-11-14) — §WC-MP4-2026. "Thử lại MP4" vẫn sập trên máy Admin; Admin chọn "tự tạo MP4 trong app". Nhúng mp4-muxer 5.2.2
   (MIT). Bậc quay: 0 MP4 MediaRecorder -> 1 MP4 app tự tạo (canvas -> VideoFrame -> VideoEncoder H.264 ưu tiên phần mềm -> mp4-muxer; chạy
   song song MediaRecorder WebM làm dự phòng) -> 2 WebM -> 3 tắt ghi hình. Máy đã sập ở bậc 0 sẽ tự lên bậc 1 ở lần mở sau.
@@ -11532,7 +11535,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.86'; // §WC-MP4-2026 — app tu tao MP4 (WebCodecs + mp4-muxer) khi bo ghi MP4 cua trinh duyet lam sap tab
+const PICPOC_APP_VERSION = 'Picpoc v1.44.87'; // hien ly do khi app khong tu tao duoc MP4
+// (ban truoc: 'Picpoc v1.44.86') // §WC-MP4-2026 — app tu tao MP4 (WebCodecs + mp4-muxer) khi bo ghi MP4 cua trinh duyet lam sap tab
 // (ban truoc: 'Picpoc v1.44.85') // link thu lai MP4 khi may dang o che do WebM
 // (ban truoc: 'Picpoc v1.44.84') // §REC-CRASH-GUARD-2026 — bac du phong: MP4 -> WebM -> tat ghi hinh
 // (ban truoc: 'Picpoc v1.44.83') // §REC-CRASH-GUARD-2026 — quay video sap tab -> tu chuyen kieu ma hoa an toan
@@ -39398,20 +39402,27 @@ function wcStart(canvas){
   (async ()=>{
     try{
       let cfg = null;
-      outer: for(const hw of ['prefer-software', 'no-preference']){
-        for(const codec of ['avc1.640028', 'avc1.4d0028', 'avc1.420028']){
+      wc.diag = [];
+      outer: for(const hw of ['prefer-software', 'no-preference', 'prefer-hardware']){
+        for(const codec of ['avc1.640028', 'avc1.4d0028', 'avc1.420028', 'avc1.42E01F']){
           const c = { codec, width: W, height: H, bitrate: 4000000, framerate: 30, hardwareAcceleration: hw, avc: { format: 'avc' } };
-          try{ const r = await VideoEncoder.isConfigSupported(c); if(r && r.supported){ cfg = c; break outer; } }catch(e){}
+          try{ const r = await VideoEncoder.isConfigSupported(c); wc.diag.push(codec.slice(5) + '/' + hw.replace('prefer-','').slice(0,2) + ':' + (r && r.supported ? 'ok' : 'no')); if(r && r.supported){ cfg = c; break outer; } }
+          catch(e){ wc.diag.push(codec.slice(5) + '/' + hw.replace('prefer-','').slice(0,2) + ':err'); }
+        }
+      }
+      if(!cfg){ // chi de chan doan: may co ma hoa duoc VP9/AV1 khong
+        for(const codec of ['vp09.00.40.08', 'av01.0.08M.08']){
+          try{ const r = await VideoEncoder.isConfigSupported({ codec, width: W, height: H, bitrate: 4000000, framerate: 30 }); wc.diag.push(codec.slice(0,4) + ':' + (r && r.supported ? 'ok' : 'no')); }catch(e){ wc.diag.push(codec.slice(0,4) + ':err'); }
         }
       }
       if(!cfg) throw new Error('Trình duyệt không hỗ trợ mã hoá H.264 (WebCodecs)');
       const muxer = new Mp4Muxer.Muxer({ target: new Mp4Muxer.ArrayBufferTarget(), video: { codec: 'avc', width: W, height: H }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
       const enc = new VideoEncoder({
-        output: (chunk, meta)=>{ try{ muxer.addVideoChunk(chunk, meta); }catch(e){ wc.failed = true; wc.err = 'mux: ' + (e && e.message); } },
+        output: (chunk, meta)=>{ wc.outChunks = (wc.outChunks||0) + 1; try{ muxer.addVideoChunk(chunk, meta); }catch(e){ wc.failed = true; wc.err = 'mux: ' + (e && e.message); } },
         error: (e)=>{ wc.failed = true; wc.err = 'enc: ' + (e && e.message || e); }
       });
       enc.configure(cfg);
-      wc.muxer = muxer; wc.enc = enc; wc.cfg = cfg; wc.ready = true;
+      wc.muxer = muxer; wc.enc = enc; wc.cfg = cfg; wc.ready = true; wc.outChunks = 0;
       if(wc.finishing) wcFinalize(wc); // san khau da ket thuc truoc khi kip san sang
     }catch(e){ wc.failed = true; wc.err = String(e && e.message || e); wcSettle(wc); }
   })();
@@ -39441,7 +39452,8 @@ function wcFinalize(wc){
   (async ()=>{
     try{
       if(wc.ready && !wc.failed && wc.frames > 0){
-        await wc.enc.flush();
+        // flush co the treo neu bo ma hoa cua may hong -> gioi han 10s de khong ket mai (va khong de lai dau "dang quay")
+        await Promise.race([wc.enc.flush(), new Promise((_, rej)=>setTimeout(()=>rej(new Error('bộ mã hoá không trả kết quả sau 10 giây (flush timeout)')), 10000))]);
         wc.muxer.finalize();
         const buf = wc.muxer.target.buffer;
         if(!wc.failed && buf && buf.byteLength > 1000) wc.mp4Blob = new Blob([buf], { type: 'video/mp4' });
@@ -39451,14 +39463,24 @@ function wcFinalize(wc){
     wcSettle(wc);
   })();
 }
+function recDiagText(wc){
+  let br = '';
+  try{ br = (navigator.userAgentData && navigator.userAgentData.brands || []).filter(b=>!/Not.A.Brand/i.test(b.brand)).map(b=>b.brand + ' ' + b.version).join(', '); }catch(e){}
+  if(!br){ const m = String(navigator.userAgent||'').match(/(Edg|OPR|coc_coc_browser|Chrome)\/[\d.]+/g); br = m ? m.join(' ') : ''; }
+  return 'Lý do: ' + (wc.err || (wc.ready ? 'không có khung hình (frames=' + wc.frames + ', out=' + (wc.outChunks||0) + ')' : 'chưa sẵn sàng')) +
+    ' · khung=' + wc.frames + '/' + (wc.outChunks||0) + ' · thử: ' + (wc.diag||[]).join(' ') + ' · ' + br + ' · ' + PICPOC_APP_VERSION;
+}
 function wcSettle(wc){
   wc.done = true;
+  if(wc.mp4Blob) drawUI.lastRecDiag = null;
   if(drawUI.wc !== wc) return; // da sang phien quay khac
   if(wc.mp4Blob){
     if(drawUI.videoUrl) URL.revokeObjectURL(drawUI.videoUrl);
     drawUI.videoBlob = wc.mp4Blob; drawUI.videoExt = 'mp4'; drawUI.videoUrl = URL.createObjectURL(wc.mp4Blob);
     if(drawUI.session){ drawUI.session.videoCreated = true; if(drawUI.session.kind === 'PAIR'){ if(typeof renderRandomPairingModalIfOpen === 'function') renderRandomPairingModalIfOpen(); } else { saveState(); renderDrawHistory(); } }
   } else {
+    drawUI.lastRecDiag = recDiagText(wc);
+    if(drawUI.session && drawUI.session.kind === 'PAIR' && typeof renderRandomPairingModalIfOpen === 'function') setTimeout(renderRandomPairingModalIfOpen, 300);
     console.warn('[draw-rec] tự tạo MP4 không thành công, dùng bản WebM dự phòng:', wc.err || '(không có khung hình)');
     if(typeof logSystemError === 'function') logSystemError('draw-rec', 'Tự tạo MP4 (WebCodecs) không thành công: ' + (wc.err || 'không có khung hình') + ' — dùng WebM dự phòng', null);
   }
@@ -39516,7 +39538,7 @@ function downloadDrawVideo(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  if(drawUI.videoExt !== 'mp4') toast(recSafeLevel() === 1 ? 'Lần này app không tự tạo được MP4 — đã lưu bản WebM dự phòng.' : recSafeLevel() >= 2 ? 'Đang ở chế độ quay an toàn (WebM) vì quay MP4 làm sập trình duyệt trên máy này.' : 'Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
+  if(drawUI.videoExt !== 'mp4') toast(recSafeLevel() === 1 ? 'Lần này app không tự tạo được MP4 — đã lưu bản WebM dự phòng.' + (drawUI.lastRecDiag ? ' ' + drawUI.lastRecDiag.slice(0, 140) : '') : recSafeLevel() >= 2 ? 'Đang ở chế độ quay an toàn (WebM) vì quay MP4 làm sập trình duyệt trên máy này.' : 'Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
 }
 
 function confirmRedraw(){
@@ -39739,7 +39761,8 @@ function renderRandomPairingModal(){
       <div id="rpPickResults" style="max-height:170px; overflow-y:auto;"></div>
     </div>
     ${preview}
-    ${recSafeLevel() === 1 ? `<div class="small-note" style="margin-top:10px;">🎥 Máy này xuất video <b>MP4 do app tự tạo</b> (bộ ghi MP4 của trình duyệt từng làm sập tab). Nếu lần quay nào không ra MP4, app tự lưu bản WebM dự phòng.</div>`
+    ${recSafeLevel() === 1 ? `<div class="small-note" style="margin-top:10px;">🎥 Máy này xuất video <b>MP4 do app tự tạo</b> (bộ ghi MP4 của trình duyệt từng làm sập tab). Nếu lần quay nào không ra MP4, app tự lưu bản WebM dự phòng.</div>` +
+        (drawUI.lastRecDiag ? `<div class="small-note" style="margin-top:6px; color:var(--danger); word-break:break-word;"><b>Lần quay vừa rồi không tạo được MP4</b> (đã lưu WebM). Chụp dòng này gửi hỗ trợ:<br><code style="font-size:.72rem;">${escapeHtml(drawUI.lastRecDiag)}</code></div>` : '')
       : recSafeLevel() === 2 ? `<div class="small-note" style="margin-top:10px;">🎥 Máy này đang quay video dạng <b>WebM</b> (quay MP4 làm trình duyệt bị sập). <a href="#" onclick="if(confirm('Thử lại MP4 do app tự tạo? Nếu trình duyệt lại sập, app sẽ tự quay về WebM ở lần mở sau.')){ localStorage.setItem(REC_LEVEL_KEY, '1'); renderRandomPairingModalIfOpen(); } return false;">Thử lại MP4</a>.</div>` : ''}
     <div class="form-actions" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
       <button class="secondary" onclick="closeModal()">Đóng</button>
