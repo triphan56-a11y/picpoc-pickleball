@@ -2,6 +2,13 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.83 (2026-11-14) — §REC-CRASH-GUARD-2026. Bấm "BỐC CẶP + QUAY VIDEO" -> tab sập (Aw Snap STATUS_BREAKPOINT) trên máy Admin;
+  không tái hiện được trên Chromium (app thật, đủ 6 cảnh, ra MP4). Thêm dấu "đang quay" trong localStorage: lần mở sau còn dấu =
+  lần trước sập -> tự hạ mức mã hoá (H.264 -> MP4 VP9 phần mềm -> WebM VP8) + báo; đóng sân khấu giữa chừng thì dừng ghi.
+
+  v1.44.82 (2026-11-14) — §AUTH-WATCHDOG-2026. Màn "ĐANG KIỂM TRA ĐĂNG NHẬP..." có thể xoay mãi khi kết nối Firebase treo (không lỗi,
+  không trả lời). Sau 12s hiện "kết nối chậm / mất mạng" + đang chờ bước nào + THỬ LẠI / ĐĂNG XUẤT; vẫn tự vào app khi có phản hồi.
+
   v1.44.81 (2026-11-14) — §PAIR-DRAW-VIDEO-2026. "Khi ghép cặp cũng phải quay video để gửi người chơi": nút "🎬 BỐC CẶP + QUAY VIDEO"
   dùng lại sân khấu + bộ ghi hình của Bốc thăm chia bảng (MP4/WebM 1920x1080): giới thiệu -> danh sách VĐV (A/B) -> đếm ngược -> bốc
   từng cặp -> bảng kết quả (+ người chưa có cặp) -> mã phiên GHEPCAP-…; xem/lưu video ngay trong cửa sổ ghép cặp; video khớp đúng kết quả thêm vào giải.
@@ -9605,7 +9612,9 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.81'; // §PAIR-DRAW-VIDEO-2026 — quay video boc tham ghep cap
+const PICPOC_APP_VERSION = 'Picpoc v1.44.83'; // §REC-CRASH-GUARD-2026 — quay video sap tab -> tu chuyen kieu ma hoa an toan
+// (ban truoc: 'Picpoc v1.44.82') // §AUTH-WATCHDOG-2026 — man Dang kiem tra dang nhap khong con xoay mai
+// (ban truoc: 'Picpoc v1.44.81') // §PAIR-DRAW-VIDEO-2026 — quay video boc tham ghep cap
 // (ban truoc: 'Picpoc v1.44.80') // §RANDOM-PAIRING-2026 — ghep cap ngau nhien (hoan toan / can trinh A+B)
 // (ban truoc: 'Picpoc v1.44.79') // §PLAYER-CREATOR-2026 — ghi + hien nguoi tao ho so / nguoi check-in
 // (ban truoc: 'Picpoc v1.44.78') // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
@@ -12420,6 +12429,11 @@ function getAuthScreenLogoHtml(){
   if(img && img.src) return `<img src="${img.src}" alt="PicPoc" class="auth-screen-logo-img">`;
   return '<div class="app-loading-logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><circle cx="8.5" cy="8.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="8.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="6.5" r="1" fill="currentColor" stroke="none"/><circle cx="8.5" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14.5" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>PICPOC</div>'; // §UIAUDIT-ICONS1 — bo emoji 🏓, dung SVG dong bo voi 2 noi HTML tinh
 }
+/* §AUTH-WATCHDOG-2026 — Admin gui anh man "ĐANG KIỂM TRA ĐĂNG NHẬP..." dung im. Man nay cho Firebase (trang thai dang nhap ->
+   doc authProfiles -> doc users); neu ket noi treo (khong loi, khong tra loi) thi xoay MAI khong co nut nao. Nay: sau 12s van
+   o man nay -> hien "Kết nối chậm" + dang cho buoc nao + nut THU LAI / DANG XUAT (van tiep tuc cho, tu vao app neu Firebase tra loi). */
+let __authStage = 'khởi động', __authCheckingSince = 0, __authWatchdogTimer = null;
+function setAuthStage(st){ __authStage = st; }
 function showAuthCheckingOverlay(){
   const box = document.getElementById('productionAuthOverlayBox');
   if(!box) return;
@@ -12427,9 +12441,27 @@ function showAuthCheckingOverlay(){
   box.innerHTML = `
     ${getAuthScreenLogoHtml()}
     <div class="app-loading-spinner"></div>
-    <div class="app-loading-text">ĐANG KIỂM TRA ĐĂNG NHẬP...</div>
+    <div class="app-loading-text" id="authCheckingText">ĐANG KIỂM TRA ĐĂNG NHẬP...</div>
+    <div id="authCheckingSlow"></div>
   `;
   showProductionAuthOverlay();
+  if(!__authCheckingSince) __authCheckingSince = Date.now();
+  if(__authWatchdogTimer) clearTimeout(__authWatchdogTimer);
+  __authWatchdogTimer = setTimeout(authCheckingWatchdog, 12000);
+}
+function authCheckingWatchdog(){
+  const slow = document.getElementById('authCheckingSlow');
+  const ov = document.getElementById('productionAuthOverlay');
+  if(!slow || !ov || ov.style.display === 'none' || ov.classList.contains('overlay-fading-out')){ __authCheckingSince = 0; return; } // da vao app / da sang man khac
+  const secs = Math.round((Date.now() - (__authCheckingSince || Date.now())) / 1000);
+  const online = (typeof navigator !== 'undefined' && navigator.onLine === false) ? 'Máy đang MẤT MẠNG.' : 'Kết nối tới máy chủ đang chậm hoặc bị chặn.';
+  slow.innerHTML = `
+    <div class="conn-fail-cache-note" style="display:block; margin-top:10px;">${online} Đã chờ ${secs} giây — app vẫn đang thử, sẽ tự vào khi có phản hồi.</div>
+    <div class="conn-fail-cache-note" style="display:block; opacity:.6; font-size:.72rem; margin-top:4px;">Đang chờ: ${escapeHtml(__authStage)}</div>
+    <button class="big" style="margin-top:12px;" onclick="location.reload()">THỬ LẠI</button>
+    <button class="big secondary js-logout-btn" style="margin-top:8px;" onclick="logoutCurrentUser()">ĐĂNG XUẤT</button>`;
+  if(secs >= 12 && secs < 20 && typeof logSystemError === 'function'){ try{ console.warn('[auth] checking overlay slow, stage=' + __authStage); }catch(e){} }
+  __authWatchdogTimer = setTimeout(authCheckingWatchdog, 5000); // cap nhat so giay
 }
 let __loginPasswordVisible = false;
 function toggleLoginPasswordVisibility(){
@@ -37394,13 +37426,21 @@ function startDrawRecording(canvas){
     const stream = canvas.captureStream(30);
     let mimeType = '';
     // §DRAW-MP4-2026: uu tien MP4 (H.264) de mo duoc tren dien thoai/Zalo/Facebook; trinh duyet cu chi co WebM.
-    ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].some(mt=>{
+    // §REC-CRASH-GUARD-2026: muc an toan 0 = MP4 H.264 (bo ma hoa phan cung cua may); 1 = MP4 VP9 (ma hoa phan mem); 2 = WebM VP8.
+    const level = recSafeLevel();
+    const cands = level >= 2 ? ['video/webm;codecs=vp8', 'video/webm']
+      : level === 1 ? ['video/mp4;codecs=vp09.00.10.08', 'video/mp4;codecs=vp9', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+      : ['video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    cands.some(mt=>{
       if(typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(mt)){ mimeType = mt; return true; }
       return false;
     });
     const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    try{ localStorage.setItem(REC_INFLIGHT_KEY, JSON.stringify({ mime: mimeType || 'default', level, at: Date.now() })); }catch(e){} // danh dau dang quay — tab sap thi dau nay con lai
     recorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) drawUI.chunks.push(e.data); };
+    recorder.onerror = (e)=>{ try{ localStorage.removeItem(REC_INFLIGHT_KEY); }catch(_){} console.error('[draw-rec] recorder error', e && e.error); };
     recorder.onstop = ()=>{
+      try{ localStorage.removeItem(REC_INFLIGHT_KEY); }catch(e){}
       if(drawUI.chunks.length){
         const recType = recorder.mimeType || mimeType || 'video/webm';
         drawUI.videoExt = /mp4/i.test(recType) ? 'mp4' : 'webm';
@@ -37413,8 +37453,32 @@ function startDrawRecording(canvas){
     drawUI.recorder = recorder;
   }catch(e){
     drawUI.recorder = null;
+    try{ localStorage.removeItem(REC_INFLIGHT_KEY); }catch(_){}
   }
 }
+/* §REC-CRASH-GUARD-2026 — Admin: bam "BỐC CẶP + QUAY VIDEO" thi tab sap ("Aw, Snap! STATUS_BREAKPOINT"). Khong tai hien duoc
+   (app that + Chromium: quay du 6 canh, ra MP4) -> nghi bo ma hoa MP4 H.264 cua may. Tu bao ve: truoc khi quay ghi dau
+   "dang quay" vao localStorage, quay xong / dong trang binh thuong thi xoa. Lan mo app sau ma dau VAN CON = lan quay truoc da
+   lam sap tab -> ha 1 muc an toan (H.264 -> MP4 VP9 phan mem -> WebM VP8) va bao cho nguoi dung. */
+const REC_INFLIGHT_KEY = 'picpoc_rec_inflight', REC_LEVEL_KEY = 'picpoc_rec_safe_level';
+function recSafeLevel(){ try{ return Math.max(0, Math.min(2, parseInt(localStorage.getItem(REC_LEVEL_KEY) || '0', 10) || 0)); }catch(e){ return 0; } }
+function resetRecSafeLevel(){ try{ localStorage.removeItem(REC_LEVEL_KEY); localStorage.removeItem(REC_INFLIGHT_KEY); }catch(e){} showToast('Đã đặt lại chế độ quay video về MP4 chuẩn.'); }
+(function recCrashGuardBoot(){
+  try{
+    const raw = localStorage.getItem(REC_INFLIGHT_KEY);
+    if(raw){
+      localStorage.removeItem(REC_INFLIGHT_KEY);
+      const prev = recSafeLevel(), next = Math.min(2, prev + 1);
+      localStorage.setItem(REC_LEVEL_KEY, String(next));
+      const names = ['MP4 chuẩn (H.264)', 'MP4 mã hoá phần mềm (VP9)', 'WebM (an toàn nhất)'];
+      setTimeout(()=>{ try{
+        showToast('⚠ Lần quay video trước làm trình duyệt bị sập. App đã tự chuyển sang kiểu quay "' + names[next] + '" — anh bốc/quay lại bình thường.');
+        if(typeof logSystemError === 'function') logSystemError('draw-rec', 'Tab sập khi quay video (' + raw + ') -> chuyển mức an toàn ' + prev + ' -> ' + next, null);
+      }catch(e){} }, 4000);
+    }
+    window.addEventListener('pagehide', ()=>{ try{ localStorage.removeItem(REC_INFLIGHT_KEY); }catch(e){} }); // dong/tai lai trang binh thuong != sap
+  }catch(e){}
+})();
 
 function finishDrawStage(){
   drawUI.running = false;
@@ -37442,7 +37506,7 @@ function downloadDrawVideo(){
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  if(drawUI.videoExt !== 'mp4') toast('Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
+  if(drawUI.videoExt !== 'mp4') toast(recSafeLevel() >= 2 ? 'Đang ở chế độ quay an toàn (WebM) vì lần quay MP4 trước làm sập trình duyệt.' : 'Trình duyệt này chỉ ghi được video WebM. Dùng Chrome/Edge/Safari bản mới để lưu MP4.');
 }
 
 function confirmRedraw(){
@@ -37461,6 +37525,7 @@ function confirmRedraw(){
 }
 
 function closeDrawStage(){
+  if(drawUI.recorder && drawUI.recorder.state !== 'inactive'){ try{ drawUI.recorder.stop(); }catch(e){} } // §REC-CRASH-GUARD-2026 — dong giua chung: dung ghi cho sach
   document.getElementById('drawStageOverlay').classList.remove('show');
   const v = document.getElementById('drawVideoPlayback');
   v.pause(); v.style.display = 'none'; v.src = '';
@@ -43477,6 +43542,7 @@ function resolveEnterAppFor(firebaseUser, authProfile, attempt){
     // §9 — CHUA hydrate xong /users — TUYET DOI KHONG ket luan unauthorized voi, chi hien loading va
     // dang ky cho goi lai NGAY KHI attachEntityListener('users') nhan duoc snapshot (khong doan thoi
     // gian bang setTimeout co dinh — se tu goi lai chinh xac khi co du lieu qua retryPendingAuthResolution()).
+    setAuthStage('tải danh sách người dùng (users)'); // §AUTH-WATCHDOG-2026
     showAuthCheckingOverlay();
     __pendingAuthResolutionRetry = ()=> resolveEnterAppFor(firebaseUser, authProfile, attempt+1);
     // §an toan bo sung — phong truong hop attachEntityListener('users') khong bao gio ban (vd node
@@ -43503,6 +43569,7 @@ function beginProductionAuthFlow(){
     showAuthBlockedScreen('KHÔNG THỂ KẾT NỐI FIREBASE AUTH', 'Production Auth cần kết nối Firebase thật. Vui lòng kiểm tra mạng hoặc cấu hình.');
     return;
   }
+  setAuthStage('Firebase Auth báo trạng thái đăng nhập'); // §AUTH-WATCHDOG-2026
   showAuthCheckingOverlay();
   if(__authListenerAttached) return; // §AUTH-13 — da gan roi, khong gan trung
   __authListenerAttached = true;
@@ -43525,6 +43592,7 @@ function beginProductionAuthFlow(){
     // role moi doc duoc users, nhung phai doc users moi biet role" (§13). Day la nguon THAT DUY NHAT de
     // quyet dinh "UID nay co quyen hay khong" — KHONG con doc truc tiep tu state.users.authUid (co the
     // dang la du lieu local stale/chua kip hydrate) nhu ban cu nua.
+    setAuthStage('đọc quyền tài khoản (authProfiles) từ cơ sở dữ liệu'); // §AUTH-WATCHDOG-2026
     showAuthCheckingOverlay();
     /* §FIX-AUTH-RETRY-2026 — sau khi deploy Rules that (database khong con mo), lan doc authProfiles DAU TIEN
        ngay sau onAuthStateChanged co the bi PERMISSION_DENIED neu ket noi database chua kip gan token dang
