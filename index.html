@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.85 (2026-11-14) — Admin xác nhận "chuyển qua WebM thì được" => thủ phạm là bộ ghi MP4 của Chrome trên máy đó. Thêm dòng trạng
+  thái + link "thử lại MP4" trong cửa sổ ghép cặp (sau khi cập nhật Chrome); sập lại thì tự về WebM.
+
   v1.44.84 (2026-11-14) — §REC-CRASH-GUARD-2026 (tiếp). Admin báo "vẫn bị" sập. Vẽ cảnh đã vét cạn 2..130 người không treo -> nghi bộ
   đóng gói MP4 của MediaRecorder (CHECK trong renderer = STATUS_BREAKPOINT); mức 1 cũ (MP4-VP9) vẫn qua bộ đó. Bậc mới: 0 MP4 H.264 ->
   1 WebM VP8 -> 2 tắt ghi hình (chỉ chạy hiệu ứng, có link bật lại). Sân khấu ghi rõ đang ghi kiểu gì / không ghi.
@@ -9616,7 +9619,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.84'; // §REC-CRASH-GUARD-2026 — bac du phong: MP4 -> WebM -> tat ghi hinh
+const PICPOC_APP_VERSION = 'Picpoc v1.44.85'; // link thu lai MP4 khi may dang o che do WebM
+// (ban truoc: 'Picpoc v1.44.84') // §REC-CRASH-GUARD-2026 — bac du phong: MP4 -> WebM -> tat ghi hinh
 // (ban truoc: 'Picpoc v1.44.83') // §REC-CRASH-GUARD-2026 — quay video sap tab -> tu chuyen kieu ma hoa an toan
 // (ban truoc: 'Picpoc v1.44.82') // §AUTH-WATCHDOG-2026 — man Dang kiem tra dang nhap khong con xoay mai
 // (ban truoc: 'Picpoc v1.44.81') // §PAIR-DRAW-VIDEO-2026 — quay video boc tham ghep cap
@@ -37738,6 +37742,7 @@ function renderRandomPairingModal(){
       <div id="rpPickResults" style="max-height:170px; overflow-y:auto;"></div>
     </div>
     ${preview}
+    ${recSafeLevel() === 1 ? `<div class="small-note" style="margin-top:10px;">🎥 Máy này đang quay video dạng <b>WebM</b> (quay MP4 từng làm trình duyệt bị sập). Sau khi cập nhật Chrome, có thể <a href="#" onclick="if(confirm('Thử quay MP4 lại? Nếu trình duyệt lại sập, app sẽ tự quay về WebM ở lần mở sau.')){ resetRecSafeLevel(); renderRandomPairingModalIfOpen(); } return false;">thử lại MP4</a>.</div>` : ''}
     <div class="form-actions" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
       <button class="secondary" onclick="closeModal()">Đóng</button>
       <button class="secondary" onclick="runRandomPairing(false)" title="Bốc ngay, không quay video">Bốc nhanh (không video)</button>
@@ -37777,7 +37782,7 @@ function rpAddName(k, name){
 }
 function rpHasVideo(){ return !!(drawUI.videoUrl && drawUI.session && drawUI.session.kind === 'PAIR' && __rp.rollId && drawUI.session.rollId === __rp.rollId); }
 function renderRandomPairingModalIfOpen(){
-  __rp.videoPending = false;
+  if(!(drawUI.recorder && drawUI.recorder.state === 'recording')) __rp.videoPending = false;
   const m = document.getElementById('matchModal');
   if(m && m.classList.contains('show') && document.getElementById('rpPickSearch')){ rpSyncInputs(); renderRandomPairingModal(); }
 }
