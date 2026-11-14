@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.88 (2026-11-14) — §BRACKET-1G-TOP2-2026. Giải 1 bảng 6 cặp, Top 2: vòng bảng đã chốt nhưng "đang tự động chốt và tạo cây…" đứng mãi
+  vì getBracketSeedMapping không có cấu hình (1 bảng, Top 2). Thêm mapping A1-A2 = Chung kết; cấu hình không hỗ trợ thì hiện rõ lý do.
+
   v1.44.87 (2026-11-14) — Máy Admin: bậc 1 (MP4 app tự tạo) không sập nhưng ra WebM dự phòng, chưa rõ lý do. Thêm chẩn đoán hiện ngay
   trong cửa sổ ghép cặp (lỗi encoder/muxer, số khung vào/ra, các cấu hình H.264 đã thử + VP9/AV1, tên trình duyệt); thử thêm prefer-hardware + avc1.42E01F.
 
@@ -11535,7 +11538,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.87'; // hien ly do khi app khong tu tao duoc MP4
+const PICPOC_APP_VERSION = 'Picpoc v1.44.88'; // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
+// (ban truoc: 'Picpoc v1.44.87') // hien ly do khi app khong tu tao duoc MP4
 // (ban truoc: 'Picpoc v1.44.86') // §WC-MP4-2026 — app tu tao MP4 (WebCodecs + mp4-muxer) khi bo ghi MP4 cua trinh duyet lam sap tab
 // (ban truoc: 'Picpoc v1.44.85') // link thu lai MP4 khi may dang o che do WebM
 // (ban truoc: 'Picpoc v1.44.84') // §REC-CRASH-GUARD-2026 — bac du phong: MP4 -> WebM -> tat ghi hinh
@@ -42836,6 +42840,7 @@ function nextPowerOf2(n){ let p = 1; while(p < n) p *= 2; return p; }
    khac (vd 3 bang, hay so luong khac) se bi CHAN o validateTournamentBracketGeneration() voi
    thong bao ro rang thay vi tu suy dien mot luat khac khong duoc yeu cau (§32 nguyen tac). */
 function getBracketSeedMapping(groupCount, topN){
+  if(groupCount === 1 && topN === 2) return { round1: [['A1','A2']] }; // §BRACKET-1G-TOP2-2026 — 1 bang, Top 2 -> vao thang CHUNG KET (Nhat bang gap Nhi bang)
   if(groupCount === 1 && topN === 4) return { round1: [['A1','A4'],['A2','A3']] }; // §33
   if(groupCount === 1 && topN === 8) return { round1: [['A1','A8'],['A4','A5'],['A2','A7'],['A3','A6']] }; // §34
   if(groupCount === 2 && topN === 2) return { round1: [['A1','B2'],['B1','A2']] }; // §35
@@ -42856,7 +42861,7 @@ function validateTournamentBracketGeneration(catKey){
   const topN = t.knockoutTopN || 2;
   const mapping = getBracketSeedMapping(groupCount, topN);
   if(!mapping){
-    reasons.push('Chưa hỗ trợ cấu hình này (Bảng=' + groupCount + ', Top=' + topN + '/bảng). Hiện hỗ trợ: 1 bảng (Top4/Top8), 2 bảng (Top2/Top4), 4 bảng (Top2).');
+    reasons.push('Chưa hỗ trợ cấu hình này (Bảng=' + groupCount + ', Top=' + topN + '/bảng). Hiện hỗ trợ: 1 bảng (Top2/Top4/Top8), 2 bảng (Top2/Top4), 4 bảng (Top2).');
     return { ok:false, reasons };
   }
   const ids = t.qualifierSnapshot.map(q=>q.pairId);
@@ -43636,6 +43641,17 @@ function renderKnockoutSection(catKey){
       return;
     }
     if(!t.groups || !t.groups.length || !isGroupStageComplete(catKey)){ container.innerHTML = ''; return; }
+    if(t.groupStageFinalizedAt){ // §BRACKET-1G-TOP2-2026 — da chot ma khong tao duoc cay -> noi ro ly do thay vi "dang tu dong..." mai
+      const bv = validateTournamentBracketGeneration(catKey);
+      if(!bv.ok){
+        container.innerHTML = `
+          <div class="card no-print">
+            <h2>🏆 Vòng loại</h2>
+            <div style="background:#fef2f2; color:var(--danger); font-weight:700; padding:10px 12px; border-radius:10px;">⚠ Chưa tạo được cây thi đấu:<br>${bv.reasons.map(escapeHtml).join('<br>')}</div>
+          </div>`;
+        return;
+      }
+    }
     container.innerHTML = `
       <div class="card no-print">
         <h2>🏆 Vòng loại</h2>
