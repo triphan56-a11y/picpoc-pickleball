@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.81 (2026-11-14) — §PAIR-DRAW-VIDEO-2026. "Khi ghép cặp cũng phải quay video để gửi người chơi": nút "🎬 BỐC CẶP + QUAY VIDEO"
+  dùng lại sân khấu + bộ ghi hình của Bốc thăm chia bảng (MP4/WebM 1920x1080): giới thiệu -> danh sách VĐV (A/B) -> đếm ngược -> bốc
+  từng cặp -> bảng kết quả (+ người chưa có cặp) -> mã phiên GHEPCAP-…; xem/lưu video ngay trong cửa sổ ghép cặp; video khớp đúng kết quả thêm vào giải.
+
   v1.44.80 (2026-11-14) — §RANDOM-PAIRING-2026. Nút "🎲 GHÉP CẶP NGẪU NHIÊN" ở Bước 02 Cặp đấu: nhập từng VĐV (gõ tên / chọn từ
   hồ sơ Club), 2 chế độ: ngẫu nhiên hoàn toàn; cân trình — mỗi cặp 1 người Trình A (mạnh) + 1 người Trình B (yếu), Admin tự xếp A/B.
   Xem trước, bốc lại, báo người dư/trùng tên/đã có trong giải; thêm qua addPairsFromInput (tự nối hồ sơ) + nhật ký kết quả bốc.
@@ -9601,7 +9605,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.80'; // §RANDOM-PAIRING-2026 — ghep cap ngau nhien (hoan toan / can trinh A+B)
+const PICPOC_APP_VERSION = 'Picpoc v1.44.81'; // §PAIR-DRAW-VIDEO-2026 — quay video boc tham ghep cap
+// (ban truoc: 'Picpoc v1.44.80') // §RANDOM-PAIRING-2026 — ghep cap ngau nhien (hoan toan / can trinh A+B)
 // (ban truoc: 'Picpoc v1.44.79') // §PLAYER-CREATOR-2026 — ghi + hien nguoi tao ho so / nguoi check-in
 // (ban truoc: 'Picpoc v1.44.78') // §FIX-CREDITPAY-ENDSESSION-2026 — tra du bang Credits/chia phuong thuc cung ket thuc phien
 // (ban truoc: 'Picpoc v1.44.77') // §FIX-LEFT-REVERT-2026 — nguoi da thanh toan/roi san khong bi keo nguoc ve Dang o san
@@ -37079,7 +37084,7 @@ function renderDrawResultSummary(catKey){
   // THAM CU (da bi vo hieu hoa), KHONG khop voi bang thu cong dang hien phia tren => hien sai du lieu.
   // Video/Xem-ket-qua chi co y nghia cho luong BOC THAM TU DONG (RANDOM_DRAW) — voi MANUAL thi an het.
   const latestSession = t.groupingMode === 'MANUAL' ? null : (t.drawSessions||[]).slice().sort((a,b)=>b.createdAt-a.createdAt)[0];
-  const canPlayVideo = !!(drawUI.videoUrl && drawUI.session && latestSession && drawUI.session.id === latestSession.id);
+  const canPlayVideo = !!(drawUI.videoUrl && drawUI.session && drawUI.session.kind !== 'PAIR' && latestSession && drawUI.session.id === latestSession.id);
   const scheduleReady = t.schedule && t.schedule.length === t.groups.length && t.schedule.length > 0;
   box.innerHTML = `
     <div class="tl-confirmbox" style="margin-top:12px;">
@@ -37155,6 +37160,7 @@ function showDrawResultModal(session){
 }
 
 function viewDrawResultText(){
+  if(drawUI.session && drawUI.session.kind === 'PAIR'){ closeDrawStage(); return; } // ve lai cua so ghep cap (danh sach cap vua boc)
   if(drawUI.session) showDrawResultModal(drawUI.session);
 }
 
@@ -37201,7 +37207,7 @@ function openDrawStage(session){
   const ctx = canvas.getContext('2d');
   drawUI.canvas = canvas; drawUI.ctx = ctx;
 
-  buildDrawScenes(session);
+  if(session.kind === 'PAIR') buildPairDrawScenes(session); else buildDrawScenes(session); // §PAIR-DRAW-VIDEO-2026
   drawUI.sceneIdx = 0;
   drawUI.sceneStart = performance.now();
   drawUI.running = true;
@@ -37273,6 +37279,7 @@ function renderDrawScene(ctx, scene, elapsed, session){
   const W = drawUI.canvas.width, H = drawUI.canvas.height;
   drawBg(ctx, W, H);
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if(session.kind === 'PAIR'){ renderPairDrawScene(ctx, scene, elapsed, session, W, H); return; } // §PAIR-DRAW-VIDEO-2026
 
   if(scene.type === 'intro'){
     ctx.fillStyle = '#fff';
@@ -37399,7 +37406,7 @@ function startDrawRecording(canvas){
         drawUI.videoExt = /mp4/i.test(recType) ? 'mp4' : 'webm';
         drawUI.videoBlob = new Blob(drawUI.chunks, { type: drawUI.videoExt === 'mp4' ? 'video/mp4' : 'video/webm' });
         drawUI.videoUrl = URL.createObjectURL(drawUI.videoBlob);
-        if(drawUI.session){ drawUI.session.videoCreated = true; saveState(); renderDrawHistory(); }
+        if(drawUI.session){ drawUI.session.videoCreated = true; if(drawUI.session.kind === 'PAIR'){ if(typeof renderRandomPairingModalIfOpen === 'function') renderRandomPairingModalIfOpen(); } else { saveState(); renderDrawHistory(); } }
       }
     };
     recorder.start();
@@ -37439,6 +37446,10 @@ function downloadDrawVideo(){
 }
 
 function confirmRedraw(){
+  if(drawUI.session && drawUI.session.kind === 'PAIR'){ // §PAIR-DRAW-VIDEO-2026
+    if(!confirm('Bốc lại cặp từ đầu? Kết quả vừa bốc (chưa thêm vào giải) sẽ bị thay bằng kết quả mới.')) return;
+    closeDrawStage(); runRandomPairing(true); return;
+  }
   const ok = confirm('Kết quả bốc thăm hiện tại đã được lưu.\nBạn có chắc muốn tạo một phiên bốc thăm mới?');
   if(!ok) return;
   const prevSession = drawUI.session;
@@ -37629,7 +37640,10 @@ function renderRandomPairingModal(){
     </div>`;
   const preview = __rp.pairs ? `
     <div class="card" style="margin-top:12px; padding:12px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;"><b>Kết quả bốc: ${__rp.pairs.length} cặp</b><button class="small secondary" onclick="runRandomPairing()">🎲 Bốc lại</button></div>
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;"><b>Kết quả bốc: ${__rp.pairs.length} cặp</b>
+        <span style="display:inline-flex; gap:6px; flex-wrap:wrap;">
+          ${rpHasVideo() ? `<button class="small" onclick="reopenDrawVideoPlayback()">▶ Xem video</button><button class="small" onclick="downloadDrawVideo()">⬇ Lưu video ${(drawUI.videoExt||'mp4').toUpperCase()}</button>` : `<span class="muted" style="font-size:.78rem; align-self:center;">${__rp.videoPending ? 'đang xử lý video…' : 'lần bốc này không quay video'}</span>`}
+        </span></div>
       <ol style="margin:8px 0 0 18px; padding:0; line-height:1.7;">${__rp.pairs.map(pr=>`<li><b>${escapeHtml(pr[0])}</b> - <b>${escapeHtml(pr[1])}</b></li>`).join('')}</ol>
       ${__rp.leftover.length ? `<div class="small-note" style="margin-top:8px; color:var(--danger); font-weight:700;">⚠ Chưa có cặp (${__rp.leftover.length}): ${__rp.leftover.map(escapeHtml).join(', ')} — bổ sung người hoặc tự ghép tay sau.</div>` : ''}
     </div>` : '';
@@ -37651,7 +37665,8 @@ function renderRandomPairingModal(){
     ${preview}
     <div class="form-actions" style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
       <button class="secondary" onclick="closeModal()">Đóng</button>
-      <button class="secondary" onclick="runRandomPairing()">🎲 BỐC CẶP</button>
+      <button class="secondary" onclick="runRandomPairing(false)" title="Bốc ngay, không quay video">Bốc nhanh (không video)</button>
+      <button onclick="runRandomPairing(true)">🎬 ${__rp.pairs ? 'BỐC LẠI' : 'BỐC CẶP'} + QUAY VIDEO</button>
       <button class="big" ${__rp.pairs && __rp.pairs.length ? '' : 'disabled'} onclick="commitRandomPairing()">✓ THÊM ${__rp.pairs ? __rp.pairs.length : 0} CẶP VÀO GIẢI</button>
     </div>`;
   rpRenderPickHint();
@@ -37685,7 +37700,159 @@ function rpAddName(k, name){
   const el = document.getElementById('rpList_' + k); if(el) el.value = __rp[k];
   rpUpdateCounts(); rpRenderPickResults();
 }
-function runRandomPairing(){
+function rpHasVideo(){ return !!(drawUI.videoUrl && drawUI.session && drawUI.session.kind === 'PAIR' && __rp.rollId && drawUI.session.rollId === __rp.rollId); }
+function renderRandomPairingModalIfOpen(){
+  __rp.videoPending = false;
+  const m = document.getElementById('matchModal');
+  if(m && m.classList.contains('show') && document.getElementById('rpPickSearch')){ rpSyncInputs(); renderRandomPairingModal(); }
+}
+/* §PAIR-DRAW-VIDEO-2026 — Admin: "khi ghép cặp cũng phải quay video để gửi người chơi". Dung lai san khau + bo ghi hinh cua
+   Boc tham chia bang (canvas 1920x1080 -> MP4/WebM). Video dung CHINH ket qua __rp.pairs se duoc them vao giai (rollId khop). */
+function startPairDrawVideo(){
+  const t = currentTournament(); if(!t) return;
+  const isBal = __rp.mode === 'BALANCED';
+  const session = { id: uid('pdraw'), kind:'PAIR', rollId: __rp.rollId, sessionCode: generateSessionCode().replace(/^PICPOC/, 'GHEPCAP'), createdAt: Date.now(),
+    title: tournLabel(t), mode: __rp.mode, pairs: __rp.pairs.map(pr=>pr.slice()), leftover: __rp.leftover.slice(),
+    listA: isBal ? rpNames(__rp.a) : rpNames(__rp.all), listB: isBal ? rpNames(__rp.b) : [] };
+  drawUI.session = session; drawUI.catKey = state.currentCat; drawUI.idLabelMap = {};
+  __rp.videoPending = true;
+  openDrawStage(session);
+}
+function buildPairDrawScenes(session){
+  const n = session.pairs.length, people = session.listA.length + session.listB.length;
+  const perPairMs = n > 16 ? 1500 : 2000;
+  drawUI.scenes = [
+    { type:'intro', duration:2400 },
+    { type:'list', duration: Math.min(7000, Math.max(3500, 2200 + people*140)) },
+    { type:'countdown', duration:3600 },
+    { type:'pairing', duration: n * perPairMs, perPairMs },
+    { type:'result', duration: Math.min(9000, 4500 + n*150) },
+    { type:'outro', duration:2500 }
+  ];
+}
+function pairDrawColumns(ctx, items, x0, x1, yTop, yBottom, maxRowH, baseFont){
+  // ve danh sach chu thanh nhieu cot trong khung [x0,x1] x [yTop,yBottom]
+  const n = items.length; if(!n) return;
+  const maxRows = Math.max(1, Math.floor((yBottom - yTop) / 34));
+  const cols = Math.max(1, Math.ceil(n / Math.min(maxRows, 12)));
+  const rows = Math.ceil(n / cols);
+  const rowH = Math.min(maxRowH, (yBottom - yTop) / rows);
+  const colW = (x1 - x0) / cols;
+  ctx.textAlign = 'left';
+  const fs = Math.min(baseFont, Math.floor(rowH*0.58));
+  // 1 cot: can giua ca khoi chu trong khung (it nguoi khong bi don het sang trai)
+  let off = 10;
+  if(cols === 1){
+    ctx.font = `600 ${fs}px "Segoe UI", Arial, sans-serif`;
+    const maxW = Math.min(colW - 30, Math.max(...items.map(t=>ctx.measureText(t).width)));
+    off = Math.max(10, (colW - maxW) / 2);
+  }
+  const blockH = rows * rowH, y0 = yTop + Math.max(0, Math.min(40, ((yBottom - yTop) - blockH) / 2));
+  items.forEach((txt, i)=>{
+    const c = Math.floor(i / rows), r = i % rows;
+    fitFont(ctx, txt, colW - 30, fs, 14, 600);
+    ctx.fillText(txt, x0 + c*colW + off, y0 + r*rowH + rowH/2);
+  });
+  ctx.textAlign = 'center';
+}
+function renderPairDrawScene(ctx, scene, elapsed, session, W, H){
+  const isBal = session.mode === 'BALANCED';
+  const AMBER = '#f59e0b', TEAL = '#5eead4';
+  if(scene.type === 'intro'){
+    ctx.fillStyle = '#fff'; ctx.font = '800 64px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('🏓 PICPOC PICKLEBALL CLUB', W/2, H/2 - 110);
+    ctx.fillStyle = AMBER; ctx.font = '800 52px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('BỐC THĂM GHÉP CẶP', W/2, H/2 - 20);
+    ctx.fillStyle = '#fff'; fitFont(ctx, session.title, W*0.8, 40, 22, 700);
+    ctx.fillText(session.title, W/2, H/2 + 60);
+    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.font = '600 28px "Segoe UI", Arial, sans-serif';
+    ctx.fillText(isBal ? 'Mỗi cặp: 1 VĐV trình A + 1 VĐV trình B — bốc ngẫu nhiên' : 'Ghép cặp ngẫu nhiên hoàn toàn', W/2, H/2 + 125);
+  }
+  else if(scene.type === 'list'){
+    ctx.fillStyle = '#fff'; ctx.font = '800 40px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('DANH SÁCH ' + (session.listA.length + session.listB.length) + ' VĐV THAM GIA BỐC CẶP', W/2, 90);
+    if(isBal){
+      ctx.font = '800 32px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = TEAL; ctx.fillText('TRÌNH A (' + session.listA.length + ')', W*0.25, 165);
+      ctx.fillStyle = AMBER; ctx.fillText('TRÌNH B (' + session.listB.length + ')', W*0.75, 165);
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      pairDrawColumns(ctx, session.listA.map((n,i)=>(i+1) + '. ' + n), 60, W/2 - 30, 210, H - 90, 84, 44);
+      pairDrawColumns(ctx, session.listB.map((n,i)=>(i+1) + '. ' + n), W/2 + 30, W - 60, 210, H - 90, 84, 44);
+      ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(W/2 - 1, 150, 2, H - 250);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      pairDrawColumns(ctx, session.listA.map((n,i)=>(i+1) + '. ' + n), 80, W - 80, 160, H - 90, 84, 44);
+    }
+    drawBrandFooter(ctx, W, H, session);
+  }
+  else if(scene.type === 'countdown'){
+    const stepIdx = Math.min(3, Math.floor(elapsed / (scene.duration / 4)));
+    ctx.fillStyle = '#fff';
+    ctx.font = stepIdx < 3 ? '800 220px "Segoe UI", Arial, sans-serif' : '800 96px "Segoe UI", Arial, sans-serif';
+    ctx.fillText(['3','2','1','BẮT ĐẦU!'][stepIdx], W/2, H/2);
+  }
+  else if(scene.type === 'pairing'){
+    const n = session.pairs.length;
+    const idx = Math.min(n - 1, Math.floor(elapsed / scene.perPairMs));
+    const local = elapsed - idx * scene.perPairMs;
+    const spinning = local < scene.perPairMs * 0.5;
+    const pr = session.pairs[idx];
+    ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = '700 30px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('ĐANG BỐC CẶP... (' + (idx+1) + '/' + n + ')', W/2, 90);
+    ctx.fillStyle = AMBER; ctx.font = '800 60px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('CẶP ' + (idx+1), W/2, 190);
+    // 2 o ten: dang quay -> chay ten trong nhom tuong ung; xong -> hien ten that
+    const poolA = session.listA, poolB = isBal ? session.listB : session.listA;
+    const tick = Math.floor(local / 70);
+    const nameA = spinning ? poolA[(tick*7 + idx*3) % poolA.length] : pr[0];
+    const nameB = spinning ? poolB[(tick*5 + idx*11 + 1) % poolB.length] : pr[1];
+    const boxW = W*0.38, boxH = 190, y = H/2 - 60;
+    [[W*0.27, nameA, isBal ? 'TRÌNH A' : '', TEAL], [W*0.73, nameB, isBal ? 'TRÌNH B' : '', AMBER]].forEach(a=>{
+      ctx.fillStyle = spinning ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.16)';
+      ctx.fillRect(a[0] - boxW/2, y, boxW, boxH);
+      ctx.strokeStyle = spinning ? 'rgba(255,255,255,.3)' : a[3]; ctx.lineWidth = 4; ctx.strokeRect(a[0] - boxW/2, y, boxW, boxH);
+      if(a[2]){ ctx.fillStyle = a[3]; ctx.font = '700 24px "Segoe UI", Arial, sans-serif'; ctx.fillText(a[2], a[0], y - 26); }
+      ctx.fillStyle = spinning ? 'rgba(255,255,255,.55)' : '#fff';
+      fitFont(ctx, a[1], boxW - 50, 54, 24, 800);
+      ctx.fillText(a[1], a[0], y + boxH/2);
+    });
+    ctx.fillStyle = '#fff'; ctx.font = '800 70px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('+', W/2, y + boxH/2);
+    // cac cap da boc xong (toi da 4 cap gan nhat)
+    const done = session.pairs.slice(Math.max(0, idx - 4), idx);
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    done.forEach((d, i)=>{
+      const txt = 'Cặp ' + (idx - done.length + i + 1) + ': ' + d[0] + ' - ' + d[1];
+      fitFont(ctx, txt, W*0.8, 26, 16, 600);
+      ctx.fillText(txt, W/2, y + boxH + 90 + i*40);
+    });
+    drawBrandFooter(ctx, W, H, session);
+  }
+  else if(scene.type === 'result'){
+    ctx.fillStyle = '#fff'; ctx.font = '800 44px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('✅ KẾT QUẢ GHÉP CẶP — ' + session.pairs.length + ' CẶP', W/2, 70);
+    ctx.fillStyle = AMBER; fitFont(ctx, session.title, W*0.8, 28, 18, 700);
+    ctx.fillText(session.title, W/2, 122);
+    ctx.fillStyle = '#fff';
+    const bottom = H - (session.leftover.length ? 130 : 80);
+    pairDrawColumns(ctx, session.pairs.map((pr,i)=>(i+1) + '. ' + pr[0] + ' - ' + pr[1]), 60, W - 60, 165, bottom, 90, 46);
+    if(session.leftover.length){
+      ctx.fillStyle = '#fca5a5';
+      const txt = 'Chưa có cặp: ' + session.leftover.join(', ');
+      fitFont(ctx, txt, W - 120, 26, 16, 700);
+      ctx.fillText(txt, W/2, H - 85);
+    }
+    drawBrandFooter(ctx, W, H, session);
+  }
+  else if(scene.type === 'outro'){
+    ctx.fillStyle = '#fff'; ctx.font = '800 56px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('🏓 PICPOC PICKLEBALL CLUB', W/2, H/2 - 60);
+    ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = '600 30px "Segoe UI", Arial, sans-serif';
+    ctx.fillText('Mã phiên: ' + session.sessionCode, W/2, H/2 + 10);
+    ctx.fillText(new Date(session.createdAt).toLocaleString('vi-VN'), W/2, H/2 + 55);
+  }
+}
+function runRandomPairing(withVideo){
   rpSyncInputs();
   const t = currentTournament(); if(!t) return;
   const fold = n=>vnFold(n).toLowerCase().replace(/\s+/g,' ');
@@ -37714,17 +37881,19 @@ function runRandomPairing(){
     if(L.length % 2) leftover = [L[L.length-1]];
   }
   __rp.pairs = rpShuffle(pairs); __rp.leftover = leftover;
+  __rp.rollId = uid('roll'); __rp.videoPending = false;
   renderRandomPairingModal();
+  if(withVideo) startPairDrawVideo();
 }
 function commitRandomPairing(){
   if(!__rp.pairs || !__rp.pairs.length) return;
   const t = currentTournament(); if(!t) return;
-  if(!confirm('Thêm ' + __rp.pairs.length + ' cặp vừa bốc vào giải "' + tournLabel(t) + '"?')) return;
+  if(!confirm('Thêm ' + __rp.pairs.length + ' cặp vừa bốc vào giải "' + tournLabel(t) + '"?' + (rpHasVideo() ? '\n\nNhớ bấm "Lưu video" TRƯỚC nếu chưa lưu — video chỉ còn trong phiên trình duyệt này.' : ''))) return;
   const ta = document.getElementById('pairsInput');
   if(!ta){ showToast('Lỗi: không tìm thấy ô nhập danh sách cặp — tải lại trang.'); return; }
   const n = __rp.pairs.length;
   ta.value = __rp.pairs.map(pr=>pr[0] + ' - ' + pr[1]).join('\n');
-  logOverride('tournament_random_pairing', 'Ghép cặp ngẫu nhiên (' + (__rp.mode === 'BALANCED' ? 'cân trình A+B' : 'hoàn toàn') + ') ' + tournLabel(t) + ': ' + __rp.pairs.map(pr=>pr[0] + ' - ' + pr[1]).join('; ') + (__rp.leftover.length ? ' | chưa có cặp: ' + __rp.leftover.join(', ') : ''), 'tournament', state.currentCat);
+  logOverride('tournament_random_pairing', 'Ghép cặp ngẫu nhiên (' + (__rp.mode === 'BALANCED' ? 'cân trình A+B' : 'hoàn toàn') + ') ' + tournLabel(t) + ': ' + __rp.pairs.map(pr=>pr[0] + ' - ' + pr[1]).join('; ') + (__rp.leftover.length ? ' | chưa có cặp: ' + __rp.leftover.join(', ') : '') + (rpHasVideo() ? ' | video ' + drawUI.session.sessionCode : ' | không quay video'), 'tournament', state.currentCat);
   closeModal();
   addPairsFromInput();
   __rp.all = __rp.leftover.join('\n'); __rp.a = ''; __rp.b = ''; if(__rp.mode === 'BALANCED' && __rp.leftover.length){ __rp.a = __rp.leftover.join('\n'); }
