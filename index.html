@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.89 (2026-11-25) — §SOCIAL-TICKET-MANUAL-2026. Sửa bill nhập sai (huỷ bill cũ) xong bill mới mất Vé Social, không có cách thêm lại.
+  Thêm nút "🎟 Vé Social" trong cửa sổ Thêm vào bill: dòng 'ticket' chuẩn gắn visitId; hỏi lại nếu lượt đã có vé (bill chưa huỷ) hoặc đã dùng Gói Social.
+
   v1.44.88 (2026-11-14) — §BRACKET-1G-TOP2-2026. Giải 1 bảng 6 cặp, Top 2: vòng bảng đã chốt nhưng "đang tự động chốt và tạo cây…" đứng mãi
   vì getBracketSeedMapping không có cấu hình (1 bảng, Top 2). Thêm mapping A1-A2 = Chung kết; cấu hình không hỗ trợ thì hiện rõ lý do.
 
@@ -11538,7 +11541,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.88'; // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
+const PICPOC_APP_VERSION = 'Picpoc v1.44.89'; // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
+// (ban truoc: 'Picpoc v1.44.88') // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
 // (ban truoc: 'Picpoc v1.44.87') // hien ly do khi app khong tu tao duoc MP4
 // (ban truoc: 'Picpoc v1.44.86') // §WC-MP4-2026 — app tu tao MP4 (WebCodecs + mp4-muxer) khi bo ghi MP4 cua trinh duyet lam sap tab
 // (ban truoc: 'Picpoc v1.44.85') // link thu lai MP4 khi may dang o che do WebM
@@ -17320,6 +17324,30 @@ function addBillItem(playerId, item){
    2 luong do (giu nguyen addBillItem()/gia mac dinh Cai dat...), chi noi lai duong dieu huong de Staff
    luon vao dung 1 cua "+ SẢN PHẨM" thay vi phai nho nhieu nut o nhieu cho khac nhau. openOtherChargeModal()
    duoc sua rieng de nhan playerId co san (bo qua o Nguoi choi, xem sua ben duoi). */
+/* §SOCIAL-TICKET-MANUAL-2026 — Admin: sua bill nhap sai hang (huy bill cu) xong bill moi KHONG con Ve Social, "bây giờ làm sao thêm vé
+   social 30k". Ve chi duoc TU them luc check-in; bill cu bi huy van giu dong ve nen app tuong luot nay da co ve. Them nut them tay:
+   dong 'ticket' dung chuan (gan visitId luot dang mo) -> bao cao Ve Social/Credits tinh dung nhu ve tu dong. */
+function playerHasLiveSocialTicket(playerId){
+  const v = (typeof getEffectiveVisitForSocialCheck === 'function') ? getEffectiveVisitForSocialCheck(playerId) : getActiveVisitForPlayer(playerId);
+  if(!v) return false;
+  return (state.bills||[]).some(b=>b && b.status !== 'cancelled' && Array.isArray(b.items) && b.items.some(it=>it && it.type === 'ticket' && it.visitId === v.id));
+}
+function addSocialTicketManually(playerId){
+  const pl = playerById(playerId); if(!pl) return;
+  const price = Math.round(Number(state.settings.socialTicketPrice) || 0);
+  if(price <= 0){ showToast('Chưa cấu hình giá Vé Social trong Cài đặt.'); return; }
+  const v = (typeof getEffectiveVisitForSocialCheck === 'function') ? getEffectiveVisitForSocialCheck(playerId) : getActiveVisitForPlayer(playerId);
+  if(playerHasLiveSocialTicket(playerId) && !confirm(pl.name + ' đã có Vé Social cho lượt chơi này. Vẫn thêm 1 vé nữa (tính 2 vé)?')) return;
+  if(v && typeof hasSocialPassUsageForVisit === 'function' && hasSocialPassUsageForVisit(v.id) && !confirm(pl.name + ' đã dùng 1 lượt Gói Social cho lượt chơi này (không phải trả Vé Social). Vẫn tính thêm Vé Social ' + fmtVnd(price) + '?')) return;
+  const r = addBillItem(playerId, { type:'ticket', label:'Vé Social', amount: price, qty:1, unitPrice: price, visitId: v ? v.id : null, manualAdded: true });
+  if(!r){ showToast('Không thêm được Vé Social.'); return; }
+  logOverride('social_ticket_manual_add', pl.name + ' — thêm tay Vé Social ' + fmtVnd(price), 'player', playerId);
+  saveState();
+  if(typeof renderPresenceTab === 'function') renderPresenceTab();
+  if(typeof renderSalesTab === 'function') renderSalesTab();
+  openBillModal(playerId);
+  showToast('✓ Đã thêm Vé Social ' + fmtVnd(price));
+}
 function openAddProductToBillModal(playerId){
   const p = playerById(playerId);
   if(!p) return;
@@ -17330,6 +17358,7 @@ function openAddProductToBillModal(playerId){
       <button class="secondary" style="flex:1;" onclick="openAddBallMachineRentalModal('${playerId}')">🎱 Thuê máy bắn bóng</button>
       <button class="secondary" style="flex:1;" onclick="openOtherChargeModal('${playerId}')">➕ Khoản khác/Dụng cụ</button>
     </div>
+    <button class="secondary" style="width:100%; margin-bottom:10px;" onclick="addSocialTicketManually('${playerId}')">🎟 Vé Social ${fmtVnd(state.settings.socialTicketPrice || 0)}${playerHasLiveSocialTicket(playerId) ? ' <span class="muted" style="font-weight:500;">(lượt này đã có vé)</span>' : ''}</button>
     <input type="text" placeholder="Tìm sản phẩm..." oninput="renderAddProductToBillGrid('${playerId}', this.value)" style="margin-bottom:10px; width:100%;">
     <div id="addProductToBillGrid" style="display:flex; flex-direction:column; gap:6px; max-height:340px; overflow:auto;"></div>
     <button class="secondary" style="width:100%; margin-top:10px; display:inline-flex; align-items:center; justify-content:center; gap:6px;" onclick="openBillModal('${playerId}')"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6"/></svg>Xem Bill</button>
