@@ -2,6 +2,9 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.90 (2026-11-25) — §BALLMACHINE-2PRICE-2026. Thuê máy bắn bóng: 2 lựa chọn "Kèm bóng 120.000đ" / "Không kèm bóng 90.000đ" (thay giá
+  chung 100k), tên dòng bill ghi rõ loại; dòng thuê máy trong bill đang mở có nút Xóa (trước phải huỷ cả bill).
+
   v1.44.89 (2026-11-25) — §SOCIAL-TICKET-MANUAL-2026. Sửa bill nhập sai (huỷ bill cũ) xong bill mới mất Vé Social, không có cách thêm lại.
   Thêm nút "🎟 Vé Social" trong cửa sổ Thêm vào bill: dòng 'ticket' chuẩn gắn visitId; hỏi lại nếu lượt đã có vé (bill chưa huỷ) hoặc đã dùng Gói Social.
 
@@ -11541,7 +11544,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.89'; // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
+const PICPOC_APP_VERSION = 'Picpoc v1.44.90'; // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
+// (ban truoc: 'Picpoc v1.44.89') // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
 // (ban truoc: 'Picpoc v1.44.88') // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
 // (ban truoc: 'Picpoc v1.44.87') // hien ly do khi app khong tu tao duoc MP4
 // (ban truoc: 'Picpoc v1.44.86') // §WC-MP4-2026 — app tu tao MP4 (WebCodecs + mp4-muxer) khi bo ghi MP4 cua trinh duyet lam sap tab
@@ -14610,7 +14614,8 @@ function defaultState(){
          Credit-eligible (§36). Chi 1 gia niem yet don gian (Staff van sua duoc tung lan them vao bill
          qua openAddBallMachineRentalModal()), KHONG lam ca 1 module thue thiet bi day du (ngoai pham
          vi §92-96 cua yeu cau Credits). */
-      ballMachineRentalPrice: 100000,
+      ballMachineRentalPrice: 100000, // (cu — khong con dung, xem ballMachinePriceWithBalls/NoBalls)
+      ballMachinePriceWithBalls: 120000, ballMachinePriceNoBalls: 90000, // §BALLMACHINE-2PRICE-2026
       /* §CREDIT2026 — PICPOC CREDITS. Tat ca gia tri phai configurable (§5), KHONG hard-code rai rac —
          moi noi phat Credit (Tournament/ReturnSoon/Milestone) PHAI doc tu day, khong tu dinh nghia so
          rieng. Tung nguon co "enabled" rieng (§59-62) de Admin tat/bat doc lap ma khong anh huong 2
@@ -33884,6 +33889,8 @@ function billLinesHtml(bill){
       let actions = '';
       if(canEdit && it.type==='product'){
         actions = `<button class="small secondary" style="margin-left:6px;" onclick="editBillProductItem('${bill.id}','${it.id}')">Sửa</button>`;
+      } else if(canEdit && it.type==='ball_machine_rental'){
+        actions = `<button class="small danger" style="margin-left:6px;" onclick="removeBallMachineItem('${bill.id}','${it.id}')">Xóa</button>`;
       } else if(canEdit && it.type==='water' && it.meta && it.meta.waterLossId){
         actions = `<button class="small danger" style="margin-left:6px;" onclick="cancelWaterLoss('${it.meta.waterLossId}')">Hủy</button>`;
       }
@@ -34091,12 +34098,17 @@ function applyCreditToBill(billId){
 function openAddBallMachineRentalModal(playerId){
   const p = playerById(playerId);
   if(!p) return;
-  const defaultPrice = (state.settings && state.settings.ballMachineRentalPrice) || 100000;
+  // §BALLMACHINE-2PRICE-2026 — Admin: "thuê máy bắn bóng (kèm bóng) 120k, (không kèm bóng) 90k". 2 lua chon gia co dinh, van sua tay duoc.
+  __ballMachineOpt = 'WITH_BALLS';
+  const opts = ballMachineOptions();
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2 style="display:flex; align-items:center; gap:8px;">🎱 Thuê máy bắn bóng — ${escapeHtml(p.name)}</h2>
+    <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+      ${Object.keys(opts).map(k=>`<button type="button" class="method-btn ${k===__ballMachineOpt?'active':''}" data-bmopt="${k}" aria-pressed="${k===__ballMachineOpt}" style="flex:1 1 180px;" onclick="pickBallMachineOption('${k}')">${escapeHtml(opts[k].short)}<br><b>${fmtVnd(opts[k].price)}</b></button>`).join('')}
+    </div>
     <label>Số tiền</label>
-    <input type="number" id="ballMachineAmountInput" min="0" step="1000" value="${defaultPrice}">
+    <input type="number" id="ballMachineAmountInput" min="0" step="1000" value="${opts[__ballMachineOpt].price}">
     <button id="ballMachineConfirmBtn" style="margin-top:10px;" onclick="confirmAddBallMachineRental('${playerId}')">THÊM VÀO BILL</button>
     <button class="secondary" onclick="openAddProductToBillModal('${playerId}')">← Quay lại</button>
     <button class="secondary" onclick="closeModal()">Đóng</button>
@@ -34109,6 +34121,50 @@ function openAddBallMachineRentalModal(playerId){
    — va addBillItem()/ensureOpenBillForPlayer() ben duoi khong tu chan trung (moi lan goi la 1 dong item
    moi, khong idempotency). Bam nhanh 2 lan (rat de xay ra tren man hinh cam ung POS) se cong 2 lan tien
    thue may vao bill that. Them dung pattern khoa nut da dung nhat quan o cac cho khac trong file. */
+let __ballMachineOpt = 'WITH_BALLS';
+function ballMachineOptions(){
+  const st = state.settings || {};
+  return {
+    WITH_BALLS: { short: 'Kèm bóng', label: 'Thuê máy bắn bóng (kèm bóng)', price: Math.round(Number(st.ballMachinePriceWithBalls) || 120000) },
+    NO_BALLS:   { short: 'Không kèm bóng', label: 'Thuê máy bắn bóng (không kèm bóng)', price: Math.round(Number(st.ballMachinePriceNoBalls) || 90000) }
+  };
+}
+function pickBallMachineOption(k){
+  const opts = ballMachineOptions(); if(!opts[k]) return;
+  __ballMachineOpt = k;
+  document.querySelectorAll('#matchModalContent [data-bmopt]').forEach(b=>{ const on = b.dataset.bmopt === k; b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
+  const inp = document.getElementById('ballMachineAmountInput'); if(inp) inp.value = opts[k].price;
+}
+/* Xoa 1 dong Thue may ban bong khoi bill DANG MO (truoc day dong nay khong co nut sua/xoa -> nhap nham phai huy ca bill). */
+function removeBallMachineItem(billId, itemId){
+  const bill = state.bills.find(b=>b.id===billId);
+  if(!bill || bill.status !== 'open') return;
+  const it = (bill.items||[]).find(x=>x.id===itemId);
+  if(!it || it.type !== 'ball_machine_rental') return;
+  if(getBillCollected(bill) > 0){ showToast('Bill đã thu một phần — Hoàn tác thanh toán trước khi xoá dòng.'); return; }
+  if(!confirm('Xoá dòng "' + it.label + '" (' + fmtVnd(it.amount) + ') khỏi bill?')) return;
+  bill.items = bill.items.filter(x=>x.id!==itemId);
+  logOverride('bill_item_removed', (bill.playerName||'') + ' — xoá dòng ' + it.label + ' ' + fmtVnd(it.amount), 'bill', bill.id);
+  // Xoa tren ban MOI NHAT cua server (transaction), cung kieu addBillItem() — khong dung markEntityDirty (CAS co the bi huy, dong da xoa "song lai").
+  if(SYNC_ENABLED && dbRoot){
+    markEntityPendingWrite('bills', bill.id);
+    DataService.bills.transaction(bill.id, remoteBill=>{
+      if(remoteBill === null) return sanitizeForFirebase(bill);
+      if(remoteBill.status !== 'open') return undefined;
+      const arr = Array.isArray(remoteBill.items) ? remoteBill.items : Object.values(remoteBill.items || {});
+      remoteBill.items = arr.filter(x=>x && x.id !== itemId);
+      return remoteBill;
+    }).then(result=>{
+      clearEntityPendingWrite('bills', bill.id);
+      if(result && result.committed) markEntitySynced('bills', bill.id);
+      else { console.error('[removeBallMachineItem] không xoá được trên server', bill.id); showToast('⚠ Chưa xoá được dòng trên server — kiểm tra mạng rồi thử lại.'); }
+    }).catch(err=>{ clearEntityPendingWrite('bills', bill.id); handleWriteError('bills','transaction',err); });
+  }
+  saveState();
+  openBillModal(bill.playerId);
+  if(typeof renderPresenceTab === 'function') renderPresenceTab();
+  if(typeof renderSalesTab === 'function') renderSalesTab();
+}
 function confirmAddBallMachineRental(playerId){
   const btn = document.getElementById('ballMachineConfirmBtn');
   if(btn && btn.disabled) return;
@@ -34116,11 +34172,12 @@ function confirmAddBallMachineRental(playerId){
   const amount = Math.max(0, Math.round(Number(input?input.value:0)||0));
   if(amount<=0){ showToast('Nhập số tiền hợp lệ'); return; }
   if(btn){ btn.disabled = true; btn.textContent = 'ĐANG THÊM...'; } // chong double-click tao trung khoan thue may
-  const bill = addBillItem(playerId, { type:'ball_machine_rental', label:'Thuê máy bắn bóng', amount, qty:1, unitPrice:amount });
+  const bmOpt = ballMachineOptions()[__ballMachineOpt] || ballMachineOptions().WITH_BALLS;
+  const bill = addBillItem(playerId, { type:'ball_machine_rental', label: bmOpt.label, amount, qty:1, unitPrice:amount, meta: { ballMachineOption: __ballMachineOpt } });
   if(!bill) return;
   // §FIX-BILLITEM-MERGE-RACE — addBillItem() da tu dong bo item nay qua transaction rieng.
   saveState();
-  showToast('Đã thêm Thuê máy bắn bóng vào bill.');
+  showToast('Đã thêm ' + bmOpt.label + ' ' + fmtVnd(amount) + ' vào bill.');
   openBillModal(playerId);
   if(typeof renderPresenceTab === 'function') renderPresenceTab();
 }
