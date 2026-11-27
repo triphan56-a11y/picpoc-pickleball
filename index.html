@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.93 (2026-11-27) — §FIX-LISTENER-DROP-UNSYNCED-2026. GỐC của "mất khoản thu" (27/11 Hoàng Vũ 50k + cặp Đôi nam 5.25 100k -> Báo cáo
+  thiếu 150k so với sổ Thu & Chi; cùng loại với 30/10): listener thay nguyên mảng local bằng bản server, xoá payment vừa tạo chưa kịp ghi
+  (phần chuyển khoản sau phần Credits). Nay giữ lại bản ghi local chưa từng lên server tạo trong 10 phút; lỗi mạng khi xác nhận bill vẫn đẩy payment.
+
   v1.44.92 (2026-11-27) — §REPORT-LEDGER-RECON-2026. Admin cộng sổ Thu & Chi (chuyển khoản) ra 1.221k, Báo cáo ghi 1.071k -> 2 sổ lệch.
   Màn chi tiết phương thức thêm khối đối chiếu: tổng 2 sổ, chênh, và từng dòng lệch kèm lý do (sổ có mà khoản thu mất/đã hoàn tác,
   khác phương thức, khác ngày, lệch số tiền, khoản thu không có dòng sổ) — để tìm đúng nguyên nhân trên dữ liệu thật.
@@ -11552,7 +11556,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.92'; // §REPORT-LEDGER-RECON-2026 — doi chieu tung dong Bao cao vs so Thu & Chi
+const PICPOC_APP_VERSION = 'Picpoc v1.44.93'; // §FIX-LISTENER-DROP-UNSYNCED-2026 — khong con mat khoan thu khi thu Credits + chuyen khoan
+// (ban truoc: 'Picpoc v1.44.92') // §REPORT-LEDGER-RECON-2026 — doi chieu tung dong Bao cao vs so Thu & Chi
 // (ban truoc: 'Picpoc v1.44.91') // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
 // (ban truoc: 'Picpoc v1.44.90') // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
 // (ban truoc: 'Picpoc v1.44.89') // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
@@ -18724,7 +18729,12 @@ function confirmBillPaymentAtomicV2(bill, payment, expectedVersion){
       const p = playerById(bill.playerId);
       if(p) markEntityDirty('players', p.id);
     }
-  }).catch(err=>{ clearEntityPendingWrite('bills', bill.id); console.error('[split/debt payment] confirm error', err); handleWriteError('bills','transaction',err); });
+  }).catch(err=>{
+    clearEntityPendingWrite('bills', bill.id); console.error('[split/debt payment] confirm error', err); handleWriteError('bills','transaction',err);
+    // §FIX-LISTENER-DROP-UNSYNCED-2026 — transaction bill loi (mat mang giua chung): khoan thu van la that tren may nay -> day len,
+    // bill se duoc luoi an toan diffAndFlushEntities day lai o lan saveState ke tiep.
+    try{ if(state.payments.some(x=>x.id===payment.id)) markEntityDirty('payments', payment.id); }catch(e){}
+  });
 }
 
 /* Rollback 1 payment cua engine moi (split-part hoac thu no) khi bi xung dot
@@ -45485,6 +45495,26 @@ function attachEntityListener(node){
     // LOCAL hien tai thay vi lay tu snapshot — cho toi khi transaction do tu ket thuc (thanh cong hay
     // that bai) va tu goi clearEntityPendingWrite, luc do listener lan ke tiep se lay dung ban moi nhat.
     const pendingIds = pendingEntityWrites[node];
+    /* §FIX-LISTENER-DROP-UNSYNCED-2026 — MAT KHOAN THU (27/11: Hoàng Vũ 50k + cặp Đôi nam 5.25 100k; truoc do Linh/Xanh/Béo 30/10).
+       Listener nay THAY NGUYEN mang local bang ban server. Thu phi giai Credits + chuyen khoan tao 2 payment lien tiep, payment chi
+       duoc ghi len server SAU khi transaction cua bill xong. Payment 1 (Credits) len truoc -> su kien 'value' cua node payments ban ve
+       -> mang local bi thay -> payment 2 (chuyen khoan, CHUA len server, khong nam trong pendingIds) BI XOA khoi may -> khong bao gio
+       duoc ghi; bill van 'paid', so Thu & Chi van co dong -> lech Bao cao. (Bat ky su kien payments nao tu may khac trong khe do cung
+       gay ra.) Sua: ban ghi local chua TUNG co tren server (khong nam trong lastSyncedSnapshot truoc do), vua tao trong 10 phut, thi
+       GIU LAI — no se duoc ghi boi luong cua chinh no / luoi an toan diffAndFlushEntities. Ban ghi da tung dong bo ma server khong con
+       (may khac xoa) van bi go nhu cu. Chi ap dung khi node da hydrate (lan snapshot dau van lay nguyen ban server). */
+    let __keepUnsynced = [];
+    if(ARRAY_ENTITY_NODES.includes(node) && __hydratedNodes.has(node) && Array.isArray(state[node])){
+      const prevSnap = lastSyncedSnapshot[node] || {};
+      const nowTs = Date.now();
+      __keepUnsynced = state[node].filter(e=>{
+        if(!e || !e.id || val[e.id] !== undefined) return false;
+        if(Object.prototype.hasOwnProperty.call(prevSnap, e.id)) return false; // da tung co tren server -> server xoa that
+        if(pendingIds && pendingIds.has(e.id)) return false; // nhanh pending ben duoi tu giu
+        const born = e.createdAt || e.timestamp || e.openedAt || e.checkInAt || 0;
+        return born && (nowTs - born) < 10*60*1000 && (nowTs - born) > -60*1000;
+      });
+    }
     if(ARRAY_ENTITY_NODES.includes(node)){
       const incoming = Object.keys(val).map(id=>val[id]).filter(Boolean);
       if(pendingIds && pendingIds.size){
@@ -45498,6 +45528,11 @@ function attachEntityListener(node){
         });
       } else {
         state[node] = incoming;
+      }
+      if(__keepUnsynced.length){
+        const have = new Set(state[node].map(e=>e && e.id));
+        __keepUnsynced.forEach(e=>{ if(!have.has(e.id)) state[node].push(e); });
+        console.warn('[listener] giữ ' + __keepUnsynced.length + ' bản ghi ' + node + ' mới tạo chưa lên server:', __keepUnsynced.map(e=>e.id).join(','));
       }
     } else if(OBJECT_ENTITY_NODES.includes(node)){
       if(pendingIds && pendingIds.size){
