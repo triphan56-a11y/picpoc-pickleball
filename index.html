@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.91 (2026-11-27) — §REPORT-METHOD-DETAIL-2026. Báo cáo "Chuyển khoản 1.071k" lệch 152k so với thực nhận, không có chỗ đối chiếu.
+  Bấm dòng Chuyển khoản/Tiền mặt/Credits -> danh sách từng khoản (giờ, khách, món, người thu) + các khoản nằm ngoài con số: học phí
+  Academy, thu nhập tay Thu & Chi, khoản đã hoàn tác, khoản ghi phương thức còn lại (bấm nhầm), bill mở trong kỳ chưa thu.
+
   v1.44.90 (2026-11-25) — §BALLMACHINE-2PRICE-2026. Thuê máy bắn bóng: 2 lựa chọn "Kèm bóng 120.000đ" / "Không kèm bóng 90.000đ" (thay giá
   chung 100k), tên dòng bill ghi rõ loại; dòng thuê máy trong bill đang mở có nút Xóa (trước phải huỷ cả bill).
 
@@ -11544,7 +11548,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.90'; // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
+const PICPOC_APP_VERSION = 'Picpoc v1.44.91'; // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
+// (ban truoc: 'Picpoc v1.44.90') // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
 // (ban truoc: 'Picpoc v1.44.89') // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
 // (ban truoc: 'Picpoc v1.44.88') // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
 // (ban truoc: 'Picpoc v1.44.87') // hien ly do khi app khong tu tao duoc MP4
@@ -32257,6 +32262,67 @@ function getRevenueByCategory(ctx){
   ctx.revenueEntries.forEach(e=>{ totals[e.category] = (totals[e.category]||0) + e.amount; });
   return totals;
 }
+/* §REPORT-METHOD-DETAIL-2026 — Admin: "app hiển thị chuyển khoản 1.071k nhưng cộng các khoản khách chuyển là 1.223k, lệch 152k".
+   So "Chuyển khoản" o Bao cao = tong payment CLUB (thu bill + ban le) chua bi hoan tac, tao TRONG ky, phuong thuc khong phai Tien
+   mat/Credits. Truoc day khong co cho nao liet ke tung khoan -> khong doi chieu duoc voi sao ke. Modal nay liet ke tung khoan cua
+   phuong thuc + cac khoan DE GAY LECH nam ngoai con so: hoc phi Academy, thu khac nhap tay o Thu & Chi, khoan da hoan tac, bill tao
+   trong ky chua thu, va khoan cua CUNG khach ghi o phuong thuc khac (nghi bam nham phuong thuc). */
+function reportPaymentRowInfo(pm){
+  const bills = (Array.isArray(pm.billIds) ? pm.billIds : []).map(id=>state.bills.find(b=>b.id===id)).filter(Boolean);
+  const names = Array.from(new Set(bills.map(b=>b.playerName).filter(Boolean)));
+  const who = names.length ? names.join(', ') : (pm.buyerName || pm.payerName || 'Khách lẻ / bán lẻ');
+  const labels = [];
+  bills.forEach(b=>(b.items||[]).forEach(it=>{ if(it && it.label && labels.indexOf(it.label) < 0) labels.push(it.label); }));
+  return { who, what: labels.slice(0, 4).join(', ') + (labels.length > 4 ? '…' : '') };
+}
+function openReportPaymentMethodDetail(method){
+  const range = getReportRange();
+  const ctx = buildReportContext(range.start, range.end);
+  const inRange = ts => typeof ts === 'number' && ts >= range.start && ts < range.end;
+  const normM = pm => pm === 'CASH' ? 'CASH' : (pm === 'CREDIT' ? 'CREDIT' : 'BANK_TRANSFER');
+  const fmtT = ts => new Date(ts).toLocaleString('vi-VN', { hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit' });
+  const mine = ctx.payments.filter(x=>normM(x.payment.paymentMethod) === method && x.effective > 0).sort((a,b)=>(a.payment.createdAt||0)-(b.payment.createdAt||0));
+  const total = mine.reduce((s2,x)=>s2+x.effective,0);
+  const line = (l, r, sub)=>`<div class="bill-line" style="align-items:flex-start;"><span>${l}${sub ? `<br><span class="muted" style="font-size:.74rem;">${sub}</span>` : ''}</span><span style="white-space:nowrap;"><b>${r}</b></span></div>`;
+  const rowsHtml = mine.map(x=>{ const i = reportPaymentRowInfo(x.payment);
+    return line(fmtT(x.payment.createdAt) + ' · ' + escapeHtml(i.who), fmtVnd(x.effective), escapeHtml(i.what) + (x.payment.createdBy ? ' · thu: ' + escapeHtml(x.payment.createdBy) : '')); }).join('') || '<div class="muted">Không có khoản nào.</div>';
+  // --- cac khoan nam NGOAI con so ---
+  const extra = [];
+  if(method !== 'CREDIT'){
+    const aca = (state.academyPayments||[]).filter(a=>a && !a.voided && inRange(a.createdAt) && normM(a.method) === method);
+    if(aca.length) extra.push({ title:'Học phí Academy (' + financeMethodLabel(method) + ') — KHÔNG nằm trong báo cáo Club', total: aca.reduce((s2,a)=>s2+(a.amount||0),0),
+      rows: aca.map(a=>line(fmtT(a.createdAt) + ' · ' + escapeHtml((typeof academyStudentById === 'function' && academyStudentById(a.studentId) || {}).name || 'Học viên'), fmtVnd(a.amount||0), a.createdBy ? 'thu: ' + escapeHtml(a.createdBy) : '')) });
+    const payIds = new Set((state.payments||[]).map(x=>x.id)), acaIds = new Set((state.academyPayments||[]).map(x=>x.id));
+    const manual = (state.financeTransactions||[]).filter(t=>t && t.type === 'INCOME' && t.status === 'ACTIVE' && inRange(t.createdAt) && normM(t.paymentMethod) === method && !(t.sourceId && (payIds.has(t.sourceId) || acaIds.has(t.sourceId))));
+    if(manual.length) extra.push({ title:'Khoản thu nhập tay ở Thu & Chi (' + financeMethodLabel(method) + ') — KHÔNG nằm trong báo cáo Club', total: manual.reduce((s2,t)=>s2+(t.amount||0),0),
+      rows: manual.map(t=>line(fmtT(t.createdAt) + ' · ' + escapeHtml(t.description || 'Thu khác'), fmtVnd(t.amount||0), t.createdBy ? 'ghi: ' + escapeHtml(t.createdBy) : '')) });
+  }
+  const voided = (state.payments||[]).filter(x=>x && inRange(x.createdAt) && normM(x.paymentMethod) === method && (x.voided || (Array.isArray(x.allocations) && x.allocations.some(a=>a && a.voided))));
+  if(voided.length) extra.push({ title:'Khoản ' + financeMethodLabel(method) + ' đã bị HOÀN TÁC (không còn tính)', total: voided.reduce((s2,x)=>s2 + ((x.amount||0) - getPaymentEffectiveAmount(x)),0),
+    rows: voided.map(x=>{ const i = reportPaymentRowInfo(x); return line(fmtT(x.createdAt) + ' · ' + escapeHtml(i.who), fmtVnd((x.amount||0) - getPaymentEffectiveAmount(x)), escapeHtml(i.what)); }) });
+  if(method !== 'CREDIT'){
+    // cung khach, trong ky, nhung ghi o phuong thuc tien that con lai -> de bam nham Tien mat <-> Chuyen khoan
+    const other = method === 'CASH' ? 'BANK_TRANSFER' : 'CASH';
+    const oth = ctx.payments.filter(x=>normM(x.payment.paymentMethod) === other && x.effective > 0).sort((a,b)=>(a.payment.createdAt||0)-(b.payment.createdAt||0));
+    if(oth.length) extra.push({ title:'Các khoản ghi là ' + financeMethodLabel(other) + ' trong kỳ — kiểm tra có khoản nào bấm nhầm phương thức không', total: oth.reduce((s2,x)=>s2+x.effective,0),
+      rows: oth.map(x=>{ const i = reportPaymentRowInfo(x.payment); return line(fmtT(x.payment.createdAt) + ' · ' + escapeHtml(i.who), fmtVnd(x.effective), escapeHtml(i.what) + (x.payment.createdBy ? ' · thu: ' + escapeHtml(x.payment.createdBy) : '')); }) });
+    const open = (state.bills||[]).filter(b=>b && b.status === 'open' && Array.isArray(b.items) && b.items.length && getBillOutstanding(b) > 0 && inRange(b.openedAt || b.createdAt || ((b.items[0]||{}).timestamp)));
+    if(open.length) extra.push({ title:'Bill mở trong kỳ CHƯA THU trên app (khách có thể đã chuyển khoản nhưng chưa bấm thanh toán)', total: open.reduce((s2,b)=>s2+getBillOutstanding(b),0),
+      rows: open.map(b=>line(escapeHtml(b.playerName || '(không tên)') + (b.debtCreatedAt ? ' · đang ghi nợ' : ''), fmtVnd(getBillOutstanding(b)), escapeHtml((b.items||[]).map(it=>it.label).filter(Boolean).slice(0,4).join(', ')))) });
+  }
+  const extraHtml = extra.map(e=>`<div style="margin-top:14px;"><div style="display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:.86rem; border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:4px;"><span>${e.title}</span><span style="white-space:nowrap;">${fmtVnd(e.total)}</span></div>${e.rows.join('')}</div>`).join('');
+  const box = document.getElementById('matchModalContent');
+  box.innerHTML = `
+    <h2>${financeMethodLabel(method)} — ${escapeHtml(range.label || '')}</h2>
+    <p class="muted" style="font-size:.84rem; margin:0 0 8px;">Từng khoản thu Club (thu bill + bán lẻ) bằng ${financeMethodLabel(method)} trong kỳ, chưa bị hoàn tác. Đối chiếu từng dòng với ${method === 'BANK_TRANSFER' ? 'sao kê ngân hàng' : method === 'CASH' ? 'tiền trong két' : 'lịch sử Credits'}.</p>
+    <div style="max-height:52vh; overflow:auto;">
+      ${rowsHtml}
+      <div class="bill-line" style="border-top:2px solid var(--border); padding-top:6px; margin-top:4px;"><b>TỔNG ${mine.length} khoản</b><b>${fmtVnd(total)}</b></div>
+      ${extraHtml ? '<div class="small-note" style="margin-top:14px;"><b>Các khoản KHÔNG nằm trong con số trên</b> — nếu số thực nhận khác app, thường nằm ở đây:</div>' + extraHtml : ''}
+    </div>
+    <div class="form-actions" style="margin-top:12px;"><button class="big" onclick="closeModal()">Đóng</button></div>`;
+  document.getElementById('matchModal').classList.add('show');
+}
 function getPaymentsByMethod(ctx){
   const totals = { CASH: 0, BANK_TRANSFER: 0, CREDIT: 0 }; // §CREDIT2026-54
   ctx.payments.forEach(p=>{
@@ -33058,9 +33124,9 @@ function renderReportsTab(){
   `).join('');
   const methods = getPaymentsByMethod(ctx);
   document.getElementById('reportPaymentMethod').innerHTML = `
-    <div class="bill-line"><span>Chuyển khoản</span><span>${fmtVnd(methods.BANK_TRANSFER)}</span></div>
-    <div class="bill-line"><span>Tiền mặt</span><span>${fmtVnd(methods.CASH)}</span></div>
-    ${methods.CREDIT>0 ? `<div class="bill-line"><span>🎫 Picpoc Credits</span><span>${fmtVnd(methods.CREDIT)}</span></div>` : ''}
+    <div class="bill-line" style="cursor:pointer;" onclick="openReportPaymentMethodDetail('BANK_TRANSFER')" title="Xem từng khoản để đối chiếu sao kê"><span>Chuyển khoản <span class="muted" style="font-size:.75rem;">· xem ›</span></span><span>${fmtVnd(methods.BANK_TRANSFER)}</span></div>
+    <div class="bill-line" style="cursor:pointer;" onclick="openReportPaymentMethodDetail('CASH')" title="Xem từng khoản"><span>Tiền mặt <span class="muted" style="font-size:.75rem;">· xem ›</span></span><span>${fmtVnd(methods.CASH)}</span></div>
+    ${methods.CREDIT>0 ? `<div class="bill-line" style="cursor:pointer;" onclick="openReportPaymentMethodDetail('CREDIT')"><span>🎫 Picpoc Credits <span class="muted" style="font-size:.75rem;">· xem ›</span></span><span>${fmtVnd(methods.CREDIT)}</span></div>` : ''}
     <div class="bill-line" style="border-top:2px solid var(--border); padding-top:6px; margin-top:4px;"><b>TỔNG THU (Cash+Bank)</b><b>${fmtVnd(methods.BANK_TRANSFER+methods.CASH)}</b></div>
   `;
 
