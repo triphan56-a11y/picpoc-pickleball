@@ -2,6 +2,11 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.95 (2026-11-27) — §RESTORE-AUTOREVERSED-2026. 2 dòng lệch "biến mất": nút "Sửa an toàn" (FINANCE_TX_ORPHANED_PAYMENT_REF) ở Kiểm tra
+  dữ liệu đã ĐẢO dòng sổ của khoản thu thật bị mất -> 2 sổ cùng thiếu 150k. Nay: màn đối chiếu liệt kê các dòng bị đảo nhầm (bill còn thiếu
+  tiền) + nút GHI NHẬN LẠI (tạo lại payment, kích hoạt lại dòng sổ); Kiểm tra dữ liệu đổi lỗi này thành FINANCE_TX_LOST_PAYMENT với nút ghi nhận
+  lại, cấm đảo sổ khi bill còn thiếu tiền.
+
   v1.44.94 (2026-11-27) — §RESTORE-LEDGER-ONLY-2026. Kiểm tra dữ liệu không hiện 2 khoản mất (nút cũ chỉ nhận bill 'paid'). Thêm nút
   "GHI NHẬN LẠI KHOẢN THU" ngay tại dòng lệch trong màn đối chiếu Báo cáo: tìm bill qua vé giải/bill.paymentId/snapshot bán hàng, tạo lại
   payment đúng id cũ theo dòng sổ Thu & Chi (số tiền = min(dòng sổ, phần bill còn thiếu)); bill đã đủ tiền thì báo dòng sổ thừa.
@@ -11560,7 +11565,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.94'; // §RESTORE-LEDGER-ONLY-2026 — nut GHI NHAN LAI khoan thu mat ngay trong man doi chieu
+const PICPOC_APP_VERSION = 'Picpoc v1.44.95'; // §RESTORE-AUTOREVERSED-2026 — khoi phuc khoan thu da bi 'sua an toan' dao nham; chan dao so khi bill con thieu tien
+// (ban truoc: 'Picpoc v1.44.94') // §RESTORE-LEDGER-ONLY-2026 — nut GHI NHAN LAI khoan thu mat ngay trong man doi chieu
 // (ban truoc: 'Picpoc v1.44.93') // §FIX-LISTENER-DROP-UNSYNCED-2026 — khong con mat khoan thu khi thu Credits + chuyen khoan
 // (ban truoc: 'Picpoc v1.44.92') // §REPORT-LEDGER-RECON-2026 — doi chieu tung dong Bao cao vs so Thu & Chi
 // (ban truoc: 'Picpoc v1.44.91') // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
@@ -17811,6 +17817,8 @@ function repairOrphanedFinanceTransaction(args){
     ? (state.academyPayments||[]).find(p=>p.id===t.sourceId)
     : state.payments.find(p=>p.id===t.sourceId);
   if(stillExists) return { ok:false, reason:'Payment gốc đã xuất hiện trở lại — dữ liệu đã thay đổi, không cần sửa.' };
+  { const li = (typeof lostLedgerTxInfo === 'function') ? lostLedgerTxInfo(t.id) : null; // §RESTORE-AUTOREVERSED-2026
+    if(li && li.bill && li.amount > 0) return { ok:false, reason:'Bill "' + (li.bill.playerName||'') + '" còn thiếu ' + fmtVnd(li.outstanding) + ' — đây là khoản thu thật bị mất, KHÔNG đảo sổ. Dùng nút GHI NHẬN LẠI KHOẢN THU.' }; }
   t.status = 'REVERSED'; t.reversedAt = Date.now(); t.reversedBy = 'data_integrity_auto_repair';
   logDataIntegrityRepair('FINANCE_TX_ORPHANED_PAYMENT_REF', 'financeTransaction', t.id,
     { status:'ACTIVE' }, { status:'REVERSED' },
@@ -32317,11 +32325,20 @@ function findBillForLostLedgerTx(tx){
 }
 function lostLedgerTxInfo(txId){
   const tx = (state.financeTransactions||[]).find(t=>t && t.id === txId);
-  if(!tx || tx.status !== 'ACTIVE' || tx.type !== 'INCOME' || !tx.sourceId) return null;
+  if(!tx || tx.type !== 'INCOME' || !tx.sourceId) return null;
+  // §RESTORE-AUTOREVERSED-2026 — ca dong so da bi nut "SỬA AN TOÀN" (Kiểm tra dữ liệu) dao nham thanh REVERSED trong khi tien da thu that
+  const autoReversed = tx.status === 'REVERSED' && tx.reversedBy === 'data_integrity_auto_repair';
+  if(tx.status !== 'ACTIVE' && !autoReversed) return null;
   if((state.payments||[]).some(x=>x && x.id === tx.sourceId)) return null; // khoan thu van con
   const bill = findBillForLostLedgerTx(tx);
   const outstanding = bill ? getBillOutstanding(bill) : 0;
-  return { tx, bill, outstanding, amount: bill ? Math.min(Math.round(tx.amount||0), outstanding) : 0 };
+  return { tx, bill, outstanding, autoReversed, amount: bill ? Math.min(Math.round(tx.amount||0), outstanding) : 0 };
+}
+/* Cac dong so Thu & Chi (trong ky, dung phuong thuc) da bi "sua an toan" dao nham ma khoan thu goc mat va bill con thieu tien. */
+function autoReversedLostLedgerTxs(method, start, end){
+  return (state.financeTransactions||[]).filter(t=>t && t.type === 'INCOME' && t.status === 'REVERSED' && t.reversedBy === 'data_integrity_auto_repair'
+      && typeof t.createdAt === 'number' && t.createdAt >= start && t.createdAt < end && financeNormalizeMethod(t.paymentMethod) === method)
+    .map(t=>lostLedgerTxInfo(t.id)).filter(Boolean);
 }
 function restoreLedgerOnlyPayment(txId){
   if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
@@ -32332,7 +32349,7 @@ function restoreLedgerOnlyPayment(txId){
   if(!(info.amount > 0)){ showToast('Bill "' + (bill.playerName||'') + '" hiện đã đủ tiền — dòng sổ này bị thừa. Nếu chắc chắn, bấm "Hoàn tác" dòng đó ở Thu & Chi.'); return; }
   const method = financeNormalizeMethod(tx.paymentMethod);
   if(method === 'CREDIT'){ showToast('Dòng Credits không khôi phục bằng cách này.'); return; }
-  if(!confirm('Ghi nhận lại khoản thu ' + fmtVnd(info.amount) + ' (' + financeMethodLabel(method) + ') — ' + (tx.description || bill.playerName || '') + ' lúc ' + new Date(tx.createdAt).toLocaleString('vi-VN') + '?\n\nSổ Thu & Chi đã ghi khoản này nhưng khoản thu bị app làm mất do lỗi đồng bộ (đã sửa ở v1.44.93). Chỉ bấm OK nếu tiền này đã nhận thật.')) return;
+  if(!confirm('Ghi nhận lại khoản thu ' + fmtVnd(info.amount) + ' (' + financeMethodLabel(method) + ') — ' + (tx.description || bill.playerName || '') + ' lúc ' + new Date(tx.createdAt).toLocaleString('vi-VN') + '?\n\nSổ Thu & Chi đã ghi khoản này nhưng khoản thu bị app làm mất do lỗi đồng bộ (đã sửa ở v1.44.93)' + (info.autoReversed ? ', sau đó dòng sổ bị nút "Sửa an toàn" đảo nhầm' : '') + '. Chỉ bấm OK nếu tiền này đã nhận thật.')) return;
   const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
   const payment = { id: tx.sourceId, amount: info.amount, originalAmount: info.amount, paymentMethod: method, billIds:[bill.id],
     allocations:[{ billId: bill.id, amount: info.amount, voided:false }], operationId:null, paymentGroupId:null,
@@ -32346,7 +32363,10 @@ function restoreLedgerOnlyPayment(txId){
     patchEntityAtomic('payments', payment.id, sanitizeForFirebase(payment)),
     patchEntityAtomic('bills', bill.id, { status: bill.status, paidAt: bill.paidAt || null, paymentId: bill.paymentId || null, paymentMethod: bill.paymentMethod || null })
   ]).then(rs=>{ if(!rs.every(Boolean)) showToast('⚠ Khoản khôi phục CHƯA lưu được lên server — kiểm tra mạng rồi bấm lại.'); return rs.every(Boolean); });
-  if(Math.round(tx.amount||0) !== info.amount){ tx.amount = info.amount; markEntityDirty('financeTransactions', tx.id); }
+  if(info.autoReversed || Math.round(tx.amount||0) !== info.amount){
+    tx.status = 'ACTIVE'; tx.reversedAt = null; tx.reversedBy = null; tx.amount = info.amount;
+    patchEntityAtomic('financeTransactions', tx.id, { status:'ACTIVE', reversedAt: null, reversedBy: null, amount: info.amount });
+  }
   if(!state.sales.some(x=>x.billId===bill.id && !x.voided)){
     state.sales.unshift({ id: uid('sale'), kind:'BILL_PAYMENT_SNAPSHOT', items: (bill.items||[]).map(it=>({ productId: it.meta && it.meta.productId, name: it.label, price: it.unitPrice||it.amount, qty: it.qty||1 })),
       total: billTotal(bill), timestamp: payment.createdAt, billId: bill.id, buyerId: bill.playerId || null, buyerName: bill.playerName, paymentMethod: payment.paymentMethod, paymentId: payment.id, voided:false });
@@ -32437,12 +32457,22 @@ function openReportPaymentMethodDetail(method){
           return line(fmtT(ts) + ' · ' + escapeHtml(who || (i.tx && i.tx.description) || ''), fmtVnd(Math.abs(i.amount)), escapeHtml(i.why) + ' · mã: ' + escapeHtml(String((i.tx && i.tx.sourceId) || (i.pay && i.pay.id) || '').slice(-10))) + act;
         }).join('') : '<div class="muted" style="font-size:.8rem; margin-top:4px;">Hai sổ khớp nhau từng dòng.</div>'}
     </div>`;
+  const autoRev = autoReversedLostLedgerTxs(method, range.start, range.end);
+  const autoRevHtml = autoRev.length ? `<div style="margin:0 0 12px; padding:10px 12px; border-radius:10px; background:#fef2f2;">
+      <div style="font-weight:800; color:var(--danger);">⚠ ${autoRev.length} khoản đã thu thật nhưng ĐANG BỊ BỎ KHỎI CẢ 2 SỔ (tổng ${fmtVnd(autoRev.reduce((a,x)=>a+(x.tx.amount||0),0))})</div>
+      <div class="muted" style="font-size:.78rem; margin:2px 0 6px;">Khoản thu bị app làm mất, sau đó dòng sổ Thu & Chi bị nút "Sửa an toàn" ở Kiểm tra dữ liệu đảo theo. Bấm để ghi nhận lại vào cả hai sổ.</div>
+      ${autoRev.map(x=>line(fmtT(x.tx.createdAt) + ' · ' + escapeHtml(x.tx.description || (x.bill && x.bill.playerName) || ''), fmtVnd(x.tx.amount||0), 'mã: ' + escapeHtml(String(x.tx.sourceId).slice(-10))) +
+        (x.bill && x.amount > 0 ? `<div style="margin:2px 0 8px;"><span class="muted" style="font-size:.76rem;">Bill "${escapeHtml(x.bill.playerName||'')}" đang ${x.bill.status === 'paid' ? 'ghi ĐÃ THANH TOÁN' : 'MỞ'} nhưng còn thiếu ${fmtVnd(x.outstanding)}.</span> <button class="small" data-require-permission="PAYMENT_VOID" onclick="restoreLedgerOnlyPayment('${x.tx.id}')">GHI NHẬN LẠI KHOẢN THU ${fmtVnd(x.amount)}</button></div>`
+          : x.bill ? `<div class="muted" style="font-size:.76rem; margin:2px 0 8px;">Bill "${escapeHtml(x.bill.playerName||'')}" hiện đã đủ tiền — không cần ghi nhận lại.</div>`
+          : `<div class="muted" style="font-size:.76rem; margin:2px 0 8px;">Chưa xác định được bill của dòng này — chụp màn hình gửi hỗ trợ.</div>`)).join('')}
+    </div>` : '';
   const extraHtml = extra.map(e=>`<div style="margin-top:14px;"><div style="display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:.86rem; border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:4px;"><span>${e.title}</span><span style="white-space:nowrap;">${fmtVnd(e.total)}</span></div>${e.rows.join('')}</div>`).join('');
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2>${financeMethodLabel(method)} — ${escapeHtml(range.label || '')}</h2>
     <p class="muted" style="font-size:.84rem; margin:0 0 8px;">Từng khoản thu Club (thu bill + bán lẻ) bằng ${financeMethodLabel(method)} trong kỳ, chưa bị hoàn tác. Đối chiếu từng dòng với ${method === 'BANK_TRANSFER' ? 'sao kê ngân hàng' : method === 'CASH' ? 'tiền trong két' : 'lịch sử Credits'}.</p>
     <div style="max-height:56vh; overflow:auto;">
+      ${autoRevHtml}
       ${reconHtml}
       ${rowsHtml}
       <div class="bill-line" style="border-top:2px solid var(--border); padding-top:6px; margin-top:4px;"><b>TỔNG ${mine.length} khoản</b><b>${fmtVnd(total)}</b></div>
@@ -38795,11 +38825,22 @@ function runDataIntegrityCheck(){
   (state.financeTransactions||[]).forEach(t=>{
     if(t.status !== 'ACTIVE') return;
     if(t.sourceType === 'SOCIAL_PAYMENT' || t.sourceType === 'BOOKING_PAYMENT' || t.sourceType === 'TOURNAMENT_PAYMENT' || t.sourceType === 'POS_PAYMENT' || t.sourceType === 'BALL_MACHINE_PAYMENT'){ // §CREDIT2026-36
-      if(!state.payments.find(p=>p.id===t.sourceId)) addIssue('Finance','WARNING','Giao dịch Tài chính (' + t.sourceType + ') trỏ tới payment không còn tồn tại (' + t.sourceId + ').', {
-        code:'FINANCE_TX_ORPHANED_PAYMENT_REF', entityType:'financeTransaction', entityId:t.id, entityLabel:t.description||t.id,
-        impact:'Payment gốc không còn tồn tại thật (đã bị xoá khi rollback xung đột đa thiết bị) — giao dịch Thu&Chi này là ảo, cần đánh dấu ĐÃ HOÀN TÁC để không tính vào doanh thu.',
-        repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairOrphanedFinanceTransaction', repairArgs:{ txId: t.id }
-      });
+      if(!state.payments.find(p=>p.id===t.sourceId)){
+        // §RESTORE-AUTOREVERSED-2026 — bill cua dong so nay CON THIEU tien => day la khoan thu THAT bi app lam mat (loi dong bo), KHONG phai
+        // giao dich ao: cam "sua an toan" dao so (se lam ca 2 so cung thieu tien that), thay bang nut ghi nhan lai khoan thu.
+        const li = lostLedgerTxInfo(t.id);
+        if(li && li.bill && li.amount > 0){
+          addIssue('Finance','ERROR','Khoản thu ' + fmtVnd(li.amount) + ' (' + financeMethodLabel(financeNormalizeMethod(t.paymentMethod)) + ') — "' + (t.description || li.bill.playerName || '') + '" đã ghi sổ Thu & Chi nhưng khoản thu bị app làm mất do lỗi đồng bộ; bill còn thiếu ' + fmtVnd(li.outstanding) + '.', {
+            code:'FINANCE_TX_LOST_PAYMENT', entityType:'financeTransaction', entityId:t.id, entityLabel:t.description||t.id,
+            impact:'Tiền đã thu thật. KHÔNG đảo dòng sổ — bấm GHI NHẬN LẠI KHOẢN THU để tạo lại khoản thu, Báo cáo và sổ Thu & Chi khớp lại.',
+            repairable:false, repairConfidence:'AMBIGUOUS', actionLabel:'GHI NHẬN LẠI KHOẢN THU', actionJs:"restoreLedgerOnlyPayment('" + t.id + "')"
+          });
+        } else addIssue('Finance','WARNING','Giao dịch Tài chính (' + t.sourceType + ') trỏ tới payment không còn tồn tại (' + t.sourceId + ').', {
+          code:'FINANCE_TX_ORPHANED_PAYMENT_REF', entityType:'financeTransaction', entityId:t.id, entityLabel:t.description||t.id,
+          impact:'Payment gốc không còn tồn tại thật (đã bị xoá khi rollback xung đột đa thiết bị) — giao dịch Thu&Chi này là ảo, cần đánh dấu ĐÃ HOÀN TÁC để không tính vào doanh thu.',
+          repairable:true, repairConfidence:'DETERMINISTIC', repairFn:'repairOrphanedFinanceTransaction', repairArgs:{ txId: t.id }
+        });
+      }
     } else if(t.sourceType === 'ACADEMY_PAYMENT'){
       if(!(state.academyPayments||[]).find(p=>p.id===t.sourceId)) addIssue('Finance','WARNING','Giao dịch Tài chính (ACADEMY_PAYMENT) trỏ tới academyPayment không còn tồn tại (' + t.sourceId + ').');
     }
