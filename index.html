@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.92 (2026-11-27) — §REPORT-LEDGER-RECON-2026. Admin cộng sổ Thu & Chi (chuyển khoản) ra 1.221k, Báo cáo ghi 1.071k -> 2 sổ lệch.
+  Màn chi tiết phương thức thêm khối đối chiếu: tổng 2 sổ, chênh, và từng dòng lệch kèm lý do (sổ có mà khoản thu mất/đã hoàn tác,
+  khác phương thức, khác ngày, lệch số tiền, khoản thu không có dòng sổ) — để tìm đúng nguyên nhân trên dữ liệu thật.
+
   v1.44.91 (2026-11-27) — §REPORT-METHOD-DETAIL-2026. Báo cáo "Chuyển khoản 1.071k" lệch 152k so với thực nhận, không có chỗ đối chiếu.
   Bấm dòng Chuyển khoản/Tiền mặt/Credits -> danh sách từng khoản (giờ, khách, món, người thu) + các khoản nằm ngoài con số: học phí
   Academy, thu nhập tay Thu & Chi, khoản đã hoàn tác, khoản ghi phương thức còn lại (bấm nhầm), bill mở trong kỳ chưa thu.
@@ -11548,7 +11552,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.91'; // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
+const PICPOC_APP_VERSION = 'Picpoc v1.44.92'; // §REPORT-LEDGER-RECON-2026 — doi chieu tung dong Bao cao vs so Thu & Chi
+// (ban truoc: 'Picpoc v1.44.91') // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
 // (ban truoc: 'Picpoc v1.44.90') // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
 // (ban truoc: 'Picpoc v1.44.89') // §SOCIAL-TICKET-MANUAL-2026 — nut them tay Ve Social vao bill
 // (ban truoc: 'Picpoc v1.44.88') // §BRACKET-1G-TOP2-2026 — 1 bang Top 2 -> tao tran Chung ket
@@ -32275,6 +32280,36 @@ function reportPaymentRowInfo(pm){
   bills.forEach(b=>(b.items||[]).forEach(it=>{ if(it && it.label && labels.indexOf(it.label) < 0) labels.push(it.label); }));
   return { who, what: labels.slice(0, 4).join(', ') + (labels.length > 4 ? '…' : '') };
 }
+/* §REPORT-LEDGER-RECON-2026 — Admin cong tay so Thu & Chi (chuyen khoan) ra 1.221k, Bao cao ghi 1.071k: HAI SO cua app lech nhau.
+   Bao cao doc state.payments (khoan thu that), Thu & Chi doc state.financeTransactions (dong tu dong tao kem moi khoan thu). Ham nay
+   doi chieu TUNG DONG giua 2 so trong ky cho 1 phuong thuc va tra ve dung cac dong lech + ly do, de biet so nao sai. */
+function reconcileReportVsLedger(method, start, end){
+  const inRange = ts => typeof ts === 'number' && ts >= start && ts < end;
+  const normM = pm => pm === 'CASH' ? 'CASH' : (pm === 'CREDIT' ? 'CREDIT' : 'BANK_TRANSFER');
+  const payById = {}; (state.payments||[]).forEach(x=>{ if(x) payById[x.id] = x; });
+  const acaIds = new Set((state.academyPayments||[]).map(x=>x && x.id));
+  const txs = (state.financeTransactions||[]).filter(t=>t && t.type === 'INCOME' && t.status === 'ACTIVE' && inRange(t.createdAt) && normM(t.paymentMethod) === method && t.sourceId && !acaIds.has(t.sourceId) && t.sourceType !== 'ACADEMY_PAYMENT');
+  const clubTx = txs.filter(t=>/PAYMENT$/.test(String(t.sourceType||'')) || payById[t.sourceId]); // dong tu dong cua khoan thu Club
+  const issues = []; const txByPay = {};
+  clubTx.forEach(t=>{
+    txByPay[t.sourceId] = t;
+    const pm = payById[t.sourceId];
+    if(!pm){ issues.push({ kind:'LEDGER_ONLY', tx:t, amount:t.amount||0, why:'Sổ Thu & Chi có dòng này nhưng KHÔNG còn khoản thu tương ứng trên máy này (khoản thu bị mất/chưa đồng bộ/đã bị huỷ mà sổ chưa đảo)' }); return; }
+    const eff = getPaymentEffectiveAmount(pm);
+    if(pm.voided || eff <= 0){ issues.push({ kind:'LEDGER_ONLY', tx:t, pay:pm, amount:t.amount||0, why:'Khoản thu đã bị HOÀN TÁC nhưng dòng sổ Thu & Chi vẫn còn hiệu lực' }); return; }
+    if(normM(pm.paymentMethod) !== method){ issues.push({ kind:'METHOD', tx:t, pay:pm, amount:t.amount||0, why:'Khoản thu ghi phương thức "' + financeMethodLabel(normM(pm.paymentMethod)) + '" nhưng sổ Thu & Chi ghi "' + financeMethodLabel(method) + '"' }); return; }
+    if(!inRange(pm.createdAt)){ issues.push({ kind:'DATE', tx:t, pay:pm, amount:t.amount||0, why:'Khoản thu ghi ngày ' + new Date(pm.createdAt).toLocaleDateString('vi-VN') + ' (ngoài kỳ đang xem) nhưng sổ Thu & Chi ghi trong kỳ' }); return; }
+    if(Math.round(eff) !== Math.round(t.amount||0)) issues.push({ kind:'AMOUNT', tx:t, pay:pm, amount:(t.amount||0) - eff, why:'Số tiền lệch: sổ Thu & Chi ' + fmtVnd(t.amount||0) + ' — khoản thu còn hiệu lực ' + fmtVnd(eff) + ' (đã hoàn tác một phần)' });
+  });
+  (state.payments||[]).forEach(pm=>{
+    if(!pm || pm.voided || !inRange(pm.createdAt) || normM(pm.paymentMethod) !== method) return;
+    const eff = getPaymentEffectiveAmount(pm); if(eff <= 0 || txByPay[pm.id]) return;
+    const anyTx = (state.financeTransactions||[]).find(t=>t && t.sourceId === pm.id);
+    issues.push({ kind:'REPORT_ONLY', pay:pm, amount:-eff, why: anyTx ? (anyTx.status !== 'ACTIVE' ? 'Báo cáo có khoản thu này nhưng dòng sổ Thu & Chi đã bị đảo (REVERSED)' : 'Dòng sổ Thu & Chi của khoản này ghi khác phương thức/ngày') : 'Báo cáo có khoản thu này nhưng sổ Thu & Chi KHÔNG có dòng tương ứng' });
+  });
+  const ledgerTotal = clubTx.reduce((a,t)=>a+(t.amount||0),0);
+  return { issues, ledgerTotal, ledgerCount: clubTx.length };
+}
 function openReportPaymentMethodDetail(method){
   const range = getReportRange();
   const ctx = buildReportContext(range.start, range.end);
@@ -32310,12 +32345,23 @@ function openReportPaymentMethodDetail(method){
     if(open.length) extra.push({ title:'Bill mở trong kỳ CHƯA THU trên app (khách có thể đã chuyển khoản nhưng chưa bấm thanh toán)', total: open.reduce((s2,b)=>s2+getBillOutstanding(b),0),
       rows: open.map(b=>line(escapeHtml(b.playerName || '(không tên)') + (b.debtCreatedAt ? ' · đang ghi nợ' : ''), fmtVnd(getBillOutstanding(b)), escapeHtml((b.items||[]).map(it=>it.label).filter(Boolean).slice(0,4).join(', ')))) });
   }
+  // §REPORT-LEDGER-RECON-2026 — doi chieu voi so Thu & Chi
+  const recon = reconcileReportVsLedger(method, range.start, range.end);
+  const reconHtml = `<div style="margin:0 0 12px; padding:10px 12px; border-radius:10px; background:${recon.issues.length ? '#fef2f2' : 'var(--surface-2,#f1f5f9)'};">
+      <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap; font-size:.86rem;"><span>Báo cáo (khoản thu): <b>${fmtVnd(total)}</b></span><span>Sổ Thu & Chi (dòng Club): <b>${fmtVnd(recon.ledgerTotal)}</b></span><span>Chênh: <b style="color:${Math.round(recon.ledgerTotal-total) ? 'var(--danger)' : 'inherit'};">${fmtVnd(recon.ledgerTotal-total)}</b></span></div>
+      ${recon.issues.length ? `<div style="font-weight:800; color:var(--danger); margin-top:8px;">⚠ ${recon.issues.length} dòng LỆCH giữa Báo cáo và sổ Thu & Chi:</div>` + recon.issues.map(i=>{
+          const who = i.pay ? reportPaymentRowInfo(i.pay).who : (i.tx ? (i.tx.description || '') : '');
+          const ts = (i.tx && i.tx.createdAt) || (i.pay && i.pay.createdAt);
+          return line(fmtT(ts) + ' · ' + escapeHtml(who || (i.tx && i.tx.description) || ''), fmtVnd(Math.abs(i.amount)), escapeHtml(i.why) + ' · mã: ' + escapeHtml(String((i.tx && i.tx.sourceId) || (i.pay && i.pay.id) || '').slice(-10)));
+        }).join('') : '<div class="muted" style="font-size:.8rem; margin-top:4px;">Hai sổ khớp nhau từng dòng.</div>'}
+    </div>`;
   const extraHtml = extra.map(e=>`<div style="margin-top:14px;"><div style="display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:.86rem; border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:4px;"><span>${e.title}</span><span style="white-space:nowrap;">${fmtVnd(e.total)}</span></div>${e.rows.join('')}</div>`).join('');
   const box = document.getElementById('matchModalContent');
   box.innerHTML = `
     <h2>${financeMethodLabel(method)} — ${escapeHtml(range.label || '')}</h2>
     <p class="muted" style="font-size:.84rem; margin:0 0 8px;">Từng khoản thu Club (thu bill + bán lẻ) bằng ${financeMethodLabel(method)} trong kỳ, chưa bị hoàn tác. Đối chiếu từng dòng với ${method === 'BANK_TRANSFER' ? 'sao kê ngân hàng' : method === 'CASH' ? 'tiền trong két' : 'lịch sử Credits'}.</p>
-    <div style="max-height:52vh; overflow:auto;">
+    <div style="max-height:56vh; overflow:auto;">
+      ${reconHtml}
       ${rowsHtml}
       <div class="bill-line" style="border-top:2px solid var(--border); padding-top:6px; margin-top:4px;"><b>TỔNG ${mine.length} khoản</b><b>${fmtVnd(total)}</b></div>
       ${extraHtml ? '<div class="small-note" style="margin-top:14px;"><b>Các khoản KHÔNG nằm trong con số trên</b> — nếu số thực nhận khác app, thường nằm ở đây:</div>' + extraHtml : ''}
