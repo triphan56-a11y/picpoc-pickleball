@@ -2,6 +2,10 @@
   §PROD-78 — CHANGELOG (khong phai UI, chi la ghi chu trong source cho dev/ADMIN doc khi can).
   Cap nhat 1 dong moi O TREN CUNG moi lan release (tang PICPOC_APP_VERSION tuong ung).
 
+  v1.44.94 (2026-11-27) — §RESTORE-LEDGER-ONLY-2026. Kiểm tra dữ liệu không hiện 2 khoản mất (nút cũ chỉ nhận bill 'paid'). Thêm nút
+  "GHI NHẬN LẠI KHOẢN THU" ngay tại dòng lệch trong màn đối chiếu Báo cáo: tìm bill qua vé giải/bill.paymentId/snapshot bán hàng, tạo lại
+  payment đúng id cũ theo dòng sổ Thu & Chi (số tiền = min(dòng sổ, phần bill còn thiếu)); bill đã đủ tiền thì báo dòng sổ thừa.
+
   v1.44.93 (2026-11-27) — §FIX-LISTENER-DROP-UNSYNCED-2026. GỐC của "mất khoản thu" (27/11 Hoàng Vũ 50k + cặp Đôi nam 5.25 100k -> Báo cáo
   thiếu 150k so với sổ Thu & Chi; cùng loại với 30/10): listener thay nguyên mảng local bằng bản server, xoá payment vừa tạo chưa kịp ghi
   (phần chuyển khoản sau phần Credits). Nay giữ lại bản ghi local chưa từng lên server tạo trong 10 phút; lỗi mạng khi xác nhận bill vẫn đẩy payment.
@@ -11556,7 +11560,8 @@ function deepMerge(base, override){
 /* ================= STATE ================= */
 const STORAGE_KEY = 'picpoc_dashboard_v1';
 const CURRENT_SCHEMA_VERSION = 2; // §CORE-DATA-15 — tang khi doi cau truc du lieu quan trong (phai khai bao TRUOC loadState()/defaultState() vi duoc goi ngay lap tuc)
-const PICPOC_APP_VERSION = 'Picpoc v1.44.93'; // §FIX-LISTENER-DROP-UNSYNCED-2026 — khong con mat khoan thu khi thu Credits + chuyen khoan
+const PICPOC_APP_VERSION = 'Picpoc v1.44.94'; // §RESTORE-LEDGER-ONLY-2026 — nut GHI NHAN LAI khoan thu mat ngay trong man doi chieu
+// (ban truoc: 'Picpoc v1.44.93') // §FIX-LISTENER-DROP-UNSYNCED-2026 — khong con mat khoan thu khi thu Credits + chuyen khoan
 // (ban truoc: 'Picpoc v1.44.92') // §REPORT-LEDGER-RECON-2026 — doi chieu tung dong Bao cao vs so Thu & Chi
 // (ban truoc: 'Picpoc v1.44.91') // §REPORT-METHOD-DETAIL-2026 — Bao cao: xem tung khoan Chuyen khoan/Tien mat/Credits de doi chieu
 // (ban truoc: 'Picpoc v1.44.90') // §BALLMACHINE-2PRICE-2026 — thue may ban bong: kem bong 120k / khong kem bong 90k
@@ -32293,6 +32298,66 @@ function reportPaymentRowInfo(pm){
 /* §REPORT-LEDGER-RECON-2026 — Admin cong tay so Thu & Chi (chuyen khoan) ra 1.221k, Bao cao ghi 1.071k: HAI SO cua app lech nhau.
    Bao cao doc state.payments (khoan thu that), Thu & Chi doc state.financeTransactions (dong tu dong tao kem moi khoan thu). Ham nay
    doi chieu TUNG DONG giua 2 so trong ky cho 1 phuong thuc va tra ve dung cac dong lech + ly do, de biet so nao sai. */
+/* §RESTORE-LEDGER-ONLY-2026 — Admin: Kiem tra du lieu "không thấy 2 lỗi đó" (nut GHI NHAN LAI cu chi nhan bill dang 'paid' + ve giai
+   tro dung payment). Khoi phuc thang tu DONG SO Thu & Chi con hieu luc ma khoan thu da mat: tim bill qua ve giai (paymentId), bill.paymentId
+   hoac snapshot ban hang; tao lai payment DUNG id cu, so tien = min(dong so, phan bill con thieu), ngay gio + nguoi thu theo dong so. */
+function findBillForLostLedgerTx(tx){
+  if(!tx || !tx.sourceId) return null;
+  const pid = tx.sourceId;
+  const part = (state.tournamentEntryParticipants||[]).find(x=>x && (x.paymentId === pid || x.creditPaymentId === pid) && x.billId);
+  let bill = part ? state.bills.find(b=>b.id===part.billId) : null;
+  if(!bill) bill = state.bills.find(b=>b && b.paymentId === pid) || null;
+  if(!bill){ const sale = (state.sales||[]).find(x=>x && x.paymentId === pid && x.billId); if(sale) bill = state.bills.find(b=>b.id===sale.billId) || null; }
+  if(!bill){
+    // khong con lien ket nao: bill phi giai tao gan thoi diem do, con thieu DUNG so tien cua dong so (chi nhan khi co DUY NHAT 1 ung vien)
+    const cands = state.bills.filter(b=>b && b.status !== 'cancelled' && (b.items||[]).some(it=>it && it.type === 'tournament_entry') && Math.abs((b.openedAt||0) - (tx.createdAt||0)) < 6*3600*1000 && getBillOutstanding(b) === Math.round(tx.amount||0));
+    if(cands.length === 1) bill = cands[0];
+  }
+  return bill;
+}
+function lostLedgerTxInfo(txId){
+  const tx = (state.financeTransactions||[]).find(t=>t && t.id === txId);
+  if(!tx || tx.status !== 'ACTIVE' || tx.type !== 'INCOME' || !tx.sourceId) return null;
+  if((state.payments||[]).some(x=>x && x.id === tx.sourceId)) return null; // khoan thu van con
+  const bill = findBillForLostLedgerTx(tx);
+  const outstanding = bill ? getBillOutstanding(bill) : 0;
+  return { tx, bill, outstanding, amount: bill ? Math.min(Math.round(tx.amount||0), outstanding) : 0 };
+}
+function restoreLedgerOnlyPayment(txId){
+  if(!requirePermission(PERMISSION.PAYMENT_VOID)) return;
+  const info = lostLedgerTxInfo(txId);
+  if(!info){ showToast('Khoản này không còn ở trạng thái "mất khoản thu".'); return; }
+  const tx = info.tx, bill = info.bill;
+  if(!bill){ showToast('⚠ Không xác định được bill của dòng sổ này — chụp màn hình gửi hỗ trợ (mã ' + String(tx.sourceId).slice(-10) + ').'); return; }
+  if(!(info.amount > 0)){ showToast('Bill "' + (bill.playerName||'') + '" hiện đã đủ tiền — dòng sổ này bị thừa. Nếu chắc chắn, bấm "Hoàn tác" dòng đó ở Thu & Chi.'); return; }
+  const method = financeNormalizeMethod(tx.paymentMethod);
+  if(method === 'CREDIT'){ showToast('Dòng Credits không khôi phục bằng cách này.'); return; }
+  if(!confirm('Ghi nhận lại khoản thu ' + fmtVnd(info.amount) + ' (' + financeMethodLabel(method) + ') — ' + (tx.description || bill.playerName || '') + ' lúc ' + new Date(tx.createdAt).toLocaleString('vi-VN') + '?\n\nSổ Thu & Chi đã ghi khoản này nhưng khoản thu bị app làm mất do lỗi đồng bộ (đã sửa ở v1.44.93). Chỉ bấm OK nếu tiền này đã nhận thật.')) return;
+  const cu = (typeof getCurrentUser === 'function' && getCurrentUser()) || null;
+  const payment = { id: tx.sourceId, amount: info.amount, originalAmount: info.amount, paymentMethod: method, billIds:[bill.id],
+    allocations:[{ billId: bill.id, amount: info.amount, voided:false }], operationId:null, paymentGroupId:null,
+    createdBy: (tx.createdBy && tx.createdBy !== 'system' ? tx.createdBy : (cu ? cu.name : 'admin')) + ' (khôi phục)', createdAt: tx.createdAt || Date.now(), voided:false, restoredAt: Date.now(), restoredBy: cu ? cu.name : 'admin' };
+  state.payments.push(payment);
+  recalculateBillFinancialStatus(bill);
+  if(getBillOutstanding(bill) <= 0 && bill.status !== 'paid'){ bill.status = 'paid'; bill.paidAt = bill.paidAt || payment.createdAt; }
+  if(!bill.paymentId) bill.paymentId = payment.id;
+  // Ghi THANG len ban moi nhat cua server (transaction, khong CAS theo snapshot cu) — khoan khoi phuc khong duoc phep bi huy am tham.
+  const __restoreSaved = Promise.all([
+    patchEntityAtomic('payments', payment.id, sanitizeForFirebase(payment)),
+    patchEntityAtomic('bills', bill.id, { status: bill.status, paidAt: bill.paidAt || null, paymentId: bill.paymentId || null, paymentMethod: bill.paymentMethod || null })
+  ]).then(rs=>{ if(!rs.every(Boolean)) showToast('⚠ Khoản khôi phục CHƯA lưu được lên server — kiểm tra mạng rồi bấm lại.'); return rs.every(Boolean); });
+  if(Math.round(tx.amount||0) !== info.amount){ tx.amount = info.amount; markEntityDirty('financeTransactions', tx.id); }
+  if(!state.sales.some(x=>x.billId===bill.id && !x.voided)){
+    state.sales.unshift({ id: uid('sale'), kind:'BILL_PAYMENT_SNAPSHOT', items: (bill.items||[]).map(it=>({ productId: it.meta && it.meta.productId, name: it.label, price: it.unitPrice||it.amount, qty: it.qty||1 })),
+      total: billTotal(bill), timestamp: payment.createdAt, billId: bill.id, buyerId: bill.playerId || null, buyerName: bill.playerName, paymentMethod: payment.paymentMethod, paymentId: payment.id, voided:false });
+  }
+  logOverride('payment_restored_from_ledger', 'Ghi nhận lại khoản thu bị mất ' + fmtVnd(info.amount) + ' (' + financeMethodLabel(method) + ') — ' + (tx.description || bill.playerName || ''), 'payment', payment.id);
+  saveState();
+  showToast('✓ Đã ghi nhận lại ' + fmtVnd(info.amount) + ' — ' + (bill.playerName || ''));
+  if(typeof renderReportsTab === 'function') renderReportsTab();
+  if(typeof renderMoneyTab === 'function') renderMoneyTab();
+  openReportPaymentMethodDetail(method);
+}
 function reconcileReportVsLedger(method, start, end){
   const inRange = ts => typeof ts === 'number' && ts >= start && ts < end;
   const normM = pm => pm === 'CASH' ? 'CASH' : (pm === 'CREDIT' ? 'CREDIT' : 'BANK_TRANSFER');
@@ -32362,7 +32427,14 @@ function openReportPaymentMethodDetail(method){
       ${recon.issues.length ? `<div style="font-weight:800; color:var(--danger); margin-top:8px;">⚠ ${recon.issues.length} dòng LỆCH giữa Báo cáo và sổ Thu & Chi:</div>` + recon.issues.map(i=>{
           const who = i.pay ? reportPaymentRowInfo(i.pay).who : (i.tx ? (i.tx.description || '') : '');
           const ts = (i.tx && i.tx.createdAt) || (i.pay && i.pay.createdAt);
-          return line(fmtT(ts) + ' · ' + escapeHtml(who || (i.tx && i.tx.description) || ''), fmtVnd(Math.abs(i.amount)), escapeHtml(i.why) + ' · mã: ' + escapeHtml(String((i.tx && i.tx.sourceId) || (i.pay && i.pay.id) || '').slice(-10)));
+          let act = '';
+          if(i.kind === 'LEDGER_ONLY' && i.tx && !i.pay){ // khoan thu mat han -> cho ghi nhan lai ngay tai day
+            const li = lostLedgerTxInfo(i.tx.id);
+            if(li && li.bill && li.amount > 0) act = `<div style="margin:2px 0 8px;"><span class="muted" style="font-size:.76rem;">Bill "${escapeHtml(li.bill.playerName||'')}" đang ${li.bill.status === 'paid' ? 'ghi ĐÃ THANH TOÁN' : 'MỞ'} nhưng còn thiếu ${fmtVnd(li.outstanding)}.</span> <button class="small" data-require-permission="PAYMENT_VOID" onclick="restoreLedgerOnlyPayment('${i.tx.id}')">GHI NHẬN LẠI KHOẢN THU ${fmtVnd(li.amount)}</button></div>`;
+            else if(li && li.bill) act = `<div class="muted" style="font-size:.76rem; margin:2px 0 8px;">Bill "${escapeHtml(li.bill.playerName||'')}" hiện đã đủ tiền — dòng sổ này có thể bị thừa (đã thu lại bằng khoản khác).</div>`;
+            else act = `<div class="muted" style="font-size:.76rem; margin:2px 0 8px;">Chưa xác định được bill của dòng này — chụp màn hình gửi hỗ trợ.</div>`;
+          }
+          return line(fmtT(ts) + ' · ' + escapeHtml(who || (i.tx && i.tx.description) || ''), fmtVnd(Math.abs(i.amount)), escapeHtml(i.why) + ' · mã: ' + escapeHtml(String((i.tx && i.tx.sourceId) || (i.pay && i.pay.id) || '').slice(-10))) + act;
         }).join('') : '<div class="muted" style="font-size:.8rem; margin-top:4px;">Hai sổ khớp nhau từng dòng.</div>'}
     </div>`;
   const extraHtml = extra.map(e=>`<div style="margin-top:14px;"><div style="display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:.86rem; border-bottom:1px solid var(--border); padding-bottom:4px; margin-bottom:4px;"><span>${e.title}</span><span style="white-space:nowrap;">${fmtVnd(e.total)}</span></div>${e.rows.join('')}</div>`).join('');
